@@ -45,6 +45,7 @@ sw.js                   service worker
 04-cotizaciones.sql     tablas cotizaciones y cotizacion_items (falta ejecutar)
 05-fix-rls.sql          endurece mi_rol() y agrega mi_sesion() de diagnóstico
 06-cotizacion-validez.sql  columna validez_dias en cotizaciones (falta ejecutar)
+07-cotizacion-multiple.sql  permite varias cotizaciones por orden (falta ejecutar)
 ```
 
 Los `.sql` son historial de migraciones. No se suben a GitHub Pages pero
@@ -67,9 +68,11 @@ Tablas: `perfiles`, `clientes`, `vehiculos`, `ordenes`, `movimientos_estado`,
 - Todo cambio de estado se registra solo en `movimientos_estado` (trigger).
 - `numero_serie` existe en el esquema pero **no se usa**: identifican los
   módulos con sellos de seguridad.
-- Una `cotizacion` por orden (no se versiona; para re-cotizar se editan los
-  mismos ítems). `ordenes.monto_cotizado` se mantiene sincronizado por trigger
-  desde `cotizacion_items`, no lo escribe el front.
+- Una orden puede tener **varias** `cotizacion` (para cuando el cliente pide
+  una segunda opción para el mismo módulo). Todas quedan guardadas, se puede
+  editar o eliminar cualquiera desde la app. `ordenes.monto_cotizado` se
+  mantiene sincronizado por trigger desde `cotizacion_items` con la que se
+  haya editado/guardado más recientemente — no lo escribe el front.
 
 **Dos orígenes de módulo:**
 
@@ -103,7 +106,8 @@ solo al dueño**.
 - Informe técnico con el formato de la empresa, imprimible a PDF
 - Cotización con líneas de ítems (descripción, cantidad, valor unitario),
   IVA calculado al vuelo; al guardar avanza el estado a `cotizado` si
-  corresponde
+  corresponde. Se pueden guardar varias por orden, editar o eliminar
+  cualquiera
 - Cotización formal imprimible (mismo tratamiento visual que el informe
   técnico), con número de cotización, tabla de ítems y fecha de validez
   (`validez_dias`, 15 por defecto)
