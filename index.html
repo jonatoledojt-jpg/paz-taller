@@ -208,6 +208,28 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   border-radius:8px;background:var(--panel);color:var(--tinta);text-decoration:none;font-size:14.5px
 }
 
+/* ---------- Nexa ---------- */
+.chat{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.burbuja{
+  max-width:86%;padding:11px 13px;border-radius:13px;font-size:15px;
+  line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere
+}
+.burbuja.yo{align-self:flex-end;background:var(--accion);color:#fff;border-bottom-right-radius:4px}
+.burbuja.ella{align-self:flex-start;background:var(--panel);border:1px solid var(--linea);border-bottom-left-radius:4px}
+.burbuja.esperando{color:var(--humo)}
+/* La barra de escribir queda fija arriba de la navegación: en terreno se
+   escribe con una mano y no conviene tener que bajar hasta el final. */
+.chat-barra{
+  position:sticky;bottom:calc(58px + env(safe-area-inset-bottom));z-index:10;
+  display:flex;gap:8px;align-items:flex-end;padding:10px 0;background:var(--fondo)
+}
+.chat-barra textarea{
+  flex:1;min-height:50px;max-height:150px;padding:13px;resize:none;
+  border:1px solid var(--linea);border-radius:10px;background:var(--panel)
+}
+.chat-barra .btn{flex:0 0 auto;width:auto;padding:15px 20px}
+.ficha-falta{color:var(--humo);font-weight:400}
+
 /* ---------- Informe técnico ---------- */
 .hoja{background:#fff;padding:26px 22px;border:1px solid var(--linea);border-radius:10px;color:#000}
 .hoja .cab{border-bottom:3px solid var(--tinta);padding-bottom:10px;margin-bottom:18px}
@@ -259,7 +281,10 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 <div id="app" class="oculto">
   <header>
     <div class="marca">PAZ SERVICES<span id="quien"></span></div>
-    <button id="btnSalir">Salir</button>
+    <div style="display:flex;gap:8px">
+      <button id="btnNexa" class="oculto">Nexa</button>
+      <button id="btnSalir">Salir</button>
+    </div>
   </header>
   <main id="main">
 
@@ -626,6 +651,41 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
     </section>
 
+    <!-- Nexa -->
+    <section id="vNexa" class="oculto">
+      <div class="seccion-tit">
+        <h2>Nexa</h2>
+        <span id="nexaSub"></span>
+      </div>
+      <div id="nexaError" class="aviso oculto"></div>
+
+      <!-- Inicio: casos anteriores -->
+      <div id="nexaInicio">
+        <button class="btn" id="btnNexaNuevo">Atender un caso nuevo</button>
+        <span class="rotulo sep">Casos anteriores</span>
+        <div id="nexaCasos" class="lista"></div>
+      </div>
+
+      <!-- Conversación abierta -->
+      <div id="nexaConv" class="oculto">
+        <div class="seccion">
+          <span class="rotulo">Ficha del caso</span>
+          <div id="nexaFicha"></div>
+          <div style="height:12px"></div>
+          <button class="btn claro" id="btnNexaCrearOT">Crear la OT desde este caso</button>
+        </div>
+
+        <div class="chat" id="nexaChat"></div>
+
+        <div class="chat-barra">
+          <textarea id="nexaTexto" rows="1" placeholder="Escribe lo que dijo el cliente"></textarea>
+          <button class="btn" id="btnNexaEnviar">Enviar</button>
+        </div>
+
+        <button class="btn claro" id="btnNexaVolver">Volver a los casos</button>
+      </div>
+    </section>
+
   </main>
   <nav class="navinf" id="navInf">
     <button type="button" data-seccion="terreno">Terreno</button>
@@ -649,7 +709,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
-   "vGasto","vFacturar"].forEach(v => $(v).classList.add("oculto"));
+   "vGasto","vFacturar","vNexa"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -702,6 +762,8 @@ let perfil = null, ordenActual = null, fotoNueva = null, seccionActiva = "terren
 let semanaOffset = 0, tecnicos = [], agendaOrigenActiva = "terreno";
 let mesOffset = 0, gastoVista = "mio", gastoEditandoId = null, fotoGasto = null;
 let gastoOrdenes = [], categoriasUsadas = [], montoCotizadoOT = null;
+let nexaConvId = null, nexaMensajes = [], nexaFicha = {}, nexaOcupada = false;
+let nexaOrigenConv = null;  // conversación que originó la OT que se está creando
 
 // ---------- Sesión ----------
 $("btnEntrar").onclick = async () => {
@@ -725,6 +787,7 @@ async function iniciar() {
   $("vLogin").classList.add("oculto");
   $("app").classList.remove("oculto");
   $("main").classList.add("con-navinf");
+  $("btnNexa").classList.toggle("oculto", !["dueno","coordinador"].includes(perfil.rol));
   seccionActiva = perfil.rol === "coordinador" ? "agenda" : "terreno";
   ver("vTablero");
   cambiarSeccion(seccionActiva);
@@ -1044,6 +1107,7 @@ $("fRut").oninput = e => {
 
 $("btnNueva").onclick = () => {
   msg("nuevaError", "");
+  nexaOrigenConv = null;   // si venía de un caso viejo, no se arrastra
   limpiarForm();
   ver("vNueva");
 };
@@ -1109,6 +1173,12 @@ $("btnGuardar").onclick = async () => {
     if (error) throw error;
 
     if (fotoNueva) await subirFoto(orden.id, fotoNueva, "recepcion");
+
+    // Deja el caso de Nexa apuntando a la OT que salió de él.
+    if (nexaOrigenConv) {
+      await db.from("nexa_conversaciones").update({ orden_id: orden.id }).eq("id", nexaOrigenConv);
+      nexaOrigenConv = null;
+    }
 
     limpiarForm();
     cargarClientes();
@@ -2130,6 +2200,259 @@ async function mostrarCotizacionFormal(id) {
 
 $("btnImprimirCot").onclick = () => window.print();
 $("btnCotImpVolver").onclick = () => ver("vCotizacion");
+
+
+// ══════════════════════════════════════════════════════════
+//  NEXA — atención al cliente
+//
+//  La llave de la IA y el prompt NO están acá: viven en la
+//  Edge Function y en la tabla nexa_config. Esta pantalla solo
+//  conversa y guarda.
+//
+//  Regla que no se negocia: Nexa propone la OT, la persona la
+//  confirma. El botón de crear OT llena el formulario de
+//  siempre y ahí se revisa antes de guardar.
+// ══════════════════════════════════════════════════════════
+
+const NEXA_FICHA = {
+  cliente:"Cliente", telefono:"Teléfono", vehiculo:"Vehículo", anio:"Año",
+  patente:"Patente", ubicacion:"Ubicación", modulo:"Módulo",
+  codigo:"Código de falla", sintoma:"Falla"
+};
+
+$("btnNexa").onclick = () => {
+  msg("nexaError", "");
+  ver("vNexa");
+  if (nexaConvId) mostrarConversacionNexa();
+  else mostrarInicioNexa();
+};
+$("btnNexaVolver").onclick = () => { nexaConvId = null; mostrarInicioNexa(); };
+
+function mostrarInicioNexa() {
+  $("nexaSub").textContent = "Atención al cliente";
+  $("nexaInicio").classList.remove("oculto");
+  $("nexaConv").classList.add("oculto");
+  cargarCasosNexa();
+}
+
+function mostrarConversacionNexa() {
+  $("nexaSub").textContent = "Caso abierto";
+  $("nexaInicio").classList.add("oculto");
+  $("nexaConv").classList.remove("oculto");
+  pintarChatNexa();
+  pintarFichaNexa();
+}
+
+async function cargarCasosNexa() {
+  $("nexaCasos").innerHTML = '<div class="cargando">Cargando casos…</div>';
+  const { data, error } = await db.from("nexa_conversaciones")
+    .select("id,titulo,ficha,orden_id,actualizado_en")
+    .order("actualizado_en", { ascending: false }).limit(25);
+
+  if (error) {
+    $("nexaCasos").innerHTML = '<div class="aviso">No se pudieron cargar los casos.</div>';
+    return;
+  }
+  if (!data.length) {
+    $("nexaCasos").innerHTML = '<div class="vacio"><p>Todavía no hay casos atendidos.</p></div>';
+    return;
+  }
+
+  $("nexaCasos").innerHTML = "";
+  data.forEach(c => {
+    const f = c.ficha || {};
+    const div = document.createElement("div");
+    div.className = "ot";
+    div.tabIndex = 0;
+    div.innerHTML = `
+      <div class="fila1">
+        <span class="num">CASO ${String(c.id).padStart(4, "0")}</span>
+        <span class="dias">${fechaCL(c.actualizado_en)}</span>
+      </div>
+      <div class="cliente"></div>
+      <div class="detalle"><span class="pat"></span> · <span class="mod"></span></div>
+      <span class="chip ${c.orden_id ? "listo" : "espera"}">${c.orden_id ? "Con OT creada" : "Sin OT"}</span>`;
+    div.querySelector(".cliente").textContent = c.titulo || f.cliente || "Caso sin nombre";
+    div.querySelector(".pat").textContent = f.patente || "sin patente";
+    div.querySelector(".mod").textContent = f.modulo || f.sintoma || "sin detalle";
+    div.onclick = () => abrirCasoNexa(c.id);
+    $("nexaCasos").appendChild(div);
+  });
+}
+
+async function abrirCasoNexa(id) {
+  msg("nexaError", "");
+  const { data: conv } = await db.from("nexa_conversaciones")
+    .select("id,ficha").eq("id", id).single();
+  const { data: msjs } = await db.from("nexa_mensajes")
+    .select("rol,contenido").eq("conversacion_id", id).order("creado_en");
+  nexaConvId = id;
+  nexaFicha = conv?.ficha || {};
+  nexaMensajes = msjs || [];
+  mostrarConversacionNexa();
+}
+
+$("btnNexaNuevo").onclick = async () => {
+  msg("nexaError", "");
+  $("btnNexaNuevo").disabled = true;
+  const { data:{ user } } = await db.auth.getUser();
+  const { data, error } = await db.from("nexa_conversaciones")
+    .insert({ creado_por: user.id }).select("id").single();
+  $("btnNexaNuevo").disabled = false;
+  if (error) return msg("nexaError", "No se pudo abrir el caso: " + (error.message || "error desconocido"));
+  nexaConvId = data.id;
+  nexaFicha = {};
+  nexaMensajes = [];
+  mostrarConversacionNexa();
+  $("nexaTexto").focus();
+};
+
+function pintarChatNexa(esperando) {
+  const c = $("nexaChat");
+  c.innerHTML = "";
+  if (!nexaMensajes.length && !esperando) {
+    const p = document.createElement("div");
+    p.className = "burbuja ella esperando";
+    p.textContent = "Escribe lo que te dijo el cliente y Nexa sigue la conversación. La ficha de arriba se va llenando sola.";
+    c.appendChild(p);
+  }
+  nexaMensajes.forEach(m => {
+    const b = document.createElement("div");
+    b.className = "burbuja " + (m.rol === "user" ? "yo" : "ella");
+    b.textContent = m.contenido;
+    c.appendChild(b);
+  });
+  if (esperando) {
+    const b = document.createElement("div");
+    b.className = "burbuja ella esperando";
+    b.textContent = "Nexa está escribiendo…";
+    c.appendChild(b);
+  }
+  c.lastElementChild?.scrollIntoView({ block: "nearest" });
+}
+
+function pintarFichaNexa() {
+  const f = nexaFicha || {};
+  const faltan = Object.keys(NEXA_FICHA).filter(k => !f[k]).length;
+  $("nexaFicha").innerHTML = Object.entries(NEXA_FICHA).map(([k, et]) => {
+    const v = f[k];
+    return `<div class="dato"><span>${et}</span>` +
+           `<span class="${v ? "" : "ficha-falta"}">${v ? escapar(v) : "—"}</span></div>`;
+  }).join("") +
+  `<div class="pista" style="margin-top:10px">${
+    faltan ? `Faltan ${faltan} dato${faltan === 1 ? "" : "s"}. Nexa no inventa: si no lo dijo el cliente, queda vacío.`
+           : "La ficha está completa."
+  }</div>`;
+}
+
+// Llama a la Edge Function. La sesión va en el encabezado: la
+// función verifica quién eres y que seas dueño o coordinador.
+async function llamarNexa(accion) {
+  const { data:{ session } } = await db.auth.getSession();
+  if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/nexa`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON,
+      Authorization: `Bearer ${session.access_token}`
+    },
+    body: JSON.stringify({
+      accion,
+      historial: nexaMensajes.map(m => ({ role: m.rol, content: m.contenido }))
+    })
+  });
+  const cuerpo = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(cuerpo.error || `Nexa respondió con error ${r.status}.`);
+  return cuerpo;
+}
+
+async function enviarNexa() {
+  if (nexaOcupada || !nexaConvId) return;
+  msg("nexaError", "");
+  const texto = $("nexaTexto").value.trim();
+  const ultimo = nexaMensajes[nexaMensajes.length - 1];
+
+  // Sin texto y con el último mensaje sin responder: es un reintento.
+  if (!texto && ultimo?.rol !== "user") return;
+
+  nexaOcupada = true;
+  $("btnNexaEnviar").disabled = true;
+  try {
+    if (texto) {
+      nexaMensajes.push({ rol: "user", contenido: texto });
+      $("nexaTexto").value = "";
+      $("nexaTexto").style.height = "";
+      await db.from("nexa_mensajes").insert({
+        conversacion_id: nexaConvId, rol: "user", contenido: texto
+      });
+    }
+    pintarChatNexa(true);
+
+    const { respuesta } = await llamarNexa("responder");
+    nexaMensajes.push({ rol: "assistant", contenido: respuesta });
+    await db.from("nexa_mensajes").insert({
+      conversacion_id: nexaConvId, rol: "assistant", contenido: respuesta
+    });
+    pintarChatNexa();
+    actualizarFichaNexa();   // sin await: la ficha llega un poco después
+  } catch (e) {
+    pintarChatNexa();
+    msg("nexaError", (e.message || "Falló la conexión con Nexa.") +
+      " Tu mensaje quedó guardado: toca Enviar de nuevo para reintentar.");
+  } finally {
+    nexaOcupada = false;
+    $("btnNexaEnviar").disabled = false;
+  }
+}
+
+// Segunda pasada: le pide a Nexa la ficha del caso a partir de lo
+// conversado. Si falla, no molesta: la conversación sigue igual.
+async function actualizarFichaNexa() {
+  const conv = nexaConvId;
+  try {
+    const { ficha } = await llamarNexa("ficha");
+    if (conv !== nexaConvId) return;   // se cambió de caso mientras tanto
+    nexaFicha = ficha || {};
+    pintarFichaNexa();
+    await db.from("nexa_conversaciones")
+      .update({ ficha: nexaFicha, titulo: nexaFicha.cliente || null })
+      .eq("id", conv);
+  } catch {
+    /* la ficha es un extra; si no sale, no se avisa nada */
+  }
+}
+
+$("btnNexaEnviar").onclick = enviarNexa;
+$("nexaTexto").oninput = e => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 150) + "px";
+};
+$("nexaTexto").onkeydown = e => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); enviarNexa(); }
+};
+
+// Nexa propone, la persona confirma: esto solo llena el formulario.
+$("btnNexaCrearOT").onclick = () => {
+  const f = nexaFicha || {};
+  if (!f.cliente && !f.patente && !f.sintoma) {
+    return msg("nexaError", "La ficha todavía no tiene datos. Conversa un poco más con el cliente.");
+  }
+  const conv = nexaConvId;
+  $("btnNueva").click();               // limpia el formulario y lo muestra
+  nexaOrigenConv = conv;
+  $("fCliente").value = f.cliente ?? "";
+  $("fPatente").value = (f.patente ?? "").toUpperCase();
+  $("fModulo").value  = f.modulo ?? "";
+  $("fSintoma").value = [f.sintoma, f.codigo ? `Código: ${f.codigo}` : null]
+    .filter(Boolean).join(" · ");
+  if (f.ubicacion) {
+    $("btnToggleAgendar").click();
+    $("fUbicacionGps").value = f.ubicacion;
+  }
+  msg("nuevaError", "Datos traídos de Nexa. Revísalos antes de guardar: falta el RUT y confirmar el módulo.");
+  $("nuevaError").className = "aviso info";
+};
 
 
 // ---------- Cierre de OT e informe ----------
