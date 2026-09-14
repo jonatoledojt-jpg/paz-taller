@@ -49,6 +49,7 @@ sw.js                   service worker
 06-cotizacion-validez.sql  columna validez_dias en cotizaciones (falta ejecutar)
 07-cotizacion-multiple.sql  permite varias cotizaciones por orden (falta ejecutar)
 08-terreno.sql          tipo_trabajo/sistema, montos y cotizaciones ocultos al técnico
+09-agenda.sql           agenda de terreno: esquema + RPC + permisos (falta ejecutar)
 ```
 
 `08-terreno.sql` también agregó `ordenes.observaciones`, que en teoría venía de
@@ -166,13 +167,76 @@ navegación, no permiso):
 - **Módulos** — todo lo demás con `tipo_trabajo = modulo`: desde que se
   recepciona (venga de terreno o de laboratorio) hasta que se entrega.
   Foco del técnico de laboratorio.
-- **Agenda** — lista las `visitas` agendadas. Todavía no tiene pantalla para
-  crearlas (ver "Lo que viene"). Foco del coordinador.
+- **Agenda** — vista semanal de `visitas` (lunes a sábado), crear/editar,
+  ruta del día. Foco del coordinador.
 
 Cada rol abre por defecto en una sección (`coordinador` → Agenda, el resto →
 Terreno) pero puede navegar a las otras — el mecánico que retira un módulo
 necesita ver en qué va en Módulos. La función `seccionDe(orden)` en
 `index.html` decide en cuál aparece cada orden.
+
+**Caso especial:** cuando un `tecnico` abre la pestaña Terreno, no ve la
+lista de OT — ve "Mis visitas de hoy" (sus `visitas` del día, ordenadas por
+`orden_ruta`). Es su pantalla de inicio real. Dueño y coordinador siguen
+viendo la lista de OT de terreno en esa misma pestaña.
+
+## Agenda de terreno
+
+Construida completa sobre `visitas` y `visita_ordenes` (existían desde
+01-schema.sql sin pantalla). Ver `09-agenda.sql`.
+
+**Modelo:**
+- `tipo_visita` ahora incluye `servicio` (antes: diagnostico, retiro,
+  instalacion, mixta), para visitas de reparación en terreno sin módulo.
+- `visitas.fecha_original`: se llena **una sola vez**, en la primera
+  reprogramación — no se pisa en reprogramaciones siguientes. No hay
+  historial completo de reprogramaciones, a propósito (fuera de alcance).
+- `visitas.duracion_estimada_min`, `visitas.motivo_reprogramacion`: nuevas.
+- **Nadie borra visitas, ni el dueño.** No hay política de `delete` en la
+  tabla — cancelar (`estado = 'cancelada'`) es la única salida, y queda en
+  el historial. No hay botón de eliminar en ninguna pantalla tampoco.
+
+**Permisos — por qué hay tres funciones en vez de políticas RLS solas:**
+RLS filtra filas, no columnas. Para que el técnico pueda cambiar el estado
+de SU visita sin poder tocar el cliente, la fecha o el técnico asignado,
+no bastaba con una política — hicieron falta funciones `security definer`
+que escriben solo lo que corresponde:
+
+- `actualizar_visita_tecnico(p_visita_id, p_estado, p_km_inicio,
+  p_km_termino, p_observaciones)` — el técnico **no tiene `update` directo
+  sobre `visitas` en absoluto** (no existe ninguna política que se lo
+  permita). Este RPC es su único camino de escritura: verifica que
+  `auth.uid()` sea el `tecnico_id` de esa visita, solo toca esos cuatro
+  campos, y solo acepta `p_estado` en `en_ruta` o `realizada` — cualquier
+  otro valor lo rechaza.
+- `reprogramar_visita(p_visita_id, p_fecha_nueva, p_motivo)` y
+  `cancelar_visita(p_visita_id, p_motivo)` — dueño/coordinador. Son
+  funciones (no un `update` libre desde el front) para que la regla de
+  "`fecha_original` se llena una sola vez" viva en un solo lugar en la
+  base, no repetida en el JS.
+
+**Dos huecos que `09-agenda.sql` tuvo que cerrar para que "crear OT desde
+la visita" funcionara** (ver el archivo para el detalle):
+- `visita_ordenes` solo aceptaba `insert` de dueño/coordinador; se agregó
+  una política para que el técnico pueda ligar una OT nueva a su propia
+  visita.
+- `ordenes` solo aceptaba `insert` de dueño/coordinador — el técnico **no
+  podía crear ninguna OT nueva**, ni siquiera antes de este módulo. No es
+  un bug de la agenda, es algo que ya estaba así y que recién se hizo
+  visible porque ahora hay una pantalla que lo necesita.
+
+**Relación visita ↔ OT:** una visita puede tener 0, 1 o varias OT
+(`visita_ordenes`, con `accion`: diagnostico/retiro/instalacion/servicio).
+Desde la visita se crea una OT nueva (cliente precargado) o se ve la lista
+de las ya ligadas; desde la OT se ve a qué visitas está ligada. Al marcar
+una visita como `realizada`, si tiene OT asociadas, la app **ofrece**
+actualizar el estado de esas OT — nunca lo hace sola.
+
+**Qué no se construyó a propósito (pedido explícito):** optimización de
+rutas o distancias, notificaciones/recordatorios, sincronización con
+Google Calendar, vista de mes/calendario gráfico, historial múltiple de
+reprogramaciones. La ruta del día se reordena con botones subir/bajar, no
+arrastrando (con guantes, en el celular, no sirve).
 
 ## Estado actual — qué funciona
 
@@ -192,6 +256,11 @@ necesita ver en qué va en Módulos. La función `seccionDe(orden)` en
 - Cotización formal imprimible (mismo tratamiento visual que el informe
   técnico), con número de cotización, tabla de ítems y fecha de validez
   (`validez_dias`, 15 por defecto)
+- Agenda de terreno: vista semanal con contadores y aviso de visitas sin
+  técnico, crear/editar visita (precarga dirección/ciudad del cliente),
+  ruta del día reordenable, crear OT desde una visita, reprogramar/cancelar,
+  y la pantalla del técnico ("Mis visitas de hoy") con su RPC de escritura
+  acotada a estado/km/observaciones
 
 **Detalles de implementación:**
 
@@ -221,9 +290,9 @@ El resto del formato no se toca sin preguntar.
 1. ~~**Cotizaciones** con líneas de detalle~~ — hecho: tablas `cotizaciones` y
    `cotizacion_items`, pantalla en el front. Falta ejecutar `04-cotizaciones.sql`
    en Supabase.
-2. **Agenda de terreno y rutas** — la sección Agenda ya lista las `visitas`
-   agendadas, pero falta la pantalla para crearlas/editarlas y armar la ruta
-   del día (`orden_ruta`).
+2. ~~**Agenda de terreno y rutas**~~ — hecho: vista semanal, crear/editar
+   visita, ruta del día, vinculación con OT. Falta ejecutar `09-agenda.sql`
+   en Supabase.
 3. **Gastos, asistencia y pagos** de colaboradores, visibles solo para el dueño.
 4. **Nexa** — agente de IA que lee el grupo de WhatsApp del equipo y crea las
    OT solo. Ver más abajo.

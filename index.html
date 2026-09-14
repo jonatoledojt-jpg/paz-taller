@@ -165,6 +165,28 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 
 .cargando{text-align:center;padding:40px;color:var(--humo)}
 
+/* ---------- Agenda ---------- */
+.semana-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.semana-nav button{flex:0 0 auto;width:auto;padding:11px 18px;border:1px solid var(--linea);border-radius:8px;background:var(--panel);cursor:pointer;font-size:17px}
+.semana-nav .lbl{font-size:14.5px;font-weight:500;text-align:center}
+.contadores{display:flex;gap:10px;margin-bottom:14px}
+.contadores .cont{flex:1;background:var(--panel);border:1px solid var(--linea);border-radius:10px;padding:12px;text-align:center}
+.contadores .cont b{display:block;font-size:22px;font-weight:700}
+.contadores .cont span{font-size:12px;color:var(--humo)}
+.dia-grupo{display:flex;justify-content:space-between;align-items:baseline;margin:18px 0 8px}
+.dia-grupo:first-child{margin-top:0}
+.dia-grupo .nombre{font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--humo)}
+.dia-grupo button{background:none;border:none;color:var(--tinta);font-size:13px;text-decoration:underline;cursor:pointer;padding:0}
+.visita .estado-visita{font-weight:500}
+.reordenar{display:flex;gap:8px;margin-top:10px}
+.reordenar button{flex:1;padding:14px;border:1px solid var(--linea);border-radius:8px;background:var(--panel);font-size:18px;cursor:pointer}
+.reordenar button[disabled]{opacity:.35}
+.enlaces{display:flex;gap:8px;margin-top:6px}
+.enlaces a{
+  flex:1;display:block;text-align:center;padding:13px;border:1px solid var(--linea);
+  border-radius:8px;background:var(--panel);color:var(--tinta);text-decoration:none;font-size:14.5px
+}
+
 /* ---------- Informe técnico ---------- */
 .hoja{background:#fff;padding:26px 22px;border:1px solid var(--linea);border-radius:10px;color:#000}
 .hoja .cab{border-bottom:3px solid var(--tinta);padding-bottom:10px;margin-bottom:18px}
@@ -226,8 +248,23 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <h2 id="seccionTitulo">Terreno</h2>
         <span id="seccionSub"></span>
       </div>
+
+      <div id="agendaControles" class="oculto">
+        <div class="semana-nav">
+          <button type="button" id="btnSemanaAnt">◀</button>
+          <span class="lbl" id="semanaLabel"></span>
+          <button type="button" id="btnSemanaSig">▶</button>
+        </div>
+        <div class="contadores">
+          <div class="cont"><b id="totalSemana">0</b><span>visitas esta semana</span></div>
+          <div class="cont"><b id="sinConfirmar">0</b><span>sin confirmar</span></div>
+        </div>
+        <div id="avisoSinTecnico" class="aviso oculto"></div>
+      </div>
+
       <div class="barra">
         <button class="btn" id="btnNueva">Nueva OT</button>
+        <button class="btn oculto" id="btnNuevaVisita">+ Nueva visita</button>
         <button class="btn claro" id="btnRecargar" style="max-width:110px">Recargar</button>
       </div>
       <div id="listaOT" class="lista"></div>
@@ -237,6 +274,19 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     <section id="vNueva" class="oculto">
       <h2>Nueva orden</h2>
       <div id="nuevaError" class="aviso oculto"></div>
+      <div id="nuevaDesdeVisita" class="aviso bien oculto"></div>
+
+      <div class="seccion oculto" id="campoAccionVisita">
+        <div class="campo">
+          <label>¿Qué se hizo en esta visita?</label>
+          <div class="opciones" id="selAccionVisita">
+            <button type="button" data-v="diagnostico" aria-pressed="true">Diagnóstico</button>
+            <button type="button" data-v="retiro" aria-pressed="false">Retiro</button>
+            <button type="button" data-v="instalacion" aria-pressed="false">Instalación</button>
+            <button type="button" data-v="servicio" aria-pressed="false">Servicio</button>
+          </div>
+        </div>
+      </div>
 
       <div class="seccion">
         <div class="campo">
@@ -298,6 +348,10 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div class="seccion" id="detDatos"></div>
       <div class="seccion">
         <div class="estados" id="detEstados"></div>
+      </div>
+      <div class="seccion oculto" id="detVisitas">
+        <span class="rotulo">Visitas ligadas a esta orden</span>
+        <div class="estados" id="detVisitasLista"></div>
       </div>
       <div class="seccion">
         <label class="foto-btn" for="dFoto">Subir foto o captura del escáner</label>
@@ -394,6 +448,132 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
     </section>
 
+    <!-- Crear / editar visita -->
+    <section id="vVisitaForm" class="oculto">
+      <h2 id="visFormTitulo">Nueva visita</h2>
+      <div id="visFormError" class="aviso oculto"></div>
+      <div class="seccion">
+        <div class="campo">
+          <label for="vfCliente">Cliente</label>
+          <input id="vfCliente" list="dlClientes" autocomplete="organization" placeholder="Nombre o empresa">
+        </div>
+        <div class="campo">
+          <label>Tipo de visita</label>
+          <div class="opciones" id="selTipoVisita">
+            <button type="button" data-v="diagnostico" aria-pressed="true">Diagnóstico</button>
+            <button type="button" data-v="retiro" aria-pressed="false">Retiro</button>
+            <button type="button" data-v="instalacion" aria-pressed="false">Instalación</button>
+            <button type="button" data-v="servicio" aria-pressed="false">Servicio</button>
+            <button type="button" data-v="mixta" aria-pressed="false">Mixta</button>
+          </div>
+        </div>
+        <div class="campo">
+          <label for="vfFecha">Fecha</label>
+          <input id="vfFecha" type="date">
+        </div>
+        <div class="campo">
+          <label for="vfHora">Hora</label>
+          <input id="vfHora" type="time">
+        </div>
+        <div class="campo">
+          <label for="vfDuracion">Duración estimada (minutos)</label>
+          <input id="vfDuracion" inputmode="numeric" placeholder="60">
+        </div>
+        <div class="campo">
+          <label for="vfDireccion">Dirección</label>
+          <input id="vfDireccion" autocomplete="on" placeholder="Calle y número">
+        </div>
+        <div class="campo">
+          <label for="vfCiudad">Ciudad</label>
+          <input id="vfCiudad" autocomplete="on" placeholder="Talca">
+        </div>
+        <div class="campo">
+          <label for="vfContacto">Contacto en el sitio</label>
+          <input id="vfContacto" autocomplete="on" placeholder="Nombre de quien recibe">
+        </div>
+        <div class="campo">
+          <label for="vfTelefono">Teléfono del contacto</label>
+          <input id="vfTelefono" autocomplete="on" inputmode="tel" placeholder="+56 9 1234 5678">
+        </div>
+        <div class="campo">
+          <label for="vfTecnico">Técnico asignado</label>
+          <select id="vfTecnico">
+            <option value="">Sin asignar</option>
+          </select>
+        </div>
+        <div class="campo">
+          <label for="vfObs">Observaciones</label>
+          <textarea id="vfObs" placeholder="Cualquier detalle útil para quien va a terreno"></textarea>
+        </div>
+      </div>
+      <button class="btn" id="btnGuardarVisita">Guardar visita</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnVisFormCancelar">Cancelar</button>
+    </section>
+
+    <!-- Detalle de visita -->
+    <section id="vVisitaDetalle" class="oculto">
+      <h2 id="visDetTitulo">Visita</h2>
+      <div id="visDetError" class="aviso oculto"></div>
+      <div class="seccion" id="visDetDatos"></div>
+      <div class="enlaces" id="visDetEnlaces"></div>
+
+      <!-- Solo técnico asignado -->
+      <div class="seccion oculto" id="visTecnicoPanel">
+        <span class="rotulo">Tu visita</span>
+        <div class="estados" id="visTecnicoEstados"></div>
+        <div class="campo" style="margin-top:14px">
+          <label for="vtKmInicio">Km de salida</label>
+          <input id="vtKmInicio" inputmode="numeric" placeholder="45000">
+        </div>
+        <div class="campo">
+          <label for="vtKmTermino">Km de regreso</label>
+          <input id="vtKmTermino" inputmode="numeric" placeholder="45080">
+        </div>
+        <div class="campo">
+          <label for="vtObs">Observaciones</label>
+          <textarea id="vtObs" placeholder="Qué encontraste, qué falta"></textarea>
+        </div>
+        <button class="btn" id="btnGuardarVisitaTecnico">Guardar</button>
+      </div>
+
+      <div class="seccion oculto" id="visOfrecerOT">
+        <span class="rotulo">Esta visita tiene órdenes asociadas</span>
+        <p style="font-size:14px;color:var(--humo);margin:0 0 12px">¿Actualizamos el estado de esas órdenes también?</p>
+        <div id="visOfrecerOTLista"></div>
+      </div>
+
+      <button class="btn claro" id="btnCrearOTDesdeVisita">+ Crear OT desde esta visita</button>
+      <div style="height:10px"></div>
+
+      <div class="seccion">
+        <span class="rotulo">Órdenes ligadas</span>
+        <div class="estados" id="visOTLista"></div>
+      </div>
+
+      <!-- Solo dueño / coordinador -->
+      <div id="visCoordPanel">
+        <button class="btn claro" id="btnEditarVisita">Editar visita</button>
+        <div style="height:10px"></div>
+        <button class="btn claro" id="btnReprogramarVisita">Reprogramar</button>
+        <div style="height:10px"></div>
+        <button class="btn claro" id="btnCancelarVisita">Cancelar visita</button>
+        <div style="height:10px"></div>
+      </div>
+
+      <button class="btn claro" id="btnVisDetVolver">Volver</button>
+    </section>
+
+    <!-- Ruta del día -->
+    <section id="vRutaDia" class="oculto">
+      <h2 id="rutaDiaTitulo">Ruta del día</h2>
+      <div id="rutaDiaError" class="aviso oculto"></div>
+      <div class="dato"><span>Km recorridos en el día</span><span id="rutaDiaKm">—</span></div>
+      <div class="lista" id="rutaDiaLista" style="margin-top:14px"></div>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnRutaDiaVolver">Volver</button>
+    </section>
+
   </main>
   <nav class="navinf" id="navInf">
     <button type="button" data-seccion="terreno">Terreno</button>
@@ -415,7 +595,8 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
-  ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp"].forEach(v => $(v).classList.add("oculto"));
+  ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
+   "vVisitaForm","vVisitaDetalle","vRutaDia"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -460,7 +641,26 @@ function seccionDe(o) {
   return "modulos";
 }
 
+const ETIQUETA_VISITA = {
+  agendada:"Agendada", confirmada:"Confirmada", en_ruta:"En ruta",
+  realizada:"Realizada", reprogramada:"Reprogramada", cancelada:"Cancelada"
+};
+const TONO_VISITA = {
+  agendada:"espera", confirmada:"terreno", en_ruta:"trabajo",
+  realizada:"listo", reprogramada:"espera", cancelada:""
+};
+const ETIQUETA_TIPO_VISITA = {
+  diagnostico:"Diagnóstico", retiro:"Retiro", instalacion:"Instalación",
+  servicio:"Servicio", mixta:"Mixta"
+};
+const ETIQUETA_ACCION = {
+  diagnostico:"Diagnóstico", retiro:"Retiro", instalacion:"Instalación", servicio:"Servicio"
+};
+const DIAS_SEMANA = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+
 let perfil = null, ordenActual = null, fotoNueva = null, seccionActiva = "terreno";
+let semanaOffset = 0, visitaActual = null, visitaOrigen = null, tecnicos = [];
+let rutaDiaFecha = null, rutaDiaVisitas = [];
 
 // ---------- Sesión ----------
 $("btnEntrar").onclick = async () => {
@@ -490,6 +690,14 @@ async function iniciar() {
   cargarClientes();
   cargarModulos();
   cargarSistemas();
+  cargarTecnicos();
+}
+
+async function cargarTecnicos() {
+  const { data } = await db.from("perfiles").select("id,nombre").eq("rol", "tecnico").order("nombre");
+  tecnicos = data || [];
+  $("vfTecnico").innerHTML = '<option value="">Sin asignar</option>' +
+    tecnicos.map(t => `<option value="${t.id}">${escapar(t.nombre)}</option>`).join("");
 }
 
 // ---------- Navegación (Terreno / Módulos / Agenda) ----------
@@ -506,19 +714,24 @@ $("navInf").querySelectorAll("button").forEach(b => {
 
 function cambiarSeccion(seccion) {
   seccionActiva = seccion;
+  semanaOffset = 0;
   $("navInf").querySelectorAll("button").forEach(b => {
     b.setAttribute("aria-current", b.dataset.seccion === seccion ? "true" : "false");
   });
-  $("seccionTitulo").textContent = SECCION_TIT[seccion];
-  $("seccionSub").textContent = SECCION_SUB[seccion];
-  $("btnNueva").classList.toggle("oculto", seccion === "agenda");
+  const esTecnicoEnTerreno = seccion === "terreno" && perfil?.rol === "tecnico";
+  $("seccionTitulo").textContent = esTecnicoEnTerreno ? "Mis visitas de hoy" : SECCION_TIT[seccion];
+  $("seccionSub").textContent = esTecnicoEnTerreno ? fechaCL(new Date()) : SECCION_SUB[seccion];
+  $("btnNueva").classList.toggle("oculto", seccion === "agenda" || esTecnicoEnTerreno);
+  $("btnNuevaVisita").classList.toggle("oculto", !(seccion === "agenda" && perfil?.rol !== "tecnico"));
+  $("agendaControles").classList.toggle("oculto", seccion !== "agenda");
   cargarSeccion();
 }
 
 $("btnRecargar").onclick = cargarSeccion;
 
 async function cargarSeccion() {
-  if (seccionActiva === "agenda") return cargarAgenda();
+  if (seccionActiva === "agenda") return cargarAgendaSemana();
+  if (seccionActiva === "terreno" && perfil?.rol === "tecnico") return cargarMisVisitasHoy();
   return cargarOrdenes();
 }
 
@@ -561,35 +774,123 @@ async function cargarOrdenes() {
   });
 }
 
-async function cargarAgenda() {
+// ---------- Agenda semanal (coordinador / dueño) ----------
+const MES_CORTO = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+
+function isoFecha(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function lunesDeSemana(offset) {
+  const hoy = new Date();
+  const dia = hoy.getDay();
+  const diffLunes = dia === 0 ? -6 : 1 - dia;
+  const lunes = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + diffLunes + offset * 7);
+  return lunes;
+}
+
+$("btnSemanaAnt").onclick = () => { semanaOffset--; cargarAgendaSemana(); };
+$("btnSemanaSig").onclick = () => { semanaOffset++; cargarAgendaSemana(); };
+
+async function cargarAgendaSemana() {
   $("listaOT").innerHTML = '<div class="cargando">Cargando visitas…</div>';
+  const lunes = lunesDeSemana(semanaOffset);
+  const sabado = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + 5);
+  $("semanaLabel").textContent =
+    `${lunes.getDate()} ${MES_CORTO[lunes.getMonth()]} – ${sabado.getDate()} ${MES_CORTO[sabado.getMonth()]}`;
+
   const { data, error } = await db.from("visitas")
-    .select("id,tipo,estado,fecha_programada,hora_programada,direccion,ciudad,clientes(nombre)")
-    .not("estado", "in", "(realizada,cancelada)")
-    .order("fecha_programada");
+    .select("id,tipo,estado,fecha_programada,hora_programada,direccion,ciudad,tecnico_id,orden_ruta,clientes(nombre),perfiles(nombre),visita_ordenes(orden_id)")
+    .gte("fecha_programada", isoFecha(lunes)).lte("fecha_programada", isoFecha(sabado))
+    .order("fecha_programada").order("hora_programada", { nullsFirst: false });
 
   if (error) {
     $("listaOT").innerHTML = '<div class="aviso">No se pudieron cargar las visitas. Revisa tu conexión.</div>';
     return;
   }
+
+  $("totalSemana").textContent = data.length;
+  $("sinConfirmar").textContent = data.filter(v => v.estado === "agendada").length;
+  const sinTecnico = data.filter(v => !v.tecnico_id && v.estado !== "cancelada");
+  msg("avisoSinTecnico", sinTecnico.length
+    ? `${sinTecnico.length} visita${sinTecnico.length > 1 ? "s" : ""} esta semana sin técnico asignado.` : "");
+
   if (!data.length) {
-    $("listaOT").innerHTML = '<div class="vacio"><p>No hay visitas agendadas.<br>La pantalla para crear visitas todavía no está lista.</p></div>';
+    $("listaOT").innerHTML = '<div class="vacio"><p>No hay visitas agendadas esta semana.</p></div>';
+    return;
+  }
+
+  $("listaOT").innerHTML = "";
+  for (let i = 0; i < 6; i++) {
+    const dia = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + i);
+    const isoDia = isoFecha(dia);
+    const delDia = data.filter(v => v.fecha_programada === isoDia);
+
+    const cab = document.createElement("div");
+    cab.className = "dia-grupo";
+    cab.innerHTML = `<span class="nombre">${DIAS_SEMANA[i]} ${dia.getDate()}</span>`;
+    if (delDia.length && perfil?.rol !== "tecnico") {
+      const btnRuta = document.createElement("button");
+      btnRuta.type = "button";
+      btnRuta.textContent = "Ver ruta →";
+      btnRuta.onclick = () => abrirRutaDia(isoDia);
+      cab.appendChild(btnRuta);
+    }
+    $("listaOT").appendChild(cab);
+
+    if (!delDia.length) {
+      const vacio = document.createElement("div");
+      vacio.className = "vacio";
+      vacio.style.padding = "14px";
+      vacio.innerHTML = "<p>Sin visitas</p>";
+      $("listaOT").appendChild(vacio);
+      continue;
+    }
+    delDia.forEach(v => $("listaOT").appendChild(tarjetaVisita(v)));
+  }
+}
+
+function tarjetaVisita(v) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "ot visita";
+  const otCount = v.visita_ordenes?.length || 0;
+  b.innerHTML = `
+    <div class="fila1">
+      <span class="num">${v.hora_programada ? v.hora_programada.slice(0, 5) : "sin hora"}</span>
+      <span class="chip estado-visita ${TONO_VISITA[v.estado] || ""}">${ETIQUETA_VISITA[v.estado] || v.estado}</span>
+    </div>
+    <div class="cliente"></div>
+    <div class="detalle"></div>
+    <div class="sintoma"></div>`;
+  b.querySelector(".cliente").textContent = v.clientes?.nombre ?? "Sin cliente";
+  b.querySelector(".detalle").textContent =
+    `${ETIQUETA_TIPO_VISITA[v.tipo] || v.tipo} · ${v.ciudad || "sin ciudad"} · ${v.perfiles?.nombre ?? "sin técnico"}`;
+  b.querySelector(".sintoma").textContent = otCount ? `${otCount} OT asociada${otCount > 1 ? "s" : ""}` : "Sin OT asociadas";
+  b.onclick = () => abrirVisitaDetalle(v.id);
+  return b;
+}
+
+// ---------- Mis visitas de hoy (técnico) ----------
+async function cargarMisVisitasHoy() {
+  $("listaOT").innerHTML = '<div class="cargando">Cargando tus visitas…</div>';
+  const { data:{ user } } = await db.auth.getUser();
+  const { data, error } = await db.from("visitas")
+    .select("id,tipo,estado,fecha_programada,hora_programada,direccion,ciudad,tecnico_id,orden_ruta,clientes(nombre),visita_ordenes(orden_id)")
+    .eq("tecnico_id", user.id).eq("fecha_programada", isoFecha(new Date()))
+    .not("estado", "in", "(cancelada)")
+    .order("orden_ruta", { nullsFirst: false }).order("hora_programada");
+
+  if (error) {
+    $("listaOT").innerHTML = '<div class="aviso">No se pudieron cargar tus visitas. Revisa tu conexión.</div>';
+    return;
+  }
+  if (!data.length) {
+    $("listaOT").innerHTML = '<div class="vacio"><p>No tienes visitas agendadas para hoy.</p></div>';
     return;
   }
   $("listaOT").innerHTML = "";
-  data.forEach(v => {
-    const b = document.createElement("div");
-    b.className = "ot";
-    b.innerHTML = `
-      <div class="fila1">
-        <span class="num">${fechaCL(v.fecha_programada)}${v.hora_programada ? " · " + v.hora_programada.slice(0,5) : ""}</span>
-        <span class="dias">${v.estado}</span>
-      </div>
-      <div class="cliente">${escapar(v.clientes?.nombre ?? "Sin cliente")}</div>
-      <div class="detalle">${escapar(v.tipo)}</div>
-      <div class="sintoma">${escapar(v.direccion ?? "")}${v.ciudad ? ", " + escapar(v.ciudad) : ""}</div>`;
-    $("listaOT").appendChild(b);
-  });
+  data.forEach(v => $("listaOT").appendChild(tarjetaVisita(v)));
 }
 
 async function cargarClientes() {
@@ -611,6 +912,345 @@ async function cargarSistemas() {
   $("dlSistemas").innerHTML = vistos.map(s => `<option value="${s}">`).join("");
 }
 
+// ---------- Crear / editar visita ----------
+$("btnNuevaVisita").onclick = () => abrirVisitaForm(false);
+$("btnEditarVisita").onclick = () => abrirVisitaForm(true);
+
+function abrirVisitaForm(editando) {
+  msg("visFormError", "");
+  const v = editando ? visitaActual : null;
+  $("visFormTitulo").textContent = editando ? "Editar visita" : "Nueva visita";
+  $("vfCliente").value = v?.clientes?.nombre ?? "";
+  $("selTipoVisita").querySelector(`[data-v="${v?.tipo || "diagnostico"}"]`)?.click();
+  $("vfFecha").value = v?.fecha_programada ?? isoFecha(new Date());
+  $("vfHora").value = v?.hora_programada ? v.hora_programada.slice(0, 5) : "";
+  $("vfDuracion").value = v?.duracion_estimada_min ?? "";
+  $("vfDireccion").value = v?.direccion ?? "";
+  $("vfCiudad").value = v?.ciudad ?? "";
+  $("vfContacto").value = v?.contacto_sitio ?? "";
+  $("vfTelefono").value = v?.telefono_sitio ?? "";
+  $("vfTecnico").value = v?.tecnico_id ?? "";
+  $("vfObs").value = v?.observaciones ?? "";
+  if (!editando) visitaActual = null;
+  ver("vVisitaForm");
+}
+
+$("vfCliente").addEventListener("blur", async () => {
+  if (visitaActual) return;
+  const nombre = $("vfCliente").value.trim();
+  if (!nombre) return;
+  const { data } = await db.from("clientes").select("direccion,ciudad").ilike("nombre", nombre).limit(1);
+  if (data && data.length) {
+    if (!$("vfDireccion").value) $("vfDireccion").value = data[0].direccion || "";
+    if (!$("vfCiudad").value) $("vfCiudad").value = data[0].ciudad || "";
+  }
+});
+
+$("btnVisFormCancelar").onclick = () => {
+  if (visitaActual) abrirVisitaDetalle(visitaActual.id);
+  else { ver("vTablero"); cargarSeccion(); }
+};
+
+$("btnGuardarVisita").onclick = async () => {
+  msg("visFormError", "");
+  const nombreCliente = $("vfCliente").value.trim();
+  const fecha = $("vfFecha").value;
+  if (!nombreCliente) return msg("visFormError", "Falta el cliente.");
+  if (!fecha) return msg("visFormError", "Falta la fecha.");
+
+  $("btnGuardarVisita").disabled = true;
+  $("btnGuardarVisita").textContent = "Guardando…";
+  try {
+    const { data:{ user } } = await db.auth.getUser();
+    const { data: clienteRows } = await db.from("clientes")
+      .select("id,direccion,ciudad").ilike("nombre", nombreCliente).limit(1);
+    let cliente_id, clienteFicha = null;
+    if (clienteRows && clienteRows.length) {
+      cliente_id = clienteRows[0].id;
+      clienteFicha = clienteRows[0];
+    } else {
+      const { data: nuevo, error } = await db.from("clientes").insert({ nombre: nombreCliente }).select("id").single();
+      if (error) throw error;
+      cliente_id = nuevo.id;
+    }
+
+    const direccion = $("vfDireccion").value.trim() || null;
+    const ciudad = $("vfCiudad").value.trim() || null;
+    if (clienteFicha && (direccion || ciudad) &&
+        (direccion !== (clienteFicha.direccion || null) || ciudad !== (clienteFicha.ciudad || null))) {
+      if (confirm("La dirección o ciudad no coincide con la ficha del cliente. ¿Actualizamos también la ficha del cliente? (Cancelar deja esto solo para esta visita)")) {
+        await db.from("clientes").update({ direccion, ciudad }).eq("id", cliente_id);
+      }
+    }
+
+    const campos = {
+      cliente_id,
+      tipo: elegido("selTipoVisita") || "diagnostico",
+      fecha_programada: fecha,
+      hora_programada: $("vfHora").value || null,
+      duracion_estimada_min: parseInt($("vfDuracion").value, 10) || null,
+      direccion, ciudad,
+      contacto_sitio: $("vfContacto").value.trim() || null,
+      telefono_sitio: $("vfTelefono").value.trim() || null,
+      tecnico_id: $("vfTecnico").value || null,
+      observaciones: $("vfObs").value.trim() || null
+    };
+
+    let visitaId;
+    if (visitaActual) {
+      const { error } = await db.from("visitas").update(campos).eq("id", visitaActual.id);
+      if (error) throw error;
+      visitaId = visitaActual.id;
+    } else {
+      const { data: nueva, error } = await db.from("visitas")
+        .insert({ ...campos, creado_por: user.id }).select("id").single();
+      if (error) throw error;
+      visitaId = nueva.id;
+    }
+
+    cargarClientes();
+    await abrirVisitaDetalle(visitaId);
+  } catch (e) {
+    msg("visFormError", "No se pudo guardar: " + (e.message || "revisa tu conexión") + " — no se perdió lo que escribiste.");
+  } finally {
+    $("btnGuardarVisita").disabled = false;
+    $("btnGuardarVisita").textContent = "Guardar visita";
+  }
+};
+
+// ---------- Detalle de visita ----------
+async function abrirVisitaDetalle(id) {
+  msg("visDetError", "");
+  const { data: v, error } = await db.from("visitas")
+    .select("*, clientes(nombre,direccion,ciudad), perfiles(nombre)")
+    .eq("id", id).single();
+  if (error || !v) { msg("visDetError", "No se pudo cargar la visita."); return; }
+  visitaActual = v;
+
+  const { data:{ user } } = await db.auth.getUser();
+  const esMiVisita = perfil?.rol === "tecnico" && v.tecnico_id === user.id;
+
+  $("visDetTitulo").textContent = ETIQUETA_TIPO_VISITA[v.tipo] || v.tipo;
+  $("visDetDatos").innerHTML = `
+    <div class="dato"><span>Cliente</span><span>${escapar(v.clientes?.nombre ?? "—")}</span></div>
+    <div class="dato"><span>Fecha</span><span>${fechaCL(v.fecha_programada)}${v.hora_programada ? " · " + v.hora_programada.slice(0, 5) : ""}</span></div>
+    <div class="dato"><span>Duración estimada</span><span>${v.duracion_estimada_min ? v.duracion_estimada_min + " min" : "—"}</span></div>
+    <div class="dato"><span>Dirección</span><span>${escapar(v.direccion ?? "—")}${v.ciudad ? ", " + escapar(v.ciudad) : ""}</span></div>
+    <div class="dato"><span>Contacto</span><span>${escapar(v.contacto_sitio ?? "—")}${v.telefono_sitio ? " · " + escapar(v.telefono_sitio) : ""}</span></div>
+    <div class="dato"><span>Técnico</span><span>${escapar(v.perfiles?.nombre ?? "Sin asignar")}</span></div>
+    <div class="dato"><span>Estado</span><span class="chip estado-visita ${TONO_VISITA[v.estado] || ""}" style="margin-top:0">${ETIQUETA_VISITA[v.estado] || v.estado}</span></div>
+    ${v.km_inicio != null || v.km_termino != null ? `<div class="dato"><span>Km</span><span>${v.km_inicio ?? "—"} → ${v.km_termino ?? "—"}</span></div>` : ""}
+    ${v.observaciones ? `<div class="dato"><span>Observaciones</span><span>${escapar(v.observaciones)}</span></div>` : ""}
+    ${v.motivo_reprogramacion ? `<div class="dato"><span>Motivo</span><span>${escapar(v.motivo_reprogramacion)}</span></div>` : ""}`;
+
+  const enlaces = $("visDetEnlaces");
+  enlaces.innerHTML = "";
+  if (v.direccion) {
+    const q = encodeURIComponent(`${v.direccion}, ${v.ciudad || ""}`);
+    enlaces.innerHTML += `<a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Cómo llegar</a>`;
+  }
+  if (v.telefono_sitio) {
+    const tel = v.telefono_sitio.replace(/[^\d+]/g, "");
+    enlaces.innerHTML += `<a href="tel:${tel}">Llamar</a><a href="https://wa.me/${tel.replace("+", "")}" target="_blank" rel="noopener">WhatsApp</a>`;
+  }
+
+  $("visTecnicoPanel").classList.toggle("oculto", !esMiVisita);
+  if (esMiVisita) {
+    const cont = $("visTecnicoEstados");
+    cont.innerHTML = "";
+    [["en_ruta", "Marcar en ruta"], ["realizada", "Marcar realizada"]].forEach(([val, label]) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      if (v.estado === val) b.className = "actual";
+      b.onclick = () => marcarEstadoVisitaTecnico(val);
+      cont.appendChild(b);
+    });
+    $("vtKmInicio").value = v.km_inicio ?? "";
+    $("vtKmTermino").value = v.km_termino ?? "";
+    $("vtObs").value = v.observaciones ?? "";
+  }
+
+  $("visCoordPanel").classList.toggle("oculto", !["dueno", "coordinador"].includes(perfil?.rol));
+  $("visOfrecerOT").classList.add("oculto");
+
+  await cargarOTDeVisita(v.id);
+  ver("vVisitaDetalle");
+}
+
+async function cargarOTDeVisita(visita_id) {
+  const { data } = await db.from("visita_ordenes")
+    .select("accion,ordenes(id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,vehiculo_id,clientes(nombre,rut),vehiculos(patente))")
+    .eq("visita_id", visita_id);
+  const cont = $("visOTLista");
+  cont.innerHTML = "";
+  const filas = (data || []).filter(r => r.ordenes);
+  if (!filas.length) {
+    cont.innerHTML = '<p style="font-size:14px;color:var(--humo);margin:0">Ninguna todavía.</p>';
+    return;
+  }
+  filas.forEach(row => {
+    const o = row.ordenes;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = `${o.numero_ot ?? "OT"} · ${ETIQUETA_ACCION[row.accion] || row.accion} · ${ETIQUETA[o.estado] || o.estado}`;
+    b.onclick = () => abrirDetalle(o);
+    cont.appendChild(b);
+  });
+}
+
+async function marcarEstadoVisitaTecnico(estado) {
+  msg("visDetError", "");
+  const { error } = await db.rpc("actualizar_visita_tecnico", { p_visita_id: visitaActual.id, p_estado: estado });
+  if (error) return msg("visDetError", "No se pudo actualizar: " + error.message);
+  visitaActual.estado = estado;
+  if (estado === "realizada") await ofrecerActualizarOT();
+  abrirVisitaDetalle(visitaActual.id);
+}
+
+async function ofrecerActualizarOT() {
+  const { data } = await db.from("visita_ordenes")
+    .select("accion,ordenes(id,numero_ot,origen,estado,tipo_trabajo)")
+    .eq("visita_id", visitaActual.id);
+  const filas = (data || []).filter(r => r.ordenes);
+  const cont = $("visOfrecerOTLista");
+  cont.innerHTML = "";
+  filas.forEach(r => {
+    const o = r.ordenes;
+    const flujo = flujoDe(o);
+    const idx = flujo.indexOf(o.estado);
+    const siguiente = idx >= 0 ? flujo[idx + 1] : null;
+    if (!siguiente) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "estados";
+    b.style.cssText = "width:100%;padding:15px;border:1px solid var(--linea);border-radius:8px;background:var(--panel);cursor:pointer;text-align:left;font-size:15px;margin-bottom:8px";
+    b.textContent = `Marcar ${o.numero_ot} como ${(ETIQUETA[siguiente] || siguiente).toLowerCase()}`;
+    b.onclick = async () => {
+      const cierra = CERRADOS.includes(siguiente);
+      await db.from("ordenes")
+        .update({ estado: siguiente, ...(cierra ? { fecha_cierre: new Date().toISOString() } : {}) })
+        .eq("id", o.id);
+      b.remove();
+    };
+    cont.appendChild(b);
+  });
+  $("visOfrecerOT").classList.toggle("oculto", !cont.children.length);
+}
+
+$("btnGuardarVisitaTecnico").onclick = async () => {
+  msg("visDetError", "");
+  $("btnGuardarVisitaTecnico").disabled = true;
+  $("btnGuardarVisitaTecnico").textContent = "Guardando…";
+  const km_inicio = $("vtKmInicio").value ? parseInt($("vtKmInicio").value, 10) : null;
+  const km_termino = $("vtKmTermino").value ? parseInt($("vtKmTermino").value, 10) : null;
+  const observaciones = $("vtObs").value.trim() || null;
+  const { error } = await db.rpc("actualizar_visita_tecnico", {
+    p_visita_id: visitaActual.id, p_km_inicio: km_inicio, p_km_termino: km_termino, p_observaciones: observaciones
+  });
+  $("btnGuardarVisitaTecnico").disabled = false;
+  $("btnGuardarVisitaTecnico").textContent = "Guardar";
+  if (error) return msg("visDetError", "No se pudo guardar: " + error.message + " — no se perdió lo que escribiste.");
+  msg("visDetError", "Guardado.", true);
+};
+
+$("btnCrearOTDesdeVisita").onclick = () => {
+  visitaOrigen = visitaActual;
+  msg("nuevaError", "");
+  msg("nuevaDesdeVisita", `Esta orden va a quedar ligada a la visita del ${fechaCL(visitaOrigen.fecha_programada)}.`, true);
+  $("campoAccionVisita").classList.remove("oculto");
+  $("fCliente").value = visitaOrigen.clientes?.nombre ?? "";
+  ver("vNueva");
+};
+
+$("btnReprogramarVisita").onclick = async () => {
+  const fechaNueva = prompt("Nueva fecha (AAAA-MM-DD):", visitaActual.fecha_programada);
+  if (!fechaNueva) return;
+  const motivo = prompt("Motivo de la reprogramación:");
+  if (!motivo) return;
+  const { error } = await db.rpc("reprogramar_visita", { p_visita_id: visitaActual.id, p_fecha_nueva: fechaNueva, p_motivo: motivo });
+  if (error) return msg("visDetError", "No se pudo reprogramar: " + error.message);
+  abrirVisitaDetalle(visitaActual.id);
+};
+
+$("btnCancelarVisita").onclick = async () => {
+  const motivo = prompt("Motivo de la cancelación:");
+  if (!motivo) return;
+  const { error } = await db.rpc("cancelar_visita", { p_visita_id: visitaActual.id, p_motivo: motivo });
+  if (error) return msg("visDetError", "No se pudo cancelar: " + error.message);
+  abrirVisitaDetalle(visitaActual.id);
+};
+
+$("btnVisDetVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
+
+// ---------- Ruta del día ----------
+async function abrirRutaDia(fechaIso) {
+  msg("rutaDiaError", "");
+  $("rutaDiaTitulo").textContent = "Ruta del " + fechaCL(fechaIso);
+  const { data, error } = await db.from("visitas")
+    .select("id,tipo,estado,hora_programada,direccion,ciudad,tecnico_id,orden_ruta,km_inicio,km_termino,clientes(nombre),perfiles(nombre)")
+    .eq("fecha_programada", fechaIso)
+    .not("estado", "in", "(cancelada)")
+    .order("orden_ruta", { nullsFirst: false }).order("hora_programada");
+
+  if (error) { msg("rutaDiaError", "No se pudo cargar la ruta."); return; }
+
+  rutaDiaFecha = fechaIso;
+  rutaDiaVisitas = data || [];
+  pintarRutaDia();
+  ver("vRutaDia");
+}
+
+function pintarRutaDia() {
+  const cont = $("rutaDiaLista");
+  cont.innerHTML = "";
+  let kmTotal = 0, kmContados = 0;
+  rutaDiaVisitas.forEach((v, i) => {
+    if (v.km_inicio != null && v.km_termino != null) { kmTotal += (v.km_termino - v.km_inicio); kmContados++; }
+    const card = document.createElement("div");
+    card.className = "ot visita";
+    card.innerHTML = `
+      <div class="fila1">
+        <span class="num">${v.hora_programada ? v.hora_programada.slice(0, 5) : "sin hora"}</span>
+        <span class="chip estado-visita ${TONO_VISITA[v.estado] || ""}">${ETIQUETA_VISITA[v.estado] || v.estado}</span>
+      </div>
+      <div class="cliente"></div>
+      <div class="detalle"></div>`;
+    card.querySelector(".cliente").textContent = v.clientes?.nombre ?? "Sin cliente";
+    card.querySelector(".detalle").textContent =
+      `${ETIQUETA_TIPO_VISITA[v.tipo] || v.tipo} · ${v.perfiles?.nombre ?? "sin técnico"}`;
+    card.onclick = () => abrirVisitaDetalle(v.id);
+
+    const reord = document.createElement("div");
+    reord.className = "reordenar";
+    const subir = document.createElement("button");
+    subir.type = "button"; subir.textContent = "↑ Subir"; subir.disabled = i === 0;
+    subir.onclick = e => { e.stopPropagation(); moverVisitaRuta(i, -1); };
+    const bajar = document.createElement("button");
+    bajar.type = "button"; bajar.textContent = "↓ Bajar"; bajar.disabled = i === rutaDiaVisitas.length - 1;
+    bajar.onclick = e => { e.stopPropagation(); moverVisitaRuta(i, 1); };
+    reord.appendChild(subir); reord.appendChild(bajar);
+    card.appendChild(reord);
+
+    cont.appendChild(card);
+  });
+  $("rutaDiaKm").textContent = kmContados ? kmTotal + " km" : "sin registrar";
+}
+
+async function moverVisitaRuta(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= rutaDiaVisitas.length) return;
+  [rutaDiaVisitas[i], rutaDiaVisitas[j]] = [rutaDiaVisitas[j], rutaDiaVisitas[i]];
+  pintarRutaDia();
+  const actualizaciones = rutaDiaVisitas.map((v, idx) =>
+    db.from("visitas").update({ orden_ruta: idx + 1 }).eq("id", v.id));
+  const resultados = await Promise.all(actualizaciones);
+  const conError = resultados.find(r => r.error);
+  if (conError) msg("rutaDiaError", "No se pudo guardar el orden: " + conError.error.message);
+}
+
+$("btnRutaDiaVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
+
 // ---------- Nueva OT ----------
 function grupoOpciones(cont, multiple) {
   $(cont).querySelectorAll("button").forEach(b => {
@@ -622,6 +1262,8 @@ function grupoOpciones(cont, multiple) {
 }
 grupoOpciones("selOrigen");
 grupoOpciones("selTipoTrabajo");
+grupoOpciones("selTipoVisita");
+grupoOpciones("selAccionVisita");
 const elegido = cont => $(cont).querySelector('[aria-pressed="true"]')?.dataset.v ?? null;
 
 $("selTipoTrabajo").querySelectorAll("button").forEach(b => {
@@ -667,8 +1309,19 @@ $("fRut").oninput = e => {
   else             { p.textContent = "El dígito verificador no calza. Revísalo."; p.className = "pista mal"; }
 };
 
-$("btnNueva").onclick = () => { msg("nuevaError",""); ver("vNueva"); };
-$("btnCancelar").onclick = () => { limpiarForm(); ver("vTablero"); };
+$("btnNueva").onclick = () => {
+  msg("nuevaError", "");
+  visitaOrigen = null;
+  $("campoAccionVisita").classList.add("oculto");
+  msg("nuevaDesdeVisita", "");
+  ver("vNueva");
+};
+$("btnCancelar").onclick = () => {
+  const origen = visitaOrigen;
+  limpiarForm();
+  if (origen) abrirVisitaDetalle(origen.id);
+  else { ver("vTablero"); cargarSeccion(); }
+};
 
 $("fFoto").onchange = async e => {
   const f = e.target.files[0];
@@ -719,12 +1372,23 @@ $("btnGuardar").onclick = async () => {
 
     if (fotoNueva) await subirFoto(orden.id, fotoNueva, "recepcion");
 
+    const origenVisita = visitaOrigen;
+    if (origenVisita) {
+      const accion = elegido("selAccionVisita") || "diagnostico";
+      await db.from("visita_ordenes").insert({ visita_id: origenVisita.id, orden_id: orden.id, accion });
+    }
+
     limpiarForm();
-    ver("vTablero");
-    cambiarSeccion(esServicio || origen === "terreno" ? "terreno" : "modulos");
     cargarClientes();
     cargarModulos();
     cargarSistemas();
+
+    if (origenVisita) {
+      await abrirVisitaDetalle(origenVisita.id);
+    } else {
+      ver("vTablero");
+      cambiarSeccion(esServicio || origen === "terreno" ? "terreno" : "modulos");
+    }
   } catch (e) {
     msg("nuevaError", "No se pudo guardar: " + (e.message || "error desconocido"));
   } finally {
@@ -745,6 +1409,10 @@ function limpiarForm() {
   $("campoOrigen").classList.remove("oculto");
   $("campoModulo").classList.remove("oculto");
   $("campoSistema").classList.add("oculto");
+  visitaOrigen = null;
+  $("campoAccionVisita").classList.add("oculto");
+  msg("nuevaDesdeVisita", "");
+  $("selAccionVisita").querySelector('[data-v="diagnostico"]').click();
 }
 
 async function clienteConRut(nombre, rut) {
@@ -810,6 +1478,26 @@ async function abrirDetalle(o) {
   $("detFotos").innerHTML = "";
   ver("vDetalle");
   cargarFotos(o.id);
+  cargarVisitasDeOrden(o.id);
+}
+
+async function cargarVisitasDeOrden(orden_id) {
+  const { data } = await db.from("visita_ordenes")
+    .select("accion,visitas(id,fecha_programada,tipo,estado)")
+    .eq("orden_id", orden_id);
+  const filas = (data || []).filter(r => r.visitas);
+  $("detVisitas").classList.toggle("oculto", !filas.length);
+  if (!filas.length) return;
+  const cont = $("detVisitasLista");
+  cont.innerHTML = "";
+  filas.forEach(row => {
+    const v = row.visitas;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = `${fechaCL(v.fecha_programada)} · ${ETIQUETA_ACCION[row.accion] || row.accion} · ${ETIQUETA_VISITA[v.estado] || v.estado}`;
+    b.onclick = () => abrirVisitaDetalle(v.id);
+    cont.appendChild(b);
+  });
 }
 
 async function cambiarEstado(nuevo) {
