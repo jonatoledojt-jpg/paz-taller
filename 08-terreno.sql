@@ -15,7 +15,11 @@
 --                   sistema neumático, etc.). Siempre es terreno.
 -- ------------------------------------------------------------
 
-create type tipo_trabajo_orden as enum ('modulo', 'servicio');
+do $$ begin
+  if not exists (select 1 from pg_type where typname = 'tipo_trabajo_orden') then
+    create type tipo_trabajo_orden as enum ('modulo', 'servicio');
+  end if;
+end $$;
 
 alter table ordenes add column if not exists tipo_trabajo tipo_trabajo_orden not null default 'modulo';
 
@@ -46,18 +50,45 @@ create policy leer_cotizacion_items on cotizacion_items for select to authentica
 
 
 -- ------------------------------------------------------------
+-- 2b. observaciones (03-informes.sql) nunca se aplicó del todo
+--     en la base real — solo la política de movimientos_estado
+--     se había corrido por separado. Sin esta columna, guardar
+--     el informe técnico fallaba. Se agrega acá para que este
+--     archivo deje la base al día.
+-- ------------------------------------------------------------
+
+alter table ordenes add column if not exists observaciones text;
+
+
+-- ------------------------------------------------------------
 -- 3. Montos en ordenes (monto_cotizado, monto_final): están en
 --    la misma tabla que cliente/patente/estado, que el técnico
 --    sí necesita leer — por eso no se puede resolver solo con
 --    una política de fila. Se revoca el acceso a esas dos
---    columnas para TODOS (columna, no fila) y se abre un único
---    camino de lectura: esta función, que decide según el rol
---    de quien pregunta. Así no importa qué columnas pida el
---    cliente ni si alguien cambia la pantalla — la base corta
---    el paso igual.
+--    columnas para TODOS y se abre un único camino de lectura:
+--    la función de abajo, que decide según el rol de quien
+--    pregunta. Así no importa qué columnas pida el cliente ni
+--    si alguien cambia la pantalla — la base corta el paso igual.
+--
+--    OJO — nota para el futuro: Supabase le da SELECT de tabla
+--    completa a "authenticated" por defecto en cada tabla nueva,
+--    y ese permiso de tabla le gana a un revoke de columna (no
+--    se resta). Por eso acá se revoca el SELECT de TODA la tabla
+--    y se vuelve a otorgar columna por columna, explícitamente,
+--    salvo las dos de montos. Si el día de mañana se agrega una
+--    columna nueva a "ordenes", hay que sumarla a este GRANT o
+--    el técnico no la va a poder leer.
 -- ------------------------------------------------------------
 
-revoke select (monto_cotizado, monto_final) on ordenes from authenticated;
+revoke select on ordenes from authenticated;
+grant select (
+  id, numero_ot, origen, estado, cliente_id, vehiculo_id, tipo_modulo,
+  numero_serie, numero_parte, sintoma_cliente, codigos_reportados,
+  forma_llegada, numero_guia, recibido_por, kilometraje, aprobado_cliente,
+  fecha_aprobacion, numero_factura, orden_padre_id, fecha_ingreso,
+  fecha_compromiso, fecha_cierre, asignado_a, notas_internas, creado_por,
+  creado_en, actualizado_en, tipo_trabajo, sistema, observaciones
+) on ordenes to authenticated;
 
 create or replace function ordenes_montos(p_orden_id bigint)
 returns table (monto_cotizado numeric, monto_final numeric)
