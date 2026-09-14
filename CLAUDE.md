@@ -26,7 +26,9 @@ agregar cualquier campo, preguntar si vale ese costo.
 - **Frontend:** un solo `index.html`, JS vanilla con módulos ES, sin framework
   ni build. Publicado en GitHub Pages (repo `paz-taller`).
 - **Backend:** Supabase (proyecto `PazServices`, región São Paulo).
-  Postgres + Auth + Storage. Plan gratis.
+  Postgres + Auth + Storage. Plan gratis por ahora — **pasar a Pro cuando
+  empecemos a guardar datos reales de clientes** (hoy no hay respaldos
+  automáticos en el plan gratis).
 - **PWA:** `manifest.webmanifest` + `sw.js`, se instala en el celular.
 
 El `SUPABASE_URL` y la `anon key` están escritos al inicio del `<script>` del
@@ -46,6 +48,7 @@ sw.js                   service worker
 05-fix-rls.sql          endurece mi_rol() y agrega mi_sesion() de diagnóstico
 06-cotizacion-validez.sql  columna validez_dias en cotizaciones (falta ejecutar)
 07-cotizacion-multiple.sql  permite varias cotizaciones por orden (falta ejecutar)
+08-terreno.sql          tipo_trabajo/sistema, montos y cotizaciones ocultos al técnico
 ```
 
 Los `.sql` son historial de migraciones. No se suben a GitHub Pages pero
@@ -74,40 +77,107 @@ Tablas: `perfiles`, `clientes`, `vehiculos`, `ordenes`, `movimientos_estado`,
   mantiene sincronizado por trigger desde `cotizacion_items` con la que se
   haya editado/guardado más recientemente — no lo escribe el front.
 
-**Dos orígenes de módulo:**
+**`origen` (dónde ocurre) y `tipo_trabajo` (qué se hace) son independientes:**
 
-- `terreno` — se agenda visita, se escanea en sitio, se retira si no se
-  resuelve, y después hay una segunda visita para instalar.
-- `laboratorio` — el cliente lo trae o lo manda por encomienda.
+- `origen`: `terreno` o `laboratorio`.
+- `tipo_trabajo`: `modulo` (hay un módulo físico de por medio) o `servicio`
+  (reparación directa sobre el camión, sin retirar nada — línea eléctrica
+  cortada, aceite en el sistema neumático, etc.). `servicio` siempre es
+  `terreno`; no existe `laboratorio` + `servicio`.
+
+Combinaciones reales, con sus tres flujos de estado (`FLUJO` en `index.html`,
+mismo criterio en el objeto que en la base):
+
+- `terreno` + `modulo` (retiro): agendado → en_terreno → resuelto_en_terreno →
+  retirado → recepcionado → en_diagnostico → cotizado → en_reparacion →
+  en_pruebas → listo_entrega → instalado → facturado.
+- `terreno` + `servicio` (reparación en el camión): agendado → en_terreno →
+  cotizado → en_reparacion → resuelto_en_terreno → facturado. Sin recepción,
+  sin laboratorio, sin instalación — más corto a propósito.
+- `laboratorio` + `modulo` (llegó al taller): recepcionado → en_diagnostico →
+  cotizado → en_reparacion → en_pruebas → listo_entrega → entregado → facturado.
+
+Cuando `tipo_trabajo = servicio`, `tipo_modulo` va `null` y en su lugar se usa
+`sistema` (campo libre con `datalist`, igual criterio que `tipo_modulo`:
+eléctrico, neumático, hidráulico, motor... se alimenta solo con el uso, sin
+listas fijas). Hay un `check` en la base que obliga esto.
 
 Estados (enum `estado_orden`): agendado, en_terreno, resuelto_en_terreno,
 retirado, recepcionado, en_diagnostico, cotizado, en_reparacion, en_pruebas,
 listo_entrega, instalado, entregado, facturado, irreparable, rechazado, garantia.
+No se agregaron estados nuevos para `servicio`: reutiliza los que ya existían.
 
-El estado `resuelto_en_terreno` importa: es trabajo que se factura sin que
-exista módulo. Si se pierde, la facturación no cuadra.
+El estado `resuelto_en_terreno` importa en los dos flujos de terreno: es
+trabajo que se factura sin que exista módulo (o sin que se haya retirado
+ninguno). Si se pierde, la facturación no cuadra.
 
 ## Roles y permisos
 
 `dueno` (Jonatan), `coordinador`, `tecnico`. RLS activo en todas las tablas.
-Todos leen todo; dueño y coordinador escriben lo operativo; el técnico solo
-actualiza las órdenes asignadas a él.
+Todos leen todo lo operativo; dueño y coordinador escriben lo operativo; el
+técnico solo actualiza las órdenes asignadas a él.
+
+**Importante:** el esquema de roles no distingue "mecánico de terreno" de
+"técnico de laboratorio" — ambos son `rol = 'tecnico'`. Si algún día hace
+falta separar sus permisos o su pantalla por defecto de verdad (no solo el
+tab que abren), va a hacer falta un campo nuevo (por ejemplo `perfiles.area`).
+Por ahora la sección Terreno/Módulos es solo de navegación, no de permisos.
+
+**Montos, cotizaciones y precios: el técnico no los ve, de verdad, no solo en
+pantalla.** Esto se resolvió a nivel de base, no confiando en el front
+(08-terreno.sql):
+
+- `cotizaciones` / `cotizacion_items`: la política de lectura ahora exige
+  `mi_rol() in ('dueno','coordinador')`. Antes cualquier autenticado podía
+  leerlas (solo la escritura estaba restringida) — ese hueco ya se cerró.
+- `ordenes.monto_cotizado` y `ordenes.monto_final` están en la misma tabla
+  que cliente/patente/estado, que el técnico sí necesita — no se puede
+  resolver con una política de fila. Se usó `revoke select` sobre esas dos
+  columnas para **todos** los roles, y se abrió un único camino de lectura:
+  la función `ordenes_montos(orden_id)`, que decide según `mi_rol()`. Nadie,
+  ni siquiera dueño o coordinador, lee esas columnas directo de la tabla; el
+  front llama la función vía `db.rpc('ordenes_montos', ...)`.
+- Por si un técnico intenta escribir un monto en una orden que sí puede
+  editar (la suya): el trigger `proteger_montos_tecnico` revierte el valor,
+  pase lo que pase en la solicitud.
 
 Cuando se agreguen pagos y asistencia, esas tablas van con RLS **restringido
 solo al dueño**.
 
+## Navegación en tres secciones
+
+Barra fija abajo, siempre visible dentro de la app (no se esconde nada, es
+navegación, no permiso):
+
+- **Terreno** — servicios en terreno (todo `tipo_trabajo = servicio`) y la
+  parte de terreno de un retiro de módulo (agendado, en_terreno,
+  resuelto_en_terreno, retirado, instalado). Foco del mecánico.
+- **Módulos** — todo lo demás con `tipo_trabajo = modulo`: desde que se
+  recepciona (venga de terreno o de laboratorio) hasta que se entrega.
+  Foco del técnico de laboratorio.
+- **Agenda** — lista las `visitas` agendadas. Todavía no tiene pantalla para
+  crearlas (ver "Lo que viene"). Foco del coordinador.
+
+Cada rol abre por defecto en una sección (`coordinador` → Agenda, el resto →
+Terreno) pero puede navegar a las otras — el mecánico que retira un módulo
+necesita ver en qué va en Módulos. La función `seccionDe(orden)` en
+`index.html` decide en cuál aparece cada orden.
+
 ## Estado actual — qué funciona
 
 - Login con correo y contraseña
-- Tablero de OT abiertas con días en taller
-- Crear OT: cliente, RUT, patente, tipo de módulo, síntoma, foto
-- Cambio de estado con sugerencia del paso siguiente según el flujo
+- Navegación en tres secciones (Terreno / Módulos / Agenda) con barra inferior
+- Crear OT: primero se elige tipo de trabajo (módulo o reparación en terreno),
+  después cliente, RUT, patente, módulo/sistema según corresponda, síntoma, foto
+- Cambio de estado, con el flujo correcto según origen + tipo de trabajo
 - Subir fotos y capturas de escáner a Supabase Storage
-- Informe técnico con el formato de la empresa, imprimible a PDF
+- Informe técnico con el formato de la empresa, imprimible a PDF (oculta el
+  valor del servicio si lo abre un técnico)
 - Cotización con líneas de ítems (descripción, cantidad, valor unitario),
   IVA calculado al vuelo; al guardar avanza el estado a `cotizado` si
   corresponde. Se pueden guardar varias por orden, editar o eliminar
-  cualquiera
+  cualquiera. Solo dueño y coordinador la ven — el técnico ni siquiera tiene
+  el botón
 - Cotización formal imprimible (mismo tratamiento visual que el informe
   técnico), con número de cotización, tabla de ítems y fecha de validez
   (`validez_dias`, 15 por defecto)
@@ -130,13 +200,19 @@ numeradas: 1. Antecedentes, 2. Trabajos realizados, 3. Resultado final,
 4. Valor del servicio (neto + IVA 19% + total), 5. Observaciones → firmas de
 Jonatan Daniel Toledo Orellana y recepción conforme del cliente.
 
+Única variación permitida: la línea bajo el encabezado dice "Reparación de
+módulos electrónicos" o "Servicio técnico en terreno" según `tipo_trabajo`,
+y la fila de la tabla de datos dice "Módulo" o "Sistema" según corresponda.
+El resto del formato no se toca sin preguntar.
+
 ## Lo que viene, en orden
 
 1. ~~**Cotizaciones** con líneas de detalle~~ — hecho: tablas `cotizaciones` y
    `cotizacion_items`, pantalla en el front. Falta ejecutar `04-cotizaciones.sql`
    en Supabase.
-2. **Agenda de terreno y rutas** — la tabla `visitas` existe pero no tiene
-   pantalla.
+2. **Agenda de terreno y rutas** — la sección Agenda ya lista las `visitas`
+   agendadas, pero falta la pantalla para crearlas/editarlas y armar la ruta
+   del día (`orden_ruta`).
 3. **Gastos, asistencia y pagos** de colaboradores, visibles solo para el dueño.
 4. **Nexa** — agente de IA que lee el grupo de WhatsApp del equipo y crea las
    OT solo. Ver más abajo.

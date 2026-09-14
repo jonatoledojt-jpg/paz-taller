@@ -38,8 +38,25 @@ header button{
 }
 
 main{padding:16px;max-width:640px;margin:0 auto}
+main.con-navinf{padding-bottom:84px}
 
 .oculto{display:none !important}
+
+/* Navegación inferior (Terreno / Módulos / Agenda) */
+.navinf{
+  position:fixed;bottom:0;left:0;right:0;z-index:20;max-width:640px;margin:0 auto;
+  display:flex;background:var(--panel);border-top:1px solid var(--linea);
+  padding-bottom:env(safe-area-inset-bottom)
+}
+.navinf button{
+  flex:1;background:none;border:none;padding:12px 4px 10px;cursor:pointer;
+  color:var(--humo);font-size:13px;font-weight:500
+}
+.navinf button[aria-current="true"]{color:var(--tinta);box-shadow:inset 0 2px 0 var(--marca)}
+
+.seccion-tit{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px}
+.seccion-tit h2{margin:0}
+.seccion-tit span{font-size:13px;color:var(--humo)}
 
 /* Login */
 .login{max-width:360px;margin:12vh auto;padding:0 20px}
@@ -201,10 +218,14 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     <div class="marca">PAZ SERVICES<span id="quien"></span></div>
     <button id="btnSalir">Salir</button>
   </header>
-  <main>
+  <main id="main">
 
-    <!-- Tablero -->
+    <!-- Tablero (Terreno / Módulos / Agenda) -->
     <section id="vTablero">
+      <div class="seccion-tit">
+        <h2 id="seccionTitulo">Terreno</h2>
+        <span id="seccionSub"></span>
+      </div>
       <div class="barra">
         <button class="btn" id="btnNueva">Nueva OT</button>
         <button class="btn claro" id="btnRecargar" style="max-width:110px">Recargar</button>
@@ -219,6 +240,13 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 
       <div class="seccion">
         <div class="campo">
+          <label>¿Qué tipo de trabajo es?</label>
+          <div class="opciones" id="selTipoTrabajo">
+            <button type="button" data-v="modulo" aria-pressed="true">Módulo</button>
+            <button type="button" data-v="servicio" aria-pressed="false">Reparación en terreno</button>
+          </div>
+        </div>
+        <div class="campo" id="campoOrigen">
           <label>¿De dónde viene?</label>
           <div class="opciones" id="selOrigen">
             <button type="button" data-v="laboratorio" aria-pressed="true">Llegó al laboratorio</button>
@@ -239,10 +267,15 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <label for="fPatente">Patente</label>
           <input id="fPatente" autocomplete="on" style="text-transform:uppercase;font-family:var(--mono)" placeholder="ABCD12">
         </div>
-        <div class="campo">
+        <div class="campo" id="campoModulo">
           <label for="fModulo">Tipo de módulo</label>
           <input id="fModulo" list="dlModulos" autocomplete="on" placeholder="Escribe el módulo">
           <datalist id="dlModulos"></datalist>
+        </div>
+        <div class="campo oculto" id="campoSistema">
+          <label for="fSistema">Sistema afectado</label>
+          <input id="fSistema" list="dlSistemas" autocomplete="on" placeholder="Eléctrico, neumático, hidráulico…">
+          <datalist id="dlSistemas"></datalist>
         </div>
         <div class="campo">
           <label for="fSintoma">¿Qué falla tiene?</label>
@@ -336,7 +369,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <label for="cSolucion">Resultado final</label>
           <textarea id="cSolucion" placeholder="Cómo quedó el módulo"></textarea>
         </div>
-        <div class="campo">
+        <div class="campo" id="campoMonto">
           <label for="cMonto">Valor neto del servicio</label>
           <input id="cMonto" inputmode="numeric" placeholder="250000">
           <div class="pista" id="pistaMonto"></div>
@@ -362,6 +395,11 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     </section>
 
   </main>
+  <nav class="navinf" id="navInf">
+    <button type="button" data-seccion="terreno">Terreno</button>
+    <button type="button" data-seccion="modulos">Módulos</button>
+    <button type="button" data-seccion="agenda">Agenda</button>
+  </nav>
 </div>
 
 <script type="module">
@@ -402,15 +440,27 @@ const TONO = {
   resuelto_en_terreno:"listo", facturado:"listo"
 };
 const FLUJO = {
-  terreno:["agendado","en_terreno","resuelto_en_terreno","retirado","recepcionado","en_diagnostico",
-           "cotizado","en_reparacion","en_pruebas","listo_entrega","instalado","facturado"],
-  laboratorio:["recepcionado","en_diagnostico","cotizado","en_reparacion","en_pruebas",
-               "listo_entrega","entregado","facturado"]
+  terreno_modulo:["agendado","en_terreno","resuelto_en_terreno","retirado","recepcionado","en_diagnostico",
+                  "cotizado","en_reparacion","en_pruebas","listo_entrega","instalado","facturado"],
+  terreno_servicio:["agendado","en_terreno","cotizado","en_reparacion","resuelto_en_terreno","facturado"],
+  laboratorio_modulo:["recepcionado","en_diagnostico","cotizado","en_reparacion","en_pruebas",
+                       "listo_entrega","entregado","facturado"]
 };
+const flujoDe = o => FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || FLUJO.laboratorio_modulo;
 const EXCEPCIONES = ["irreparable","rechazado","garantia"];
 const CERRADOS = ["facturado","entregado","instalado","resuelto_en_terreno","rechazado"];
 
-let perfil = null, ordenActual = null, fotoNueva = null;
+// Estados donde un trabajo de módulo retirado en terreno sigue siendo
+// tarea del mecánico (antes de llegar al laboratorio, y al reinstalar).
+// El resto de los estados de un módulo son tarea del técnico de laboratorio.
+const ESTADOS_TERRENO_MODULO = ["agendado","en_terreno","resuelto_en_terreno","retirado","instalado"];
+function seccionDe(o) {
+  if (o.tipo_trabajo === "servicio") return "terreno";
+  if (o.origen === "terreno" && ESTADOS_TERRENO_MODULO.includes(o.estado)) return "terreno";
+  return "modulos";
+}
+
+let perfil = null, ordenActual = null, fotoNueva = null, seccionActiva = "terreno";
 
 // ---------- Sesión ----------
 $("btnEntrar").onclick = async () => {
@@ -433,19 +483,49 @@ async function iniciar() {
   $("quien").textContent = perfil.nombre;
   $("vLogin").classList.add("oculto");
   $("app").classList.remove("oculto");
+  $("main").classList.add("con-navinf");
+  seccionActiva = perfil.rol === "coordinador" ? "agenda" : "terreno";
   ver("vTablero");
-  cargarTablero();
+  cambiarSeccion(seccionActiva);
   cargarClientes();
   cargarModulos();
+  cargarSistemas();
 }
 
-// ---------- Tablero ----------
-$("btnRecargar").onclick = cargarTablero;
+// ---------- Navegación (Terreno / Módulos / Agenda) ----------
+const SECCION_TIT = { terreno:"Terreno", modulos:"Módulos", agenda:"Agenda" };
+const SECCION_SUB = {
+  terreno:"Servicios y retiros",
+  modulos:"Laboratorio",
+  agenda:"Visitas y rutas"
+};
 
-async function cargarTablero() {
+$("navInf").querySelectorAll("button").forEach(b => {
+  b.onclick = () => { ver("vTablero"); cambiarSeccion(b.dataset.seccion); };
+});
+
+function cambiarSeccion(seccion) {
+  seccionActiva = seccion;
+  $("navInf").querySelectorAll("button").forEach(b => {
+    b.setAttribute("aria-current", b.dataset.seccion === seccion ? "true" : "false");
+  });
+  $("seccionTitulo").textContent = SECCION_TIT[seccion];
+  $("seccionSub").textContent = SECCION_SUB[seccion];
+  $("btnNueva").classList.toggle("oculto", seccion === "agenda");
+  cargarSeccion();
+}
+
+$("btnRecargar").onclick = cargarSeccion;
+
+async function cargarSeccion() {
+  if (seccionActiva === "agenda") return cargarAgenda();
+  return cargarOrdenes();
+}
+
+async function cargarOrdenes() {
   $("listaOT").innerHTML = '<div class="cargando">Cargando órdenes…</div>';
   const { data, error } = await db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_modulo,sintoma_cliente,fecha_ingreso,vehiculo_id,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,clientes(nombre,rut),vehiculos(patente)")
     .not("estado", "in", `(${CERRADOS.join(",")})`)
     .order("fecha_ingreso", { ascending: false });
 
@@ -453,12 +533,13 @@ async function cargarTablero() {
     $("listaOT").innerHTML = '<div class="aviso">No se pudieron cargar las órdenes. Revisa tu conexión.</div>';
     return;
   }
-  if (!data.length) {
-    $("listaOT").innerHTML = '<div class="vacio"><p>No hay órdenes abiertas.</p></div>';
+  const filtradas = data.filter(o => seccionDe(o) === seccionActiva);
+  if (!filtradas.length) {
+    $("listaOT").innerHTML = '<div class="vacio"><p>No hay órdenes abiertas en esta sección.</p></div>';
     return;
   }
   $("listaOT").innerHTML = "";
-  data.forEach(o => {
+  filtradas.forEach(o => {
     const dias = Math.floor((Date.now() - new Date(o.fecha_ingreso)) / 86400000);
     const b = document.createElement("button");
     b.className = "ot";
@@ -473,9 +554,40 @@ async function cargarTablero() {
       <span class="chip ${TONO[o.estado] || ""}">${ETIQUETA[o.estado] || o.estado}</span>`;
     b.querySelector(".cliente").textContent = o.clientes?.nombre ?? "Sin cliente";
     b.querySelector(".pat").textContent = o.vehiculos?.patente ?? "sin patente";
-    b.querySelector(".mod").textContent = o.tipo_modulo ?? "módulo";
+    b.querySelector(".mod").textContent = o.tipo_trabajo === "servicio" ? (o.sistema ?? "sistema") : (o.tipo_modulo ?? "módulo");
     b.querySelector(".sintoma").textContent = o.sintoma_cliente ?? "";
     b.onclick = () => abrirDetalle(o);
+    $("listaOT").appendChild(b);
+  });
+}
+
+async function cargarAgenda() {
+  $("listaOT").innerHTML = '<div class="cargando">Cargando visitas…</div>';
+  const { data, error } = await db.from("visitas")
+    .select("id,tipo,estado,fecha_programada,hora_programada,direccion,ciudad,clientes(nombre)")
+    .not("estado", "in", "(realizada,cancelada)")
+    .order("fecha_programada");
+
+  if (error) {
+    $("listaOT").innerHTML = '<div class="aviso">No se pudieron cargar las visitas. Revisa tu conexión.</div>';
+    return;
+  }
+  if (!data.length) {
+    $("listaOT").innerHTML = '<div class="vacio"><p>No hay visitas agendadas.<br>La pantalla para crear visitas todavía no está lista.</p></div>';
+    return;
+  }
+  $("listaOT").innerHTML = "";
+  data.forEach(v => {
+    const b = document.createElement("div");
+    b.className = "ot";
+    b.innerHTML = `
+      <div class="fila1">
+        <span class="num">${fechaCL(v.fecha_programada)}${v.hora_programada ? " · " + v.hora_programada.slice(0,5) : ""}</span>
+        <span class="dias">${v.estado}</span>
+      </div>
+      <div class="cliente">${escapar(v.clientes?.nombre ?? "Sin cliente")}</div>
+      <div class="detalle">${escapar(v.tipo)}</div>
+      <div class="sintoma">${escapar(v.direccion ?? "")}${v.ciudad ? ", " + escapar(v.ciudad) : ""}</div>`;
     $("listaOT").appendChild(b);
   });
 }
@@ -492,6 +604,13 @@ async function cargarModulos() {
   $("dlModulos").innerHTML = vistos.map(m => `<option value="${m}">`).join("");
 }
 
+async function cargarSistemas() {
+  const { data } = await db.from("ordenes").select("sistema")
+    .not("sistema", "is", null).order("id", { ascending: false }).limit(500);
+  const vistos = [...new Set((data || []).map(o => o.sistema))].sort();
+  $("dlSistemas").innerHTML = vistos.map(s => `<option value="${s}">`).join("");
+}
+
 // ---------- Nueva OT ----------
 function grupoOpciones(cont, multiple) {
   $(cont).querySelectorAll("button").forEach(b => {
@@ -502,7 +621,17 @@ function grupoOpciones(cont, multiple) {
   });
 }
 grupoOpciones("selOrigen");
+grupoOpciones("selTipoTrabajo");
 const elegido = cont => $(cont).querySelector('[aria-pressed="true"]')?.dataset.v ?? null;
+
+$("selTipoTrabajo").querySelectorAll("button").forEach(b => {
+  b.addEventListener("click", () => {
+    const esServicio = elegido("selTipoTrabajo") === "servicio";
+    $("campoOrigen").classList.toggle("oculto", esServicio);
+    $("campoModulo").classList.toggle("oculto", esServicio);
+    $("campoSistema").classList.toggle("oculto", !esServicio);
+  });
+});
 
 // ---------- RUT: puntos, guion y dígito verificador ----------
 function formatearRut(valor) {
@@ -554,12 +683,16 @@ $("btnGuardar").onclick = async () => {
   const nombreCliente = $("fCliente").value.trim();
   const rut = $("fRut").value.trim();
   const patente = $("fPatente").value.trim().toUpperCase();
-  const origen = elegido("selOrigen");
+  const tipo_trabajo = elegido("selTipoTrabajo") || "modulo";
+  const esServicio = tipo_trabajo === "servicio";
+  const origen = esServicio ? "terreno" : elegido("selOrigen");
   const tipo = $("fModulo").value.trim();
+  const sistema = $("fSistema").value.trim();
   const sintoma = $("fSintoma").value.trim();
 
   if (!nombreCliente) return msg("nuevaError", "Falta el cliente.");
-  if (!tipo) return msg("nuevaError", "Escribe el tipo de módulo.");
+  if (esServicio && !sistema) return msg("nuevaError", "Escribe el sistema afectado.");
+  if (!esServicio && !tipo) return msg("nuevaError", "Escribe el tipo de módulo.");
   if (!sintoma) return msg("nuevaError", "Escribe qué falla tiene.");
 
   $("btnGuardar").disabled = true;
@@ -572,23 +705,26 @@ $("btnGuardar").onclick = async () => {
     const { data:{ user } } = await db.auth.getUser();
     const { data: orden, error } = await db.from("ordenes").insert({
       origen,
+      tipo_trabajo,
       estado: origen === "terreno" ? "agendado" : "recepcionado",
       cliente_id, vehiculo_id,
-      tipo_modulo: tipo,
+      tipo_modulo: esServicio ? null : tipo,
+      sistema: esServicio ? sistema : null,
       sintoma_cliente: sintoma,
       forma_llegada: origen === "terreno" ? "retiro_terreno" : "cliente_trae",
       recibido_por: user.id,
       creado_por: user.id
-    }).select().single();
+    }).select("id").single();
     if (error) throw error;
 
     if (fotoNueva) await subirFoto(orden.id, fotoNueva, "recepcion");
 
     limpiarForm();
     ver("vTablero");
-    cargarTablero();
+    cambiarSeccion(esServicio || origen === "terreno" ? "terreno" : "modulos");
     cargarClientes();
     cargarModulos();
+    cargarSistemas();
   } catch (e) {
     msg("nuevaError", "No se pudo guardar: " + (e.message || "error desconocido"));
   } finally {
@@ -598,13 +734,17 @@ $("btnGuardar").onclick = async () => {
 };
 
 function limpiarForm() {
-  ["fCliente","fRut","fPatente","fSintoma","fModulo"].forEach(i => $(i).value = "");
+  ["fCliente","fRut","fPatente","fSintoma","fModulo","fSistema"].forEach(i => $(i).value = "");
   $("pistaRut").textContent = "";
   $("pistaRut").className = "pista";
   $("previaFoto").innerHTML = "";
   $("lblFoto").textContent = "Tomar foto de recepción";
   $("fFoto").value = "";
   fotoNueva = null;
+  $("selTipoTrabajo").querySelector('[data-v="modulo"]').click();
+  $("campoOrigen").classList.remove("oculto");
+  $("campoModulo").classList.remove("oculto");
+  $("campoSistema").classList.add("oculto");
 }
 
 async function clienteConRut(nombre, rut) {
@@ -633,15 +773,16 @@ async function abrirDetalle(o) {
   ordenActual = o;
   msg("detError", "");
   $("detTitulo").textContent = o.numero_ot ?? "Orden";
+  const esServicio = o.tipo_trabajo === "servicio";
   $("detDatos").innerHTML = `
     <div class="dato"><span>Cliente</span><span>${o.clientes?.nombre ?? "—"}</span></div>
     <div class="dato"><span>Patente</span><span style="font-family:var(--mono)">${o.vehiculos?.patente ?? "—"}</span></div>
-    <div class="dato"><span>Módulo</span><span>${o.tipo_modulo ?? "—"}</span></div>
+    <div class="dato"><span>${esServicio ? "Sistema" : "Módulo"}</span><span>${(esServicio ? o.sistema : o.tipo_modulo) ?? "—"}</span></div>
     <div class="dato"><span>RUT</span><span style="font-family:var(--mono)">${o.clientes?.rut ?? "—"}</span></div>
     <div class="dato"><span>Origen</span><span>${o.origen === "terreno" ? "Terreno" : "Laboratorio"}</span></div>
     <div class="dato"><span>Falla</span><span>${o.sintoma_cliente ?? "—"}</span></div>`;
 
-  const flujo = FLUJO[o.origen];
+  const flujo = flujoDe(o);
   const otros = [...flujo, ...EXCEPCIONES].filter(e => e !== o.estado);
 
   $("detEstados").innerHTML = "";
@@ -664,6 +805,8 @@ async function abrirDetalle(o) {
     cont.appendChild(b);
   });
 
+  $("btnCotizar").classList.toggle("oculto", perfil?.rol === "tecnico");
+
   $("detFotos").innerHTML = "";
   ver("vDetalle");
   cargarFotos(o.id);
@@ -677,7 +820,7 @@ async function cambiarEstado(nuevo) {
     .eq("id", ordenActual.id);
   if (error) return msg("detError", "No se pudo cambiar el estado: " + error.message);
   ordenActual.estado = nuevo;
-  if (cierra) { ver("vTablero"); cargarTablero(); return; }
+  if (cierra) { ver("vTablero"); cargarSeccion(); return; }
   abrirDetalle(ordenActual);
 }
 
@@ -706,7 +849,7 @@ async function cargarFotos(orden_id) {
   });
 }
 
-$("btnVolver").onclick = () => { ver("vTablero"); cargarTablero(); };
+$("btnVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
 
 
 // ---------- Cotización ----------
@@ -875,7 +1018,7 @@ async function guardarItemsCotizacion() {
     );
     if (eIns) throw eIns;
 
-    const flujo = FLUJO[ordenActual.origen];
+    const flujo = flujoDe(ordenActual);
     const idxActual = flujo.indexOf(ordenActual.estado);
     const idxCotizado = flujo.indexOf("cotizado");
     if (idxActual >= 0 && idxCotizado >= 0 && idxActual < idxCotizado) {
@@ -918,7 +1061,7 @@ $("btnNuevaCot").onclick = () => {
 
 async function mostrarCotizacionFormal(id) {
   const { data: o } = await db.from("ordenes")
-    .select("numero_ot,tipo_modulo,clientes(nombre,rut),vehiculos(patente,modelo)")
+    .select("numero_ot,tipo_trabajo,tipo_modulo,sistema,clientes(nombre,rut),vehiculos(patente,modelo)")
     .eq("id", ordenActual.id).single();
   const { data: cot } = await db.from("cotizaciones")
     .select("id,validez_dias,creado_en").eq("id", id).single();
@@ -943,7 +1086,7 @@ async function mostrarCotizacionFormal(id) {
   <div class="hoja">
     <div class="cab">
       <h1>PAZ SERVICES &nbsp;|&nbsp; COTIZACIÓN</h1>
-      <div class="sub">Reparación de módulos electrónicos Mercedes Benz &middot; Talca &middot; COT-${String(cot.id).padStart(4, "0")} &middot; ${escapar(o.numero_ot)}</div>
+      <div class="sub">${o.tipo_trabajo === "servicio" ? "Servicio técnico en terreno" : "Reparación de módulos electrónicos"} Mercedes Benz &middot; Talca &middot; COT-${String(cot.id).padStart(4, "0")} &middot; ${escapar(o.numero_ot)}</div>
     </div>
 
     <table class="datos">
@@ -951,7 +1094,7 @@ async function mostrarCotizacionFormal(id) {
       <tr><td class="et">RUT</td><td>${escapar(o.clientes?.rut ?? "—")}</td></tr>
       <tr><td class="et">Vehículo</td><td>${escapar(o.vehiculos?.modelo ?? "—")}</td></tr>
       <tr><td class="et">Patente</td><td>${escapar(o.vehiculos?.patente ?? "—")}</td></tr>
-      <tr><td class="et">Módulo</td><td>${escapar(o.tipo_modulo)}</td></tr>
+      <tr><td class="et">${o.tipo_trabajo === "servicio" ? "Sistema" : "Módulo"}</td><td>${escapar(o.tipo_trabajo === "servicio" ? o.sistema : o.tipo_modulo)}</td></tr>
       <tr><td class="et">Fecha</td><td>${fechaCL(cot.creado_en)}</td></tr>
       <tr><td class="et">Válida hasta</td><td>${fechaCL(vence)}</td></tr>
     </table>
@@ -992,10 +1135,12 @@ $("cMonto").oninput = e => {
 $("btnCierre").onclick = async () => {
   msg("cieError", "");
   $("cieTitulo").textContent = "Informe " + (ordenActual.numero_ot ?? "");
+  $("campoMonto").classList.toggle("oculto", perfil?.rol === "tecnico");
 
   const { data: o } = await db.from("ordenes")
-    .select("monto_final,observaciones,vehiculo_id,vehiculos(modelo)")
+    .select("observaciones,vehiculo_id,vehiculos(modelo)")
     .eq("id", ordenActual.id).single();
+  const { data: m } = await db.rpc("ordenes_montos", { p_orden_id: ordenActual.id });
   const { data: d } = await db.from("diagnosticos")
     .select("id,pruebas_realizadas,causa_raiz,solucion")
     .eq("orden_id", ordenActual.id).order("id").limit(1);
@@ -1005,7 +1150,7 @@ $("btnCierre").onclick = async () => {
   $("cPruebas").value  = dg.pruebas_realizadas ?? "";
   $("cCausa").value    = dg.causa_raiz ?? "";
   $("cSolucion").value = dg.solucion ?? "";
-  $("cMonto").value    = o?.monto_final ?? "";
+  $("cMonto").value    = m?.[0]?.monto_final ?? "";
   $("cObs").value      = o?.observaciones ?? "";
   $("cMonto").dispatchEvent(new Event("input"));
   ver("vCierre");
@@ -1064,21 +1209,22 @@ $("btnGenerar").onclick = async () => {
 
 async function mostrarInforme() {
   const { data: o } = await db.from("ordenes")
-    .select("numero_ot,sintoma_cliente,tipo_modulo,monto_final,observaciones,fecha_ingreso,fecha_cierre,clientes(nombre,rut),vehiculos(patente,modelo)")
+    .select("numero_ot,sintoma_cliente,tipo_trabajo,tipo_modulo,sistema,observaciones,fecha_ingreso,fecha_cierre,clientes(nombre,rut),vehiculos(patente,modelo)")
     .eq("id", ordenActual.id).single();
+  const { data: m } = await db.rpc("ordenes_montos", { p_orden_id: ordenActual.id });
   const { data: d } = await db.from("diagnosticos")
     .select("pruebas_realizadas,causa_raiz,solucion")
     .eq("orden_id", ordenActual.id).order("id").limit(1);
   const dg = (d && d[0]) || {};
 
-  const neto = o.monto_final || 0;
+  const neto = m?.[0]?.monto_final || 0;
   const iva = Math.round(neto * 0.19);
 
   $("hojaInforme").innerHTML = `
   <div class="hoja">
     <div class="cab">
       <h1>PAZ SERVICES &nbsp;|&nbsp; INFORME T\u00c9CNICO</h1>
-      <div class="sub">Reparaci\u00f3n de m\u00f3dulos electr\u00f3nicos Mercedes Benz &middot; Talca &middot; ${escapar(o.numero_ot)}</div>
+      <div class="sub">${o.tipo_trabajo === "servicio" ? "Servicio t\u00e9cnico en terreno" : "Reparaci\u00f3n de m\u00f3dulos electr\u00f3nicos"} Mercedes Benz &middot; Talca &middot; ${escapar(o.numero_ot)}</div>
     </div>
 
     <table class="datos">
@@ -1086,7 +1232,7 @@ async function mostrarInforme() {
       <tr><td class="et">RUT</td><td>${escapar(o.clientes?.rut ?? "\u2014")}</td></tr>
       <tr><td class="et">Veh\u00edculo</td><td>${escapar(o.vehiculos?.modelo ?? "\u2014")}</td></tr>
       <tr><td class="et">Patente</td><td>${escapar(o.vehiculos?.patente ?? "\u2014")}</td></tr>
-      <tr><td class="et">M\u00f3dulo</td><td>${escapar(o.tipo_modulo)}</td></tr>
+      <tr><td class="et">${o.tipo_trabajo === "servicio" ? "Sistema" : "M\u00f3dulo"}</td><td>${escapar(o.tipo_trabajo === "servicio" ? o.sistema : o.tipo_modulo)}</td></tr>
       <tr><td class="et">Fecha</td><td>${fechaCL(o.fecha_cierre || Date.now())}</td></tr>
     </table>
 
