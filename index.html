@@ -294,7 +294,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   <header>
     <div class="marca">PAZ SERVICES<span id="quien"></span></div>
     <div style="display:flex;gap:8px">
-      <button id="btnNexa" class="oculto">Nexa</button>
+      <button id="btnNexa" class="oculto">PAZ</button>
       <button id="btnSalir">Salir</button>
     </div>
   </header>
@@ -317,6 +317,9 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <button type="button" data-v="terreno" aria-pressed="true">Terreno</button>
           <button type="button" data-v="laboratorio" aria-pressed="false">Laboratorio</button>
         </div>
+        <!-- Casos que PAZ dejó listos y esperan que alguien los agende.
+             Van arriba de todo porque el coordinador abre acá. -->
+        <div class="seccion oculto" id="porAgendar"></div>
       </div>
 
       <div id="gastosControles" class="oculto">
@@ -663,10 +666,10 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
     </section>
 
-    <!-- Nexa -->
+    <!-- PAZ (la asistente; en el código y en la base se llama "nexa") -->
     <section id="vNexa" class="oculto">
       <div class="seccion-tit">
-        <h2>Nexa</h2>
+        <h2>PAZ</h2>
         <span id="nexaSub"></span>
       </div>
       <div id="nexaError" class="aviso oculto"></div>
@@ -948,6 +951,7 @@ $("selAgendaOrigen").querySelectorAll("button").forEach(b => {
 
 async function cargarAgendaSemana() {
   $("listaOT").innerHTML = '<div class="cargando">Cargando agenda…</div>';
+  cargarCasosPorAgendar();   // sin await: no atrasa la semana
   const lunes = lunesDeSemana(semanaOffset);
   const sabado = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + 5);
   $("semanaLabel").textContent =
@@ -2240,9 +2244,14 @@ $("btnCotImpVolver").onclick = () => ver("vCotizacion");
 
 const NEXA_FICHA = {
   cliente:"Cliente", telefono:"Teléfono", vehiculo:"Vehículo", anio:"Año",
-  patente:"Patente", ubicacion:"Ubicación", modulo:"Módulo",
-  codigo:"Código de falla", sintoma:"Falla"
+  patente:"Patente", ubicacion:"Ubicación", atencion:"Cómo se atiende",
+  modulo:"Módulo", sistema:"Sistema", codigo:"Código de falla", sintoma:"Falla"
 };
+// Módulo y sistema son excluyentes: si hay uno, el otro sobra. Se cuentan
+// como un solo dato para que la ficha no diga "falta 1" para siempre.
+const FICHA_EXCLUYENTES = ["modulo", "sistema"];
+const ETIQUETA_ATENCION = { terreno:"Visita a terreno", envio:"Envía el módulo" };
+const textoFicha = (k, v) => k === "atencion" ? (ETIQUETA_ATENCION[v] || v) : v;
 
 $("btnNexa").onclick = () => {
   msg("nexaError", "");
@@ -2339,7 +2348,7 @@ function pintarChatNexa(esperando) {
   if (!nexaMensajes.length && !esperando) {
     const p = document.createElement("div");
     p.className = "burbuja ella esperando";
-    p.textContent = "Escribe lo que te dijo el cliente y Nexa sigue la conversación. La ficha de arriba se va llenando sola.";
+    p.textContent = "Escribe lo que te dijo el cliente y PAZ sigue la conversación. La ficha de arriba se va llenando sola.";
     c.appendChild(p);
   }
   nexaMensajes.forEach(m => {
@@ -2351,7 +2360,7 @@ function pintarChatNexa(esperando) {
   if (esperando) {
     const b = document.createElement("div");
     b.className = "burbuja ella esperando";
-    b.textContent = "Nexa está escribiendo…";
+    b.textContent = "PAZ está escribiendo…";
     c.appendChild(b);
   }
   c.lastElementChild?.scrollIntoView({ block: "end" });
@@ -2365,20 +2374,21 @@ $("btnNexaFicha").onclick = () => {
 function pintarFichaNexa() {
   const f = nexaFicha || {};
   const claves = Object.keys(NEXA_FICHA);
-  const faltan = claves.filter(k => !f[k]).length;
+  const faltan = claves.filter(k => !f[k] && !FICHA_EXCLUYENTES.includes(k)).length +
+                 (FICHA_EXCLUYENTES.some(k => f[k]) ? 0 : 1);
 
-  $("nexaFichaSub").textContent = faltan === claves.length
+  $("nexaFichaSub").textContent = Object.values(f).every(v => !v)
     ? "sin datos todavía"
     : [f.cliente, f.patente, faltan ? `faltan ${faltan}` : "completa"]
         .filter(Boolean).join(" · ");
 
   $("nexaFicha").innerHTML = Object.entries(NEXA_FICHA).map(([k, et]) => {
-    const v = f[k];
+    const v = textoFicha(k, f[k]);
     return `<div class="dato"><span>${et}</span>` +
            `<span class="${v ? "" : "ficha-falta"}">${v ? escapar(v) : "—"}</span></div>`;
   }).join("") +
   `<div class="pista" style="margin-top:10px">${
-    faltan ? "Nexa no inventa: lo que el cliente no dijo queda vacío."
+    faltan ? "PAZ no inventa: lo que el cliente no dijo queda vacío."
            : "La ficha está completa."
   }</div>`;
 }
@@ -2401,7 +2411,7 @@ async function llamarNexa(accion) {
     })
   });
   const cuerpo = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(cuerpo.error || `Nexa respondió con error ${r.status}.`);
+  if (!r.ok) throw new Error(cuerpo.error || `PAZ respondió con error ${r.status}.`);
   return cuerpo;
 }
 
@@ -2436,7 +2446,7 @@ async function enviarNexa() {
     actualizarFichaNexa();   // sin await: la ficha llega un poco después
   } catch (e) {
     pintarChatNexa();
-    msg("nexaError", (e.message || "Falló la conexión con Nexa.") +
+    msg("nexaError", (e.message || "Falló la conexión con PAZ.") +
       " Tu mensaje quedó guardado: toca Enviar de nuevo para reintentar.");
   } finally {
     nexaOcupada = false;
@@ -2470,27 +2480,111 @@ $("nexaTexto").onkeydown = e => {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); enviarNexa(); }
 };
 
-// Nexa propone, la persona confirma: esto solo llena el formulario.
+// PAZ propone, la persona confirma: esto solo llena el formulario.
+//
+// Cómo se decide el tipo de trabajo, para no obligar a inventar datos:
+//   envío              → laboratorio + módulo
+//   terreno con módulo → terreno + módulo
+//   terreno sin módulo → terreno + servicio, usando el sistema afectado
+// Si no alcanza para saberlo, se deja como viene y la persona elige.
+function llenarFormularioDesdeFicha(f, conv) {
+  $("btnNueva").click();               // limpia el formulario y lo muestra
+  nexaOrigenConv = conv;
+
+  const esTerreno = f.atencion === "terreno";
+  const esServicio = esTerreno && !f.modulo;
+
+  if (f.atencion) {
+    $("selTipoTrabajo").querySelector(`[data-v="${esServicio ? "servicio" : "modulo"}"]`).click();
+    if (!esServicio) {
+      $("selOrigen").querySelector(`[data-v="${esTerreno ? "terreno" : "laboratorio"}"]`).click();
+    }
+  }
+
+  $("fCliente").value = f.cliente ?? "";
+  $("fPatente").value = (f.patente ?? "").toUpperCase();
+  $("fModulo").value  = f.modulo ?? "";
+  $("fSistema").value = f.sistema ?? "";
+  $("fSintoma").value = [f.sintoma, f.codigo ? `Código: ${f.codigo}` : null]
+    .filter(Boolean).join(" · ");
+
+  if (esTerreno || f.ubicacion) {
+    if ($("camposAgenda").classList.contains("oculto")) $("btnToggleAgendar").click();
+    $("fUbicacionGps").value = f.ubicacion ?? "";
+  }
+
+  const falta = [
+    "el RUT",
+    esServicio ? "el sistema afectado" : "el tipo de módulo",
+    esTerreno || f.ubicacion ? "la fecha de la visita" : null
+  ].filter(Boolean).join(", ");
+  msg("nuevaError", `Datos traídos de PAZ. Revisa antes de guardar: ${falta}.`);
+  $("nuevaError").className = "aviso info";
+}
+
 $("btnNexaCrearOT").onclick = () => {
   const f = nexaFicha || {};
   if (!f.cliente && !f.patente && !f.sintoma) {
     return msg("nexaError", "La ficha todavía no tiene datos. Conversa un poco más con el cliente.");
   }
-  const conv = nexaConvId;
-  $("btnNueva").click();               // limpia el formulario y lo muestra
-  nexaOrigenConv = conv;
-  $("fCliente").value = f.cliente ?? "";
-  $("fPatente").value = (f.patente ?? "").toUpperCase();
-  $("fModulo").value  = f.modulo ?? "";
-  $("fSintoma").value = [f.sintoma, f.codigo ? `Código: ${f.codigo}` : null]
-    .filter(Boolean).join(" · ");
-  if (f.ubicacion) {
-    $("btnToggleAgendar").click();
-    $("fUbicacionGps").value = f.ubicacion;
-  }
-  msg("nuevaError", "Datos traídos de Nexa. Revísalos antes de guardar: falta el RUT y confirmar el módulo.");
-  $("nuevaError").className = "aviso info";
+  llenarFormularioDesdeFicha(f, nexaConvId);
 };
+
+
+// ---------- Casos por agendar (arriba de la Agenda) ----------
+// Cuando PAZ entiende que hay que ir a ver el camión, el caso queda acá
+// hasta que alguien crea la OT con fecha. Es el aviso al coordinador:
+// no hay notificaciones todavía, pero él abre la app justo en esta pantalla.
+async function cargarCasosPorAgendar() {
+  const caja = $("porAgendar");
+  if (!["dueno","coordinador"].includes(perfil?.rol)) {
+    caja.classList.add("oculto");
+    return;
+  }
+
+  const { data, error } = await db.from("nexa_conversaciones")
+    .select("id,titulo,ficha")
+    .is("orden_id", null)
+    .eq("ficha->>atencion", "terreno")
+    .order("actualizado_en", { ascending: false });
+
+  if (error || !data?.length) {
+    caja.classList.add("oculto");
+    return;
+  }
+
+  caja.classList.remove("oculto");
+  caja.innerHTML = `<span class="rotulo">Casos por agendar (${data.length})</span>`;
+  const lista = document.createElement("div");
+  lista.className = "lista";
+  caja.appendChild(lista);
+
+  data.forEach(c => {
+    const f = c.ficha || {};
+    const div = document.createElement("div");
+    div.className = "ot";
+    div.innerHTML = `
+      <div class="fila1">
+        <span class="num">CASO ${String(c.id).padStart(4, "0")}</span>
+        <span class="dias tarde">sin agendar</span>
+      </div>
+      <div class="cliente"></div>
+      <div class="detalle"><span class="pat"></span> · <span class="mod"></span></div>
+      <div class="sintoma"></div>
+      <div class="reordenar">
+        <button type="button" class="ver">Ver caso</button>
+        <button type="button" class="agendar">Agendar visita</button>
+      </div>`;
+    div.querySelector(".cliente").textContent = f.cliente || c.titulo || "Cliente sin nombre";
+    div.querySelector(".pat").textContent = f.patente || "sin patente";
+    div.querySelector(".mod").textContent = f.modulo || f.sistema || "sin detalle";
+    div.querySelector(".sintoma").textContent =
+      [f.ubicacion, f.sintoma].filter(Boolean).join(" · ");
+    div.querySelector(".ver").onclick = () => { ver("vNexa"); abrirCasoNexa(c.id); };
+    div.querySelector(".agendar").onclick = () => llenarFormularioDesdeFicha(f, c.id);
+    lista.appendChild(div);
+  });
+}
 
 
 // ---------- Cierre de OT e informe ----------

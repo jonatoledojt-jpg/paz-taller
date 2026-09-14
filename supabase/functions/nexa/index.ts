@@ -113,10 +113,21 @@ Deno.serve(async (req) => {
         "Lee la conversación y devuelve SOLO un objeto JSON, sin texto alrededor,",
         "con estas claves exactas:",
         '{"cliente":null,"telefono":null,"vehiculo":null,"anio":null,"patente":null,',
-        '"ubicacion":null,"codigo":null,"sintoma":null,"modulo":null}',
+        '"ubicacion":null,"atencion":null,"modulo":null,"sistema":null,',
+        '"codigo":null,"sintoma":null}',
         "Usa null en lo que el cliente todavía no haya dicho.",
         "No inventes ni deduzcas datos que no estén en la conversación.",
         "patente en mayúsculas y sin puntos.",
+        // atencion decide a dónde va el caso: si hay que salir a ver el
+        // camión, alguien tiene que agendar la visita; si el cliente manda
+        // el módulo, no hay visita que agendar.
+        '"atencion" es "terreno" si el trabajo requiere ir donde está el',
+        'vehículo (visita, revisión, reparación en sitio, retiro del módulo),',
+        'o "envio" si el cliente va a mandar o traer el módulo al taller.',
+        "Si de la conversación todavía no se puede saber cuál de los dos es,",
+        "deja null.",
+        '"sistema" es el sistema afectado cuando no hay un módulo identificado',
+        '(por ejemplo "caja de cambios", "eléctrico", "neumático").',
       ].join(" ");
 
       const texto = await llamarIA(apiKey, cfg.modelo, instrucciones, historial);
