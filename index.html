@@ -890,7 +890,7 @@ async function cargarCotizacion(id) {
 
 function pintarListaCotizaciones() {
   const cont = $("cotAnteriores");
-  if (cotLista.length < 2) { cont.innerHTML = ""; cont.classList.add("oculto"); return; }
+  if (!cotLista.length) { cont.innerHTML = ""; cont.classList.add("oculto"); return; }
   cont.classList.remove("oculto");
   cont.innerHTML = '<span class="rotulo">Cotizaciones de esta orden</span>' +
     cotLista.map(c => `
@@ -1050,8 +1050,17 @@ $("btnVerCotFormal").onclick = async () => {
   if (ok) mostrarCotizacionFormal(cotizacionId);
 };
 
-$("btnNuevaCot").onclick = () => {
+$("btnNuevaCot").onclick = async () => {
   msg("cotError", "");
+  const hayAlgoQueGuardar = cotItemsData.some(i => i.descripcion.trim() && i.valor_unitario > 0);
+  if (hayAlgoQueGuardar) {
+    $("btnNuevaCot").disabled = true;
+    $("btnNuevaCot").textContent = "Guardando…";
+    const ok = await guardarItemsCotizacion();
+    $("btnNuevaCot").disabled = false;
+    $("btnNuevaCot").textContent = "+ Nueva cotización para esta orden";
+    if (!ok) return;
+  }
   cotizacionId = null;
   cotItemsData = [{ descripcion: "", cantidad: 1, valor_unitario: 0 }];
   $("cotValidez").value = 15;
