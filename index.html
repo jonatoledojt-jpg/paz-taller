@@ -229,6 +229,15 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 }
 .chat-barra .btn{flex:0 0 auto;width:auto;padding:15px 20px}
 .ficha-falta{color:var(--humo);font-weight:400}
+.ficha-cab{
+  display:flex;width:100%;align-items:center;justify-content:space-between;gap:10px;
+  background:none;border:none;padding:0;cursor:pointer;text-align:left
+}
+.ficha-cab .ficha-tit{display:block;font-size:15px;font-weight:500}
+.ficha-cab .ficha-sub{display:block;font-size:13px;color:var(--humo);margin-top:2px}
+.ficha-cab .flecha{flex:0 0 auto;color:var(--humo);font-size:14px}
+.ficha-cab[aria-expanded="true"] .flecha{transform:rotate(180deg)}
+#nexaFichaCuerpo{margin-top:14px}
 
 /* ---------- Informe técnico ---------- */
 .hoja{background:#fff;padding:26px 22px;border:1px solid var(--linea);border-radius:10px;color:#000}
@@ -668,11 +677,21 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 
       <!-- Conversación abierta -->
       <div id="nexaConv" class="oculto">
+        <!-- La ficha va plegada: lo que importa en pantalla es la
+             conversación. El resumen basta para saber qué falta. -->
         <div class="seccion">
-          <span class="rotulo">Ficha del caso</span>
-          <div id="nexaFicha"></div>
-          <div style="height:12px"></div>
-          <button class="btn claro" id="btnNexaCrearOT">Crear la OT desde este caso</button>
+          <button type="button" class="ficha-cab" id="btnNexaFicha" aria-expanded="false">
+            <span>
+              <span class="ficha-tit">Ficha del caso</span>
+              <span class="ficha-sub" id="nexaFichaSub">sin datos todavía</span>
+            </span>
+            <span class="flecha">▾</span>
+          </button>
+          <div id="nexaFichaCuerpo" class="oculto">
+            <div id="nexaFicha"></div>
+            <div style="height:12px"></div>
+            <button class="btn claro" id="btnNexaCrearOT">Crear la OT desde este caso</button>
+          </div>
         </div>
 
         <div class="chat" id="nexaChat"></div>
@@ -2239,6 +2258,8 @@ function mostrarConversacionNexa() {
   $("nexaSub").textContent = "Caso abierto";
   $("nexaInicio").classList.add("oculto");
   $("nexaConv").classList.remove("oculto");
+  $("nexaFichaCuerpo").classList.add("oculto");
+  $("btnNexaFicha").setAttribute("aria-expanded", "false");
   pintarChatNexa();
   pintarFichaNexa();
 }
@@ -2331,16 +2352,28 @@ function pintarChatNexa(esperando) {
   c.lastElementChild?.scrollIntoView({ block: "nearest" });
 }
 
+$("btnNexaFicha").onclick = () => {
+  const abierto = $("nexaFichaCuerpo").classList.toggle("oculto") === false;
+  $("btnNexaFicha").setAttribute("aria-expanded", abierto ? "true" : "false");
+};
+
 function pintarFichaNexa() {
   const f = nexaFicha || {};
-  const faltan = Object.keys(NEXA_FICHA).filter(k => !f[k]).length;
+  const claves = Object.keys(NEXA_FICHA);
+  const faltan = claves.filter(k => !f[k]).length;
+
+  $("nexaFichaSub").textContent = faltan === claves.length
+    ? "sin datos todavía"
+    : [f.cliente, f.patente, faltan ? `faltan ${faltan}` : "completa"]
+        .filter(Boolean).join(" · ");
+
   $("nexaFicha").innerHTML = Object.entries(NEXA_FICHA).map(([k, et]) => {
     const v = f[k];
     return `<div class="dato"><span>${et}</span>` +
            `<span class="${v ? "" : "ficha-falta"}">${v ? escapar(v) : "—"}</span></div>`;
   }).join("") +
   `<div class="pista" style="margin-top:10px">${
-    faltan ? `Faltan ${faltan} dato${faltan === 1 ? "" : "s"}. Nexa no inventa: si no lo dijo el cliente, queda vacío.`
+    faltan ? "Nexa no inventa: lo que el cliente no dijo queda vacío."
            : "La ficha está completa."
   }</div>`;
 }
