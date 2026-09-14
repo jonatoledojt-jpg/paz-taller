@@ -29,7 +29,14 @@ agregar cualquier campo, preguntar si vale ese costo.
   Postgres + Auth + Storage. Plan gratis por ahora — **pasar a Pro cuando
   empecemos a guardar datos reales de clientes** (hoy no hay respaldos
   automáticos en el plan gratis).
-- **PWA:** `manifest.webmanifest` + `sw.js`, se instala en el celular.
+- **PWA:** `manifest.webmanifest` + `sw.js`, se instala en el celular. El
+  `CACHE` de `sw.js` se sube de versión (`paz-taller-vN`) cada vez que hay un
+  cambio de fondo en `index.html`, para que el service worker no sirva una
+  versión vieja desde caché.
+- **Gastos** vive en **otro repo aparte**: `github.com/jonatoledojt-jpg/Gastos`,
+  publicado en `jonatoledojt-jpg.github.io/Gastos/`. Es una PWA propia, con su
+  propio diseño — no comparte código ni estilos con esta app. Desde acá solo
+  se linkea (pestaña "Gastos" en la barra inferior, `target="_blank"`).
 
 El `SUPABASE_URL` y la `anon key` están escritos al inicio del `<script>` del
 `index.html`. La anon key es pública por diseño y la protege el RLS.
@@ -49,8 +56,16 @@ sw.js                   service worker
 06-cotizacion-validez.sql  columna validez_dias en cotizaciones (falta ejecutar)
 07-cotizacion-multiple.sql  permite varias cotizaciones por orden (falta ejecutar)
 08-terreno.sql          tipo_trabajo/sistema, montos y cotizaciones ocultos al técnico
-09-agenda.sql           agenda de terreno: esquema + RPC + permisos (falta ejecutar)
+09-agenda.sql           PRIMER intento de agenda (sobre visitas) — reemplazado, ver abajo
+09-agenda-simple.sql    agenda SOBRE ordenes (el enfoque que quedó) (falta ejecutar)
 ```
+
+`09-agenda.sql` (con tabla `visitas`) se reemplazó por `09-agenda-simple.sql`
+(agenda como columnas en `ordenes`) porque el enfoque de `visitas` obligaba a
+llenar dos fichas para el mismo trabajo y quedaba desvinculado de las OT. Los
+dos archivos quedan en el historial; **no hace falta correr `09-agenda.sql`**
+si no se corrió antes — si ya se corrió, no pasa nada, sus tablas y funciones
+simplemente quedan sin uso (ver "Agenda" más abajo).
 
 `08-terreno.sql` también agregó `ordenes.observaciones`, que en teoría venía de
 `03-informes.sql` pero nunca se había aplicado en la base real (solo la
@@ -63,16 +78,27 @@ conviene mantenerlos versionados.
 ## Modelo de datos
 
 Tablas: `perfiles`, `clientes`, `vehiculos`, `ordenes`, `movimientos_estado`,
-`visitas`, `visita_ordenes`, `diagnosticos`, `archivos`, `cotizaciones`,
-`cotizacion_items`.
+`diagnosticos`, `archivos`, `cotizaciones`, `cotizacion_items`.
+
+**`visitas` y `visita_ordenes` existen pero están DEPRECADAS** — no se usan
+en la app. Fue el primer intento de agenda; se abandonó porque obligaba a
+llenar dos fichas (la visita y la OT) para el mismo trabajo. Se dejaron sin
+borrar porque podrían servir a futuro para agrupar varias OT en una sola
+salida a terreno (un mismo viaje que retira módulos de varios clientes de
+una flota). Si se retoman, hay que revisar `09-agenda.sql` (RPC
+`actualizar_visita_tecnico`, `reprogramar_visita`, `cancelar_visita`, y sus
+políticas) antes de construir nada encima — puede que ya no encajen con
+cómo evolucionó `ordenes` desde entonces.
 
 **Decisiones de diseño que hay que respetar:**
 
 - La tabla se llama `ordenes`, no `modulos`. **Cada fila es un trabajo**, no un
   objeto físico. Un mismo módulo puede tener varias órdenes a lo largo del tiempo.
-- `visitas` y `ordenes` están separadas. Una visita a terreno puede retirar
-  varios módulos de un mismo cliente de flota, o resolver el problema en sitio
-  sin retirar nada. Se unen por `visita_ordenes`.
+- **La agenda es una capa sobre `ordenes`, no una entidad aparte.** Agendar =
+  crear o editar una OT con fecha planificada. Los datos principales siguen
+  viviendo en `ordenes`; la agenda solo agrega cuándo y cómo se planifica la
+  atención (`fecha_agendada`, `franja`, `ubicacion_gps`, `tecnico_agendado`,
+  `orden_ruta` — ver "Agenda" más abajo).
 - Correlativo `OT-2026-0001` generado por trigger, reinicia cada año.
 - Todo cambio de estado se registra solo en `movimientos_estado` (trigger).
 - `numero_serie` existe en el esquema pero **no se usa**: identifican los
@@ -149,118 +175,123 @@ pantalla.** Esto se resolvió a nivel de base, no confiando en el front
   `db.rpc('ordenes_montos', ...)`. **Si se agrega una columna nueva a
   `ordenes`, hay que sumarla al `grant select (...)` de `08-terreno.sql` o
   el técnico no la va a poder leer.**
-- Por si un técnico intenta escribir un monto en una orden que sí puede
-  editar (la suya): el trigger `proteger_montos_tecnico` revierte el valor,
-  pase lo que pase en la solicitud.
+- Por si un técnico intenta escribir un monto, o cliente/origen/campos de
+  agenda, en una orden que sí puede editar (la suya): el trigger
+  `proteger_campos_tecnico` (antes `proteger_montos_tecnico`, renombrado en
+  `09-agenda-simple.sql` porque ya protege más que montos) revierte esos
+  valores a lo que estaban, pase lo que pase en la solicitud. Cubre:
+  `monto_cotizado`, `monto_final`, `cliente_id`, `origen`, `fecha_agendada`,
+  `franja`, `ubicacion_gps`, `tecnico_agendado`, `orden_ruta`. El técnico
+  agenda ninguna orden — solo dueño y coordinador editan agenda.
 
 Cuando se agreguen pagos y asistencia, esas tablas van con RLS **restringido
 solo al dueño**.
 
-## Navegación en tres secciones
+## Navegación en cuatro secciones
 
-Barra fija abajo, siempre visible dentro de la app (no se esconde nada, es
-navegación, no permiso):
+Barra fija abajo, siempre visible dentro de la app:
 
-- **Terreno** — servicios en terreno (todo `tipo_trabajo = servicio`) y la
-  parte de terreno de un retiro de módulo (agendado, en_terreno,
-  resuelto_en_terreno, retirado, instalado). Foco del mecánico.
-- **Módulos** — todo lo demás con `tipo_trabajo = modulo`: desde que se
-  recepciona (venga de terreno o de laboratorio) hasta que se entrega.
-  Foco del técnico de laboratorio.
-- **Agenda** — vista semanal de `visitas` (lunes a sábado), crear/editar,
-  ruta del día. Foco del coordinador.
+- **Terreno** — OT con `origen = terreno`.
+- **Laboratorio** — OT con `origen = laboratorio`.
+- **Agenda** — OT con `fecha_agendada` puesta, vista semanal.
+- **Gastos** — link externo a `jonatoledojt-jpg.github.io/Gastos/` (otro
+  repo, otra app — ver "Stack"). No es una pantalla de esta app.
 
-Cada rol abre por defecto en una sección (`coordinador` → Agenda, el resto →
-Terreno) pero puede navegar a las otras — el mecánico que retira un módulo
-necesita ver en qué va en Módulos. La función `seccionDe(orden)` en
-`index.html` decide en cuál aparece cada orden.
+Una misma OT puede aparecer en Agenda y también en Terreno o Laboratorio a
+la vez — no se duplica la tarjeta, es la misma fila de `ordenes` filtrada
+de dos formas distintas. Una sola función, `tarjetaOT(o, opts)` en
+`index.html`, arma la tarjeta en las tres listas (con `opts.agenda` cambia
+qué línea de texto muestra, pero el estilo es siempre el mismo).
 
-**Caso especial:** cuando un `tecnico` abre la pestaña Terreno, no ve la
-lista de OT — ve "Mis visitas de hoy" (sus `visitas` del día, ordenadas por
-`orden_ruta`). Es su pantalla de inicio real. Dueño y coordinador siguen
-viendo la lista de OT de terreno en esa misma pestaña.
+Cada rol abre por defecto en una sección (`coordinador` → Agenda, el resto
+→ Terreno) pero puede navegar a las otras — no se esconde nada, es
+navegación, no permiso.
 
-## Agenda de terreno
+**Importante:** el esquema de roles no distingue "mecánico de terreno" de
+"técnico de laboratorio" — ambos son `rol = 'tecnico'`. Si algún día hace
+falta separar sus permisos o su pantalla por defecto de verdad, va a hacer
+falta un campo nuevo (por ejemplo `perfiles.area`).
 
-Construida completa sobre `visitas` y `visita_ordenes` (existían desde
-01-schema.sql sin pantalla). Ver `09-agenda.sql`.
+## Agenda
 
-**Modelo:**
-- `tipo_visita` ahora incluye `servicio` (antes: diagnostico, retiro,
-  instalacion, mixta), para visitas de reparación en terreno sin módulo.
-- `visitas.fecha_original`: se llena **una sola vez**, en la primera
-  reprogramación — no se pisa en reprogramaciones siguientes. No hay
-  historial completo de reprogramaciones, a propósito (fuera de alcance).
-- `visitas.duracion_estimada_min`, `visitas.motivo_reprogramacion`: nuevas.
-- **Nadie borra visitas, ni el dueño.** No hay política de `delete` en la
-  tabla — cancelar (`estado = 'cancelada'`) es la única salida, y queda en
-  el historial. No hay botón de eliminar en ninguna pantalla tampoco.
+Es una capa sobre `ordenes` (ver `09-agenda-simple.sql`), no una entidad
+aparte — ver "Modelo de datos" arriba. Reemplaza el primer intento
+(`09-agenda.sql`, basado en `visitas`), que quedó deprecado.
 
-**Permisos — por qué hay tres funciones en vez de políticas RLS solas:**
-RLS filtra filas, no columnas. Para que el técnico pueda cambiar el estado
-de SU visita sin poder tocar el cliente, la fecha o el técnico asignado,
-no bastaba con una política — hicieron falta funciones `security definer`
-que escriben solo lo que corresponde:
+**Por qué:** llenar una OT y además una visita para el mismo trabajo era
+doble trabajo y las dos fichas quedaban desconectadas. Agendar ahora es
+literal: crear o editar la OT con `fecha_agendada`.
 
-- `actualizar_visita_tecnico(p_visita_id, p_estado, p_km_inicio,
-  p_km_termino, p_observaciones)` — el técnico **no tiene `update` directo
-  sobre `visitas` en absoluto** (no existe ninguna política que se lo
-  permita). Este RPC es su único camino de escritura: verifica que
-  `auth.uid()` sea el `tecnico_id` de esa visita, solo toca esos cuatro
-  campos, y solo acepta `p_estado` en `en_ruta` o `realizada` — cualquier
-  otro valor lo rechaza.
-- `reprogramar_visita(p_visita_id, p_fecha_nueva, p_motivo)` y
-  `cancelar_visita(p_visita_id, p_motivo)` — dueño/coordinador. Son
-  funciones (no un `update` libre desde el front) para que la regla de
-  "`fecha_original` se llena una sola vez" viva en un solo lugar en la
-  base, no repetida en el JS.
+**Sin dirección/ciudad, sin hora exacta — a propósito:**
+- En terreno se trabaja con GPS, no con direcciones escritas.
+  `ubicacion_gps` acepta un link de Maps pegado desde WhatsApp,
+  coordenadas, o texto de referencia si todavía no hay link. La app decide
+  cómo abrirlo: si empieza con `http`, abre el link directo; si no, arma
+  una búsqueda de Google Maps con ese texto (`enlaceUbicacion()` en
+  `index.html`). Dirección y ciudad **siguen existiendo en la ficha del
+  cliente** (`clientes.direccion/ciudad`), para facturación — eso no cambió.
+- No hay horario fijo, solo `franja`: mañana / tarde / todo el día. Los
+  trayectos son largos y variables; una hora exacta crea un compromiso
+  falso con el cliente. El orden real del día lo da `orden_ruta`
+  (botones subir/bajar, nunca arrastrar — con guantes, en el celular, no
+  sirve).
 
-**Dos huecos que `09-agenda.sql` tuvo que cerrar para que "crear OT desde
-la visita" funcionara** (ver el archivo para el detalle):
-- `visita_ordenes` solo aceptaba `insert` de dueño/coordinador; se agregó
-  una política para que el técnico pueda ligar una OT nueva a su propia
-  visita.
-- `ordenes` solo aceptaba `insert` de dueño/coordinador — el técnico **no
-  podía crear ninguna OT nueva**, ni siquiera antes de este módulo. No es
-  un bug de la agenda, es algo que ya estaba así y que recién se hizo
-  visible porque ahora hay una pantalla que lo necesita.
+**Caso laboratorio:** cuando el cliente avisa que manda o trae un módulo
+un día determinado, es la misma OT: `origen = laboratorio`,
+`fecha_agendada` con la fecha estimada, estado inicial `agendado`. Cuando
+llega de verdad, pasa a `recepcionado` (cambio de estado normal, nada
+especial). Así la agenda muestra tanto lo que hay que salir a buscar como
+lo que va a llegar solo.
 
-**Relación visita ↔ OT:** una visita puede tener 0, 1 o varias OT
-(`visita_ordenes`, con `accion`: diagnostico/retiro/instalacion/servicio).
-Desde la visita se crea una OT nueva (cliente precargado) o se ve la lista
-de las ya ligadas; desde la OT se ve a qué visitas está ligada. Al marcar
-una visita como `realizada`, si tiene OT asociadas, la app **ofrece**
-actualizar el estado de esas OT — nunca lo hace sola.
+**El mismo formulario para todo:** "Nueva OT" (`vNueva` en `index.html`)
+sirve para una OT normal, una agendada de terreno y una agendada de
+laboratorio. El botón "+ Agendar esta orden" revela los campos de agenda
+dentro del mismo formulario (`fecha_agendada`, `franja`, `ubicacion_gps`,
+`tecnico_agendado`) — no hay una pantalla separada de "agendar". El botón
+"Agendar" de la pestaña Agenda abre ese mismo formulario con la sección ya
+desplegada. Para una OT que ya existe, la agenda se edita en línea dentro
+del detalle de la OT (sección "Agenda", botón "Editar agenda") — tampoco
+hay pantalla intermedia.
+
+**Permisos:** dueño y coordinador agendan y editan agenda (`ordenes` ya
+tenía sus políticas de `insert`/`update` para esos roles). El técnico
+**ve** sus OT agendadas (filtradas por `tecnico_agendado = auth.uid()`
+cuando entra a la pestaña Agenda) pero no tiene manera de tocar
+`fecha_agendada`, `franja`, `ubicacion_gps`, `tecnico_agendado` ni
+`orden_ruta` — el trigger `proteger_campos_tecnico` los protege a nivel de
+base, no solo ocultando botones (ver "Roles y permisos").
 
 **Qué no se construyó a propósito (pedido explícito):** optimización de
-rutas o distancias, notificaciones/recordatorios, sincronización con
-Google Calendar, vista de mes/calendario gráfico, historial múltiple de
-reprogramaciones. La ruta del día se reordena con botones subir/bajar, no
-arrastrando (con guantes, en el celular, no sirve).
+rutas o cálculo de distancias, notificaciones/recordatorios,
+sincronización con Google Calendar, calendario gráfico mensual, historial
+múltiple de reprogramaciones, un módulo nuevo separado de `visitas`.
 
 ## Estado actual — qué funciona
 
 - Login con correo y contraseña
-- Navegación en tres secciones (Terreno / Módulos / Agenda) con barra inferior
+- Navegación en cuatro secciones (Terreno / Laboratorio / Agenda / Gastos)
+  con barra inferior — Gastos abre la app aparte
 - Crear OT: primero se elige tipo de trabajo (módulo o reparación en terreno),
-  después cliente, RUT, patente, módulo/sistema según corresponda, síntoma, foto
+  después cliente, RUT, patente, módulo/sistema según corresponda, síntoma,
+  foto, y opcionalmente agendarla (fecha, franja, ubicación GPS, técnico)
+  en el mismo formulario
 - Cambio de estado, con el flujo correcto según origen + tipo de trabajo
 - Subir fotos y capturas de escáner a Supabase Storage
 - Informe técnico con el formato de la empresa, imprimible a PDF (oculta el
   valor del servicio si lo abre un técnico)
 - Cotización con líneas de ítems (descripción, cantidad, valor unitario),
-  IVA calculado al vuelo; al guardar avanza el estado a `cotizado` si
-  corresponde. Se pueden guardar varias por orden, editar o eliminar
-  cualquiera. Solo dueño y coordinador la ven — el técnico ni siquiera tiene
-  el botón
+  cada una con su etiqueta y placeholder, apiladas en celular; IVA calculado
+  al vuelo; al guardar avanza el estado a `cotizado` si corresponde. Se
+  pueden guardar varias por orden, editar o eliminar cualquiera. Solo dueño
+  y coordinador la ven — el técnico ni siquiera tiene el botón
 - Cotización formal imprimible (mismo tratamiento visual que el informe
   técnico), con número de cotización, tabla de ítems y fecha de validez
   (`validez_dias`, 15 por defecto)
-- Agenda de terreno: vista semanal con contadores y aviso de visitas sin
-  técnico, crear/editar visita (precarga dirección/ciudad del cliente),
-  ruta del día reordenable, crear OT desde una visita, reprogramar/cancelar,
-  y la pantalla del técnico ("Mis visitas de hoy") con su RPC de escritura
-  acotada a estado/km/observaciones
+- Agenda: vista semanal (lunes a sábado, con flechas de semana) agrupada
+  por día, con pestañas Terreno/Laboratorio arriba; cada fila es la misma
+  tarjeta de OT que en el resto de la app; reordenar con botones subir/bajar
+  sobre `orden_ruta`; editar la agenda de una OT existente desde su detalle,
+  en línea, sin pantalla intermedia
 
 **Detalles de implementación:**
 
@@ -290,10 +321,11 @@ El resto del formato no se toca sin preguntar.
 1. ~~**Cotizaciones** con líneas de detalle~~ — hecho: tablas `cotizaciones` y
    `cotizacion_items`, pantalla en el front. Falta ejecutar `04-cotizaciones.sql`
    en Supabase.
-2. ~~**Agenda de terreno y rutas**~~ — hecho: vista semanal, crear/editar
-   visita, ruta del día, vinculación con OT. Falta ejecutar `09-agenda.sql`
-   en Supabase.
-3. **Gastos, asistencia y pagos** de colaboradores, visibles solo para el dueño.
+2. ~~**Agenda de terreno y rutas**~~ — hecho, como capa sobre `ordenes` (ver
+   "Agenda" más arriba). Falta ejecutar `09-agenda-simple.sql` en Supabase.
+3. ~~**Gastos**~~ — existe, pero como **app aparte**
+   (`github.com/jonatoledojt-jpg/Gastos`), no integrada a esta base de datos.
+   Asistencia y pagos de colaboradores siguen pendientes.
 4. **Nexa** — agente de IA que lee el grupo de WhatsApp del equipo y crea las
    OT solo. Ver más abajo.
 5. **Códigos GS** — app separada y offline que se alimenta de la vista
