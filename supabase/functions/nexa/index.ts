@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
     // El prompt se lee con service_role: es el único que puede verlo.
     const admin = createClient(URL_SUPABASE, SERVICE);
     const { data: cfg } = await admin
-      .from("nexa_config").select("prompt,modelo,activa").eq("id", 1).single();
+      .from("nexa_config").select("prompt,prompt_ficha,modelo,activa").eq("id", 1).single();
 
     if (!cfg?.activa) return json({ error: "Nexa está desactivada." }, 503);
     if (!cfg.prompt?.trim()) {
@@ -123,29 +123,15 @@ Deno.serve(async (req) => {
     // Segunda pasada: saca la ficha del caso de lo conversado.
     // Va aparte para no ensuciar el prompt conversacional con
     // instrucciones de formato.
+    //
+    // Las instrucciones viven en nexa_config.prompt_ficha, no acá: la
+    // función de WhatsApp usa exactamente las mismas, y si cada una
+    // tuviera su copia terminarían armando fichas distintas.
     if (accion === "ficha") {
-      const instrucciones = [
-        "Lee la conversación y devuelve SOLO un objeto JSON, sin texto alrededor,",
-        "con estas claves exactas:",
-        '{"cliente":null,"telefono":null,"vehiculo":null,"anio":null,"patente":null,',
-        '"ubicacion":null,"atencion":null,"modulo":null,"sistema":null,',
-        '"codigo":null,"sintoma":null}',
-        "Usa null en lo que el cliente todavía no haya dicho.",
-        "No inventes ni deduzcas datos que no estén en la conversación.",
-        "patente en mayúsculas y sin puntos.",
-        // atencion decide a dónde va el caso: si hay que salir a ver el
-        // camión, alguien tiene que agendar la visita; si el cliente manda
-        // el módulo, no hay visita que agendar.
-        '"atencion" es "terreno" si el trabajo requiere ir donde está el',
-        'vehículo (visita, revisión, reparación en sitio, retiro del módulo),',
-        'o "envio" si el cliente va a mandar o traer el módulo al taller.',
-        "Si de la conversación todavía no se puede saber cuál de los dos es,",
-        "deja null.",
-        '"sistema" es el sistema afectado cuando no hay un módulo identificado',
-        '(por ejemplo "caja de cambios", "eléctrico", "neumático").',
-      ].join(" ");
-
-      const texto = await llamarIA(apiKey, cfg.modelo, instrucciones, historial);
+      if (!cfg.prompt_ficha?.trim()) {
+        return json({ error: "Faltan las instrucciones de la ficha en nexa_config." }, 503);
+      }
+      const texto = await llamarIA(apiKey, cfg.modelo, cfg.prompt_ficha, historial);
       const limpio = texto.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
       try {
         return json({ ficha: JSON.parse(limpio) });

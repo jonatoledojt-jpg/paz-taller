@@ -50,7 +50,28 @@ alter table nexa_config
 
 
 -- ------------------------------------------------------------
--- 4. Permisos de lectura para la app.
+-- 4. Las instrucciones para sacar la ficha, en un solo lugar.
+--    Las usan DOS funciones (la de la app y la de WhatsApp). Si
+--    cada una tuviera su copia, con el tiempo una cambiaría y la
+--    otra no, y la ficha saldría con campos distintos según el
+--    canal. Acá se editan una vez y valen para las dos.
+-- ------------------------------------------------------------
+
+alter table nexa_config add column if not exists prompt_ficha text not null default '';
+
+update nexa_config set prompt_ficha =
+'Lee la conversación y devuelve SOLO un objeto JSON, sin texto alrededor, con estas claves exactas:
+{"cliente":null,"telefono":null,"vehiculo":null,"anio":null,"patente":null,"ubicacion":null,"atencion":null,"modulo":null,"sistema":null,"codigo":null,"sintoma":null}
+Usa null en lo que el cliente todavía no haya dicho.
+No inventes ni deduzcas datos que no estén en la conversación.
+patente en mayúsculas y sin puntos.
+"atencion" es "terreno" si el trabajo requiere ir donde está el vehículo (visita, revisión, reparación en sitio, retiro del módulo), o "envio" si el cliente va a mandar o traer el módulo al taller. Si de la conversación todavía no se puede saber cuál de los dos es, deja null.
+"sistema" es el sistema afectado cuando no hay un módulo identificado (por ejemplo "caja de cambios", "eléctrico", "neumático").'
+where id = 1 and prompt_ficha = '';
+
+
+-- ------------------------------------------------------------
+-- 5. Permisos de lectura para la app.
 --    Las políticas de 12-nexa.sql ya cubren estas tablas
 --    (dueño y coordinador). Las columnas nuevas no cambian eso.
 -- ------------------------------------------------------------
