@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14181C">
+<title>Paz Services — Taller</title>
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+:root{
+  --fondo:#E9EBED; --panel:#FFFFFF; --tinta:#14181C; --humo:#67717C;
+  --linea:#D2D7DC; --accion:#14181C; --alerta:#B3341F; --ok:#1C7A4A;
+  --aviso:#B4761A; --marca:#F2A900;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--sans); background:var(--fondo); color:var(--tinta);
+  font-size:16px; line-height:1.45;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--marca);outline-offset:2px}
+
+header{
+  background:var(--accion); color:#fff; padding:14px 16px;
+  padding-top:calc(14px + env(safe-area-inset-top));
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  position:sticky; top:0; z-index:20;
+}
+header .marca{font-weight:600;letter-spacing:.02em;font-size:15px}
+header .marca span{display:block;font-weight:400;font-size:12px;color:#9AA4AE}
+header button{
+  background:none;border:1px solid #3A424B;color:#C9D0D6;
+  padding:7px 12px;border-radius:6px;font-size:13px;cursor:pointer
+}
+
+main{padding:16px;max-width:640px;margin:0 auto}
+
+.oculto{display:none !important}
+
+/* Login */
+.login{max-width:360px;margin:12vh auto;padding:0 20px}
+.login h1{font-size:22px;font-weight:600;margin:0 0 4px}
+.login p{color:var(--humo);margin:0 0 28px;font-size:15px}
+.campo{margin-bottom:14px}
+.campo label{display:block;font-size:13px;color:var(--humo);margin-bottom:5px}
+.campo input,.campo textarea,.campo select{
+  width:100%;padding:13px 14px;border:1px solid var(--linea);
+  border-radius:8px;background:var(--panel)
+}
+.campo textarea{min-height:88px;resize:vertical}
+
+.btn{
+  width:100%;padding:16px;border:none;border-radius:8px;
+  background:var(--accion);color:#fff;font-weight:500;font-size:16px;cursor:pointer
+}
+.btn:active{opacity:.85}
+.btn[disabled]{opacity:.5}
+.btn.claro{background:var(--panel);color:var(--tinta);border:1px solid var(--linea)}
+
+.aviso{
+  padding:12px 14px;border-radius:8px;font-size:14px;margin-bottom:14px;
+  background:#FBE9E6;color:var(--alerta);border:1px solid #F0C4BC
+}
+.aviso.bien{background:#E4F1EA;color:var(--ok);border-color:#BFDECC}
+
+/* Barra superior del tablero */
+.barra{display:flex;gap:10px;margin-bottom:16px}
+.barra .btn{padding:14px}
+
+/* Tarjetas OT */
+.lista{display:flex;flex-direction:column;gap:10px}
+.ot{
+  background:var(--panel);border:1px solid var(--linea);border-radius:10px;
+  padding:14px;cursor:pointer;text-align:left;width:100%;display:block
+}
+.ot:active{border-color:var(--humo)}
+.ot .fila1{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.ot .num{font-family:var(--mono);font-size:13px;color:var(--humo);letter-spacing:.02em}
+.ot .dias{font-size:12px;color:var(--humo)}
+.ot .dias.tarde{color:var(--alerta);font-weight:500}
+.ot .cliente{font-weight:500;font-size:17px;margin:5px 0 2px}
+.ot .detalle{font-size:14px;color:var(--humo)}
+.ot .detalle .pat{font-family:var(--mono);text-transform:uppercase}
+.ot .sintoma{font-size:14px;color:var(--humo);margin-top:6px}
+
+.chip{
+  display:inline-block;margin-top:9px;padding:4px 10px;border-radius:999px;
+  font-size:12.5px;font-weight:500;background:#E3E7EA;color:#3A434C
+}
+.chip.terreno{background:#EDE6F7;color:#4A3A73}
+.chip.trabajo{background:#FDF0D9;color:#7A5209}
+.chip.espera{background:#FBE9E6;color:#8C2A18}
+.chip.listo{background:#E4F1EA;color:#14603A}
+
+.vacio{text-align:center;padding:48px 20px;color:var(--humo)}
+.vacio p{margin:0 0 18px}
+
+h2{font-size:19px;font-weight:600;margin:0 0 16px}
+.seccion{background:var(--panel);border:1px solid var(--linea);border-radius:10px;padding:16px;margin-bottom:14px}
+
+/* Selector origen y tipo */
+.opciones{display:flex;gap:8px;flex-wrap:wrap}
+.opciones button{
+  flex:1;min-width:calc(33% - 6px);padding:13px 8px;border:1px solid var(--linea);
+  border-radius:8px;background:var(--panel);cursor:pointer;font-size:15px
+}
+.opciones button[aria-pressed="true"]{background:var(--accion);color:#fff;border-color:var(--accion)}
+
+/* Detalle */
+.dato{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--linea);font-size:15px}
+.dato:last-child{border-bottom:none}
+.dato span:first-child{color:var(--humo)}
+.dato span:last-child{text-align:right;font-weight:500}
+.estados{display:flex;flex-direction:column;gap:8px}
+.estados button{
+  padding:15px;border:1px solid var(--linea);border-radius:8px;
+  background:var(--panel);cursor:pointer;text-align:left;font-size:16px
+}
+.estados button.actual{background:var(--accion);color:#fff;border-color:var(--accion)}
+
+.foto-btn{
+  display:block;padding:15px;border:1px dashed var(--humo);border-radius:8px;
+  text-align:center;color:var(--humo);cursor:pointer;font-size:15px
+}
+input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
+.miniaturas{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.miniaturas img{width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid var(--linea)}
+
+.cargando{text-align:center;padding:40px;color:var(--humo)}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<section id="vLogin" class="login">
+  <h1>Paz Services</h1>
+  <p>Control de taller</p>
+  <div id="loginError" class="aviso oculto"></div>
+  <div class="campo">
+    <label for="email">Correo</label>
+    <input id="email" type="email" autocomplete="username" inputmode="email">
+  </div>
+  <div class="campo">
+    <label for="clave">Contraseña</label>
+    <input id="clave" type="password" autocomplete="current-password">
+  </div>
+  <button class="btn" id="btnEntrar">Entrar</button>
+</section>
+
+<!-- ============ APP ============ -->
+<div id="app" class="oculto">
+  <header>
+    <div class="marca">PAZ SERVICES<span id="quien"></span></div>
+    <button id="btnSalir">Salir</button>
+  </header>
+  <main>
+
+    <!-- Tablero -->
+    <section id="vTablero">
+      <div class="barra">
+        <button class="btn" id="btnNueva">Nueva OT</button>
+        <button class="btn claro" id="btnRecargar" style="max-width:110px">Recargar</button>
+      </div>
+      <div id="listaOT" class="lista"></div>
+    </section>
+
+    <!-- Nueva OT -->
+    <section id="vNueva" class="oculto">
+      <h2>Nueva orden</h2>
+      <div id="nuevaError" class="aviso oculto"></div>
+
+      <div class="seccion">
+        <div class="campo">
+          <label>¿De dónde viene?</label>
+          <div class="opciones" id="selOrigen">
+            <button type="button" data-v="laboratorio" aria-pressed="true">Llegó al laboratorio</button>
+            <button type="button" data-v="terreno" aria-pressed="false">Retiro en terreno</button>
+          </div>
+        </div>
+        <div class="campo">
+          <label for="fCliente">Cliente</label>
+          <input id="fCliente" list="dlClientes" autocomplete="organization" placeholder="Nombre o empresa">
+          <datalist id="dlClientes"></datalist>
+        </div>
+        <div class="campo">
+          <label for="fRut">RUT para facturar</label>
+          <input id="fRut" autocomplete="on" inputmode="text" placeholder="76.543.210-9">
+        </div>
+        <div class="campo">
+          <label for="fPatente">Patente</label>
+          <input id="fPatente" autocomplete="on" style="text-transform:uppercase;font-family:var(--mono)" placeholder="ABCD12">
+        </div>
+        <div class="campo">
+          <label for="fModulo">Tipo de módulo</label>
+          <input id="fModulo" list="dlModulos" autocomplete="on" placeholder="Escribe el módulo">
+          <datalist id="dlModulos"></datalist>
+        </div>
+        <div class="campo">
+          <label for="fSintoma">¿Qué falla tiene?</label>
+          <textarea id="fSintoma" autocomplete="on" placeholder="Lo que dijo el cliente"></textarea>
+        </div>
+        <label class="foto-btn" for="fFoto" id="lblFoto">Tomar foto de recepción</label>
+        <input id="fFoto" type="file" accept="image/*" capture="environment">
+        <div class="miniaturas" id="previaFoto"></div>
+      </div>
+
+      <button class="btn" id="btnGuardar">Guardar orden</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnCancelar">Cancelar</button>
+    </section>
+
+    <!-- Detalle -->
+    <section id="vDetalle" class="oculto">
+      <h2 id="detTitulo"></h2>
+      <div id="detError" class="aviso oculto"></div>
+      <div class="seccion" id="detDatos"></div>
+      <div class="seccion">
+        <label style="display:block;font-size:13px;color:var(--humo);margin-bottom:10px">Cambiar estado</label>
+        <div class="estados" id="detEstados"></div>
+      </div>
+      <div class="seccion">
+        <label class="foto-btn" for="dFoto">Subir foto o captura del escáner</label>
+        <input id="dFoto" type="file" accept="image/*" capture="environment">
+        <div class="miniaturas" id="detFotos"></div>
+      </div>
+      <button class="btn claro" id="btnVolver">Volver al tablero</button>
+    </section>
+
+  </main>
+</div>
+
+<script type="module">
+// ══════════════════════════════════════════════════════════
+//  CONFIGURACIÓN — reemplaza estos dos valores
+// ══════════════════════════════════════════════════════════
+const SUPABASE_URL  = "https://foqzexzlxbypbwtubrgx.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvcXpleHpseGJ5cGJ3dHVicmd4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMzc0NDcsImV4cCI6MjEwNDkxMzQ0N30.MZT_YRe98Xqmt1MLM4ya8QkGSpdehWfgSSLMFxPv_Dk";
+// ══════════════════════════════════════════════════════════
+
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+const db = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+const $ = id => document.getElementById(id);
+const ver = (...ids) => {
+  ["vTablero","vNueva","vDetalle"].forEach(v => $(v).classList.add("oculto"));
+  ids.forEach(v => $(v).classList.remove("oculto"));
+};
+const msg = (el, texto, bien) => {
+  const e = $(el);
+  if (!texto) { e.classList.add("oculto"); return; }
+  e.textContent = texto;
+  e.className = "aviso" + (bien ? " bien" : "");
+};
+
+const ETIQUETA = {
+  agendado:"Agendado", en_terreno:"En terreno", resuelto_en_terreno:"Resuelto en terreno",
+  retirado:"Retirado, en tránsito", recepcionado:"Recepcionado", en_diagnostico:"En diagnóstico",
+  cotizado:"Cotizado, esperando al cliente", en_reparacion:"En reparación", en_pruebas:"En pruebas",
+  listo_entrega:"Listo para entrega", instalado:"Instalado", entregado:"Entregado",
+  facturado:"Facturado", irreparable:"Irreparable", rechazado:"Cotización rechazada", garantia:"Garantía"
+};
+const TONO = {
+  agendado:"terreno", en_terreno:"terreno", retirado:"terreno",
+  en_diagnostico:"trabajo", en_reparacion:"trabajo", en_pruebas:"trabajo",
+  cotizado:"espera", garantia:"espera",
+  listo_entrega:"listo", instalado:"listo", entregado:"listo",
+  resuelto_en_terreno:"listo", facturado:"listo"
+};
+const FLUJO = {
+  terreno:["agendado","en_terreno","resuelto_en_terreno","retirado","recepcionado","en_diagnostico",
+           "cotizado","en_reparacion","en_pruebas","listo_entrega","instalado","facturado"],
+  laboratorio:["recepcionado","en_diagnostico","cotizado","en_reparacion","en_pruebas",
+               "listo_entrega","entregado","facturado"]
+};
+const EXCEPCIONES = ["irreparable","rechazado","garantia"];
+const CERRADOS = ["facturado","entregado","instalado","resuelto_en_terreno","rechazado"];
+
+let perfil = null, ordenActual = null, fotoNueva = null;
+
+// ---------- Sesión ----------
+$("btnEntrar").onclick = async () => {
+  msg("loginError", "");
+  const email = $("email").value.trim(), password = $("clave").value;
+  if (!email || !password) return msg("loginError", "Escribe tu correo y contraseña.");
+  $("btnEntrar").disabled = true;
+  const { error } = await db.auth.signInWithPassword({ email, password });
+  $("btnEntrar").disabled = false;
+  if (error) return msg("loginError", "No pudimos entrar. Revisa el correo y la contraseña.");
+  iniciar();
+};
+$("btnSalir").onclick = async () => { await db.auth.signOut(); location.reload(); };
+
+async function iniciar() {
+  const { data:{ user } } = await db.auth.getUser();
+  if (!user) return;
+  const { data } = await db.from("perfiles").select("nombre,rol").eq("id", user.id).single();
+  perfil = data || { nombre: user.email, rol: "tecnico" };
+  $("quien").textContent = perfil.nombre;
+  $("vLogin").classList.add("oculto");
+  $("app").classList.remove("oculto");
+  ver("vTablero");
+  cargarTablero();
+  cargarClientes();
+  cargarModulos();
+}
+
+// ---------- Tablero ----------
+$("btnRecargar").onclick = cargarTablero;
+
+async function cargarTablero() {
+  $("listaOT").innerHTML = '<div class="cargando">Cargando órdenes…</div>';
+  const { data, error } = await db.from("ordenes")
+    .select("id,numero_ot,origen,estado,tipo_modulo,sintoma_cliente,fecha_ingreso,clientes(nombre,rut),vehiculos(patente)")
+    .not("estado", "in", `(${CERRADOS.join(",")})`)
+    .order("fecha_ingreso", { ascending: false });
+
+  if (error) {
+    $("listaOT").innerHTML = '<div class="aviso">No se pudieron cargar las órdenes. Revisa tu conexión.</div>';
+    return;
+  }
+  if (!data.length) {
+    $("listaOT").innerHTML = '<div class="vacio"><p>No hay órdenes abiertas.</p></div>';
+    return;
+  }
+  $("listaOT").innerHTML = "";
+  data.forEach(o => {
+    const dias = Math.floor((Date.now() - new Date(o.fecha_ingreso)) / 86400000);
+    const b = document.createElement("button");
+    b.className = "ot";
+    b.innerHTML = `
+      <div class="fila1">
+        <span class="num">${o.numero_ot ?? ""}</span>
+        <span class="dias ${dias > 7 ? "tarde" : ""}">${dias === 0 ? "hoy" : dias + " días"}</span>
+      </div>
+      <div class="cliente"></div>
+      <div class="detalle"><span class="pat"></span> · <span class="mod"></span></div>
+      <div class="sintoma"></div>
+      <span class="chip ${TONO[o.estado] || ""}">${ETIQUETA[o.estado] || o.estado}</span>`;
+    b.querySelector(".cliente").textContent = o.clientes?.nombre ?? "Sin cliente";
+    b.querySelector(".pat").textContent = o.vehiculos?.patente ?? "sin patente";
+    b.querySelector(".mod").textContent = o.tipo_modulo ?? "módulo";
+    b.querySelector(".sintoma").textContent = o.sintoma_cliente ?? "";
+    b.onclick = () => abrirDetalle(o);
+    $("listaOT").appendChild(b);
+  });
+}
+
+async function cargarClientes() {
+  const { data } = await db.from("clientes").select("nombre").order("nombre");
+  $("dlClientes").innerHTML = (data || []).map(c => `<option value="${c.nombre}">`).join("");
+}
+
+async function cargarModulos() {
+  const { data } = await db.from("ordenes").select("tipo_modulo")
+    .not("tipo_modulo", "is", null).order("id", { ascending: false }).limit(500);
+  const vistos = [...new Set((data || []).map(o => o.tipo_modulo))].sort();
+  $("dlModulos").innerHTML = vistos.map(m => `<option value="${m}">`).join("");
+}
+
+// ---------- Nueva OT ----------
+function grupoOpciones(cont, multiple) {
+  $(cont).querySelectorAll("button").forEach(b => {
+    b.onclick = () => {
+      if (!multiple) $(cont).querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", "false"));
+      b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") === "true" && multiple ? "false" : "true");
+    };
+  });
+}
+grupoOpciones("selOrigen");
+const elegido = cont => $(cont).querySelector('[aria-pressed="true"]')?.dataset.v ?? null;
+
+$("btnNueva").onclick = () => { msg("nuevaError",""); ver("vNueva"); };
+$("btnCancelar").onclick = () => { limpiarForm(); ver("vTablero"); };
+
+$("fFoto").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  fotoNueva = await comprimir(f);
+  $("previaFoto").innerHTML = `<img src="${URL.createObjectURL(fotoNueva)}" alt="Foto de recepción">`;
+  $("lblFoto").textContent = "Cambiar foto";
+};
+
+$("btnGuardar").onclick = async () => {
+  msg("nuevaError", "");
+  const nombreCliente = $("fCliente").value.trim();
+  const rut = $("fRut").value.trim();
+  const patente = $("fPatente").value.trim().toUpperCase();
+  const origen = elegido("selOrigen");
+  const tipo = $("fModulo").value.trim();
+  const sintoma = $("fSintoma").value.trim();
+
+  if (!nombreCliente) return msg("nuevaError", "Falta el cliente.");
+  if (!tipo) return msg("nuevaError", "Escribe el tipo de módulo.");
+  if (!sintoma) return msg("nuevaError", "Escribe qué falla tiene.");
+
+  $("btnGuardar").disabled = true;
+  $("btnGuardar").textContent = "Guardando…";
+  try {
+    const cliente_id = await clienteConRut(nombreCliente, rut);
+    let vehiculo_id = null;
+    if (patente) vehiculo_id = await buscarOCrearVehiculo(patente, cliente_id);
+
+    const { data:{ user } } = await db.auth.getUser();
+    const { data: orden, error } = await db.from("ordenes").insert({
+      origen,
+      estado: origen === "terreno" ? "agendado" : "recepcionado",
+      cliente_id, vehiculo_id,
+      tipo_modulo: tipo,
+      sintoma_cliente: sintoma,
+      forma_llegada: origen === "terreno" ? "retiro_terreno" : "cliente_trae",
+      recibido_por: user.id,
+      creado_por: user.id
+    }).select().single();
+    if (error) throw error;
+
+    if (fotoNueva) await subirFoto(orden.id, fotoNueva, "recepcion");
+
+    limpiarForm();
+    ver("vTablero");
+    cargarTablero();
+    cargarClientes();
+    cargarModulos();
+  } catch (e) {
+    msg("nuevaError", "No se pudo guardar: " + (e.message || "error desconocido"));
+  } finally {
+    $("btnGuardar").disabled = false;
+    $("btnGuardar").textContent = "Guardar orden";
+  }
+};
+
+function limpiarForm() {
+  ["fCliente","fRut","fPatente","fSintoma","fModulo"].forEach(i => $(i).value = "");
+  $("previaFoto").innerHTML = "";
+  $("lblFoto").textContent = "Tomar foto de recepción";
+  $("fFoto").value = "";
+  fotoNueva = null;
+}
+
+async function clienteConRut(nombre, rut) {
+  const { data } = await db.from("clientes").select("id,rut").ilike("nombre", nombre).limit(1);
+  if (data && data.length) {
+    const c = data[0];
+    if (rut && !c.rut) await db.from("clientes").update({ rut }).eq("id", c.id);
+    return c.id;
+  }
+  const { data: nuevo, error } = await db.from("clientes")
+    .insert({ nombre, rut: rut || null }).select("id").single();
+  if (error) throw error;
+  return nuevo.id;
+}
+
+async function buscarOCrearVehiculo(patente, cliente_id) {
+  const { data } = await db.from("vehiculos").select("id").ilike("patente", patente).limit(1);
+  if (data && data.length) return data[0].id;
+  const { data: nuevo, error } = await db.from("vehiculos").insert({ patente, cliente_id }).select("id").single();
+  if (error) throw error;
+  return nuevo.id;
+}
+
+// ---------- Detalle ----------
+async function abrirDetalle(o) {
+  ordenActual = o;
+  msg("detError", "");
+  $("detTitulo").textContent = o.numero_ot ?? "Orden";
+  $("detDatos").innerHTML = `
+    <div class="dato"><span>Cliente</span><span>${o.clientes?.nombre ?? "—"}</span></div>
+    <div class="dato"><span>Patente</span><span style="font-family:var(--mono)">${o.vehiculos?.patente ?? "—"}</span></div>
+    <div class="dato"><span>Módulo</span><span>${o.tipo_modulo ?? "—"}</span></div>
+    <div class="dato"><span>RUT</span><span style="font-family:var(--mono)">${o.clientes?.rut ?? "—"}</span></div>
+    <div class="dato"><span>Origen</span><span>${o.origen === "terreno" ? "Terreno" : "Laboratorio"}</span></div>
+    <div class="dato"><span>Falla</span><span>${o.sintoma_cliente ?? "—"}</span></div>`;
+
+  const opciones = [...FLUJO[o.origen], ...EXCEPCIONES];
+  $("detEstados").innerHTML = "";
+  opciones.forEach(e => {
+    const b = document.createElement("button");
+    b.textContent = ETIQUETA[e];
+    if (e === o.estado) b.className = "actual";
+    b.onclick = () => cambiarEstado(e);
+    $("detEstados").appendChild(b);
+  });
+
+  $("detFotos").innerHTML = "";
+  ver("vDetalle");
+  cargarFotos(o.id);
+}
+
+async function cambiarEstado(nuevo) {
+  if (nuevo === ordenActual.estado) return;
+  const cierra = CERRADOS.includes(nuevo);
+  const { error } = await db.from("ordenes")
+    .update({ estado: nuevo, ...(cierra ? { fecha_cierre: new Date().toISOString() } : {}) })
+    .eq("id", ordenActual.id);
+  if (error) return msg("detError", "No se pudo cambiar el estado: " + error.message);
+  ordenActual.estado = nuevo;
+  if (cierra) { ver("vTablero"); cargarTablero(); return; }
+  abrirDetalle(ordenActual);
+}
+
+$("dFoto").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  msg("detError", "");
+  try {
+    await subirFoto(ordenActual.id, await comprimir(f), "captura_scanner");
+    cargarFotos(ordenActual.id);
+  } catch (err) {
+    msg("detError", "No se pudo subir la foto: " + err.message);
+  }
+  e.target.value = "";
+};
+
+async function cargarFotos(orden_id) {
+  const { data } = await db.from("archivos").select("ruta_storage").eq("orden_id", orden_id)
+    .order("creado_en", { ascending: false });
+  $("detFotos").innerHTML = "";
+  (data || []).forEach(a => {
+    const { data: pub } = db.storage.from("archivos").getPublicUrl(a.ruta_storage);
+    const img = document.createElement("img");
+    img.src = pub.publicUrl; img.alt = "Adjunto de la orden";
+    $("detFotos").appendChild(img);
+  });
+}
+
+$("btnVolver").onclick = () => { ver("vTablero"); cargarTablero(); };
+
+// ---------- Utilidades ----------
+async function subirFoto(orden_id, blob, categoria) {
+  const ruta = `${orden_id}/${categoria}-${Date.now()}.jpg`;
+  const { error } = await db.storage.from("archivos").upload(ruta, blob, { contentType: "image/jpeg" });
+  if (error) throw error;
+  const { data:{ user } } = await db.auth.getUser();
+  await db.from("archivos").insert({ orden_id, categoria, ruta_storage: ruta, subido_por: user.id });
+}
+
+function comprimir(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 1400;
+      const escala = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * escala);
+      c.height = Math.round(img.height * escala);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(b => b ? resolve(b) : reject(new Error("no se pudo procesar la imagen")), "image/jpeg", 0.72);
+    };
+    img.onerror = () => reject(new Error("no se pudo leer la imagen"));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// ---------- Arranque ----------
+db.auth.getSession().then(({ data }) => { if (data.session) iniciar(); });
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
