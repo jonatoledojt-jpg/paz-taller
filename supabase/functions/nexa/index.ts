@@ -26,6 +26,20 @@ const URL_SUPABASE = Deno.env.get("SUPABASE_URL")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+// El prompt de PAZ está escrito pensando en el cliente por WhatsApp. Cuando
+// la llaman desde la app, quien escribe es alguien del equipo pasando lo que
+// dijo el cliente — si no se le aclara, PAZ le habla al colega como si fuera
+// el cliente y dice cosas como "avísame por este mismo canal".
+const CONTEXTO_APP = [
+  "CONTEXTO DEL CANAL: estás dentro de la app interna de Paz Services.",
+  "Quien te escribe NO es el cliente: es alguien del equipo que te está",
+  "pasando lo que el cliente dijo por teléfono o por WhatsApp.",
+  "Redacta igual que si le hablaras al cliente, porque tu respuesta se le va",
+  "a copiar tal cual. Pero nunca digas 'por este mismo canal', 'por acá' ni",
+  "'respóndeme aquí': di 'por WhatsApp' cuando necesites que el cliente",
+  "mande algo.",
+].join(" ");
+
 // La API devuelve el texto en distintos lugares según el modelo.
 // Se prueban las formas conocidas en vez de asumir una sola.
 function extraerTexto(data: any): string {
@@ -100,7 +114,8 @@ Deno.serve(async (req) => {
     }
 
     if (accion === "responder") {
-      const texto = await llamarIA(apiKey, cfg.modelo, cfg.prompt, historial);
+      const texto = await llamarIA(
+        apiKey, cfg.modelo, `${cfg.prompt}\n\n${CONTEXTO_APP}`, historial);
       if (!texto) return json({ error: "La IA no devolvió respuesta. Reintenta." }, 502);
       return json({ respuesta: texto.replaceAll("**", "").replaceAll("*", "") });
     }
