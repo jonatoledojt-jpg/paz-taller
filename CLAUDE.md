@@ -58,6 +58,7 @@ sw.js                   service worker
 08-terreno.sql          tipo_trabajo/sistema, montos y cotizaciones ocultos al técnico
 09-agenda.sql           PRIMER intento de agenda (sobre visitas) — reemplazado, ver abajo
 09-agenda-simple.sql    agenda SOBRE ordenes (el enfoque que quedó) (falta ejecutar)
+10-cotizaciones-vigente.sql  anular cotizaciones + cotización vigente
 ```
 
 `09-agenda.sql` (con tabla `visitas`) se reemplazó por `09-agenda-simple.sql`
@@ -103,11 +104,8 @@ cómo evolucionó `ordenes` desde entonces.
 - Todo cambio de estado se registra solo en `movimientos_estado` (trigger).
 - `numero_serie` existe en el esquema pero **no se usa**: identifican los
   módulos con sellos de seguridad.
-- Una orden puede tener **varias** `cotizacion` (para cuando el cliente pide
-  una segunda opción para el mismo módulo). Todas quedan guardadas, se puede
-  editar o eliminar cualquiera desde la app. `ordenes.monto_cotizado` se
-  mantiene sincronizado por trigger desde `cotizacion_items` con la que se
-  haya editado/guardado más recientemente — no lo escribe el front.
+- Una orden puede tener **varias** `cotizacion`, y manda la **vigente**: la
+  última guardada que no esté anulada. Ver "Cotizaciones" más abajo.
 
 **`origen` (dónde ocurre) y `tipo_trabajo` (qué se hace) son independientes:**
 
@@ -212,6 +210,39 @@ navegación, no permiso.
 falta separar sus permisos o su pantalla por defecto de verdad, va a hacer
 falta un campo nuevo (por ejemplo `perfiles.area`).
 
+## Cotizaciones
+
+Ver `10-cotizaciones-vigente.sql`.
+
+**La vigente es la última guardada que no esté anulada.** No hay campo
+`es_vigente` a propósito: se calcula, así no hay dos fuentes de verdad que
+se puedan contradecir. `ordenes.monto_cotizado` guarda el **neto** (sin
+IVA) de esa cotización vigente — criterio heredado de `04-cotizaciones.sql`,
+no se mezcla con el total.
+
+**No se borran cotizaciones, se anulan** (`anulada`, `fecha_anulacion`).
+Una anulada queda en el historial y deja de ser vigente. Si se anula la
+vigente, la anterior no anulada pasa a vigente sola — lo hace el trigger,
+no el front.
+
+Todo el recálculo vive en `recalcular_monto_cotizado(orden_id)`, llamada
+por dos triggers: uno sobre `cotizacion_items` y otro sobre `cotizaciones`
+(por si se anula, crea o borra una entera). Reemplazó a
+`sincronizar_monto_cotizado`, que copiaba el monto de la última cotización
+*editada* — con varias por orden eso quedaba mal: tocar una vieja pisaba el
+monto de la vigente.
+
+**El formulario siempre crea una cotización nueva.** No se edita una
+guardada. Para renegociar se usa "Usar como base": carga los ítems y la
+validez de una cotización anterior en el formulario, muestra un aviso
+"Basada en COT-000X", y al guardar nace una cotización nueva con su propio
+número — la original no se toca. Así queda registro de qué se ofreció
+primero y qué se terminó acordando.
+
+Al guardar bien, el formulario se limpia solo (un ítem vacío, validez 15) y
+avisa en verde con el número nuevo. Si falla, **no se limpia nada** para no
+perder lo escrito.
+
 ## Agenda
 
 Es una capa sobre `ordenes` (ver `09-agenda-simple.sql`), no una entidad
@@ -279,11 +310,12 @@ múltiple de reprogramaciones, un módulo nuevo separado de `visitas`.
 - Subir fotos y capturas de escáner a Supabase Storage
 - Informe técnico con el formato de la empresa, imprimible a PDF (oculta el
   valor del servicio si lo abre un técnico)
-- Cotización con líneas de ítems (descripción, cantidad, valor unitario),
-  cada una con su etiqueta y placeholder, apiladas en celular; IVA calculado
-  al vuelo; al guardar avanza el estado a `cotizado` si corresponde. Se
-  pueden guardar varias por orden, editar o eliminar cualquiera. Solo dueño
-  y coordinador la ven — el técnico ni siquiera tiene el botón
+- Cotización: historial arriba (cada una marcada Vigente / Anterior /
+  Anulada, con "Ver formal" y "Usar como base"), formulario de cotización
+  nueva abajo con ítems (descripción en dos líneas, cantidad, valor
+  unitario, subtotal por ítem) y totales con el Total destacado. Al guardar
+  avanza el estado a `cotizado` si corresponde. Solo dueño y coordinador la
+  ven — el técnico ni siquiera tiene el botón
 - Cotización formal imprimible (mismo tratamiento visual que el informe
   técnico), con número de cotización, tabla de ítems y fecha de validez
   (`validez_dias`, 15 por defecto)
