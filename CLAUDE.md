@@ -52,16 +52,22 @@ sw.js                   service worker
 01-schema.sql           esquema base (ya ejecutado)
 02-setup-extra.sql      perfiles, storage, permisos (ya ejecutado)
 03-informes.sql         campo observaciones (ya ejecutado)
-04-cotizaciones.sql     tablas cotizaciones y cotizacion_items (falta ejecutar)
+04-cotizaciones.sql     tablas cotizaciones y cotizacion_items
 05-fix-rls.sql          endurece mi_rol() y agrega mi_sesion() de diagnóstico
-06-cotizacion-validez.sql  columna validez_dias en cotizaciones (falta ejecutar)
-07-cotizacion-multiple.sql  permite varias cotizaciones por orden (falta ejecutar)
+06-cotizacion-validez.sql  columna validez_dias en cotizaciones
+07-cotizacion-multiple.sql  permite varias cotizaciones por orden
 08-terreno.sql          tipo_trabajo/sistema, montos y cotizaciones ocultos al técnico
 09-agenda.sql           PRIMER intento de agenda (sobre visitas) — reemplazado, ver abajo
-09-agenda-simple.sql    agenda SOBRE ordenes (el enfoque que quedó) (falta ejecutar)
+09-agenda-simple.sql    agenda SOBRE ordenes (el enfoque que quedó)
 10-cotizaciones-vigente.sql  anular cotizaciones + cotización vigente
 11-gastos.sql           gastos, costos fijos, rentabilidad, bucket privado
+12-nexa.sql             nexa_config, nexa_conversaciones, nexa_mensajes
+supabase/functions/nexa/index.ts   Edge Function de Nexa (llama a la IA)
 ```
+
+**De la 01 a la 12 están todas aplicadas en la base real** (verificado el
+14-09-2026 contra `information_schema`). Si alguna vez hay duda, no confiar
+en este documento: preguntarle a la base.
 
 `09-agenda.sql` (con tabla `visitas`) se reemplazó por `09-agenda-simple.sql`
 (agenda como columnas en `ordenes`) porque el enfoque de `visitas` obligaba a
@@ -357,7 +363,7 @@ múltiple de reprogramaciones, un módulo nuevo separado de `visitas`.
 
 - Login con correo y contraseña
 - Navegación en cuatro secciones (Terreno / Laboratorio / Agenda / Gastos)
-  con barra inferior — Gastos abre la app aparte
+  con barra inferior, todas dentro de esta misma app
 - Crear OT: primero se elige tipo de trabajo (módulo o reparación en terreno),
   después cliente, RUT, patente, módulo/sistema según corresponda, síntoma,
   foto, y opcionalmente agendarla (fecha, franja, ubicación GPS, técnico)
@@ -380,6 +386,9 @@ múltiple de reprogramaciones, un módulo nuevo separado de `visitas`.
   tarjeta de OT que en el resto de la app; reordenar con botones subir/bajar
   sobre `orden_ruta`; editar la agenda de una OT existente desde su detalle,
   en línea, sin pantalla intermedia
+- Nexa cara al cliente: chat, ficha del caso que se llena sola y botón que
+  propone la OT. Solo dueño y coordinador. **Todavía sin probar de punta a
+  punta contra la IA** — ver "Nexa" más abajo
 
 **Detalles de implementación:**
 
@@ -407,14 +416,13 @@ El resto del formato no se toca sin preguntar.
 ## Lo que viene, en orden
 
 1. ~~**Cotizaciones** con líneas de detalle~~ — hecho: tablas `cotizaciones` y
-   `cotizacion_items`, pantalla en el front. Falta ejecutar `04-cotizaciones.sql`
-   en Supabase.
+   `cotizacion_items`, pantalla en el front.
 2. ~~**Agenda de terreno y rutas**~~ — hecho, como capa sobre `ordenes` (ver
-   "Agenda" más arriba). Falta ejecutar `09-agenda-simple.sql` en Supabase.
-3. ~~**Gastos**~~ — hecho y dentro de esta app, con rentabilidad. Falta
-   ejecutar `11-gastos.sql` en Supabase. **Asistencia, sueldos y pagos de
-   colaboradores siguen pendientes** — por eso el margen mensual todavía no
-   descuenta mano de obra, y hay que leerlo sabiendo eso.
+   "Agenda" más arriba).
+3. ~~**Gastos**~~ — hecho y dentro de esta app, con rentabilidad.
+   **Asistencia, sueldos y pagos de colaboradores siguen pendientes** — por
+   eso el margen mensual todavía no descuenta mano de obra, y hay que leerlo
+   sabiendo eso.
 4. **Nexa** — primera etapa hecha: chat dentro de la app, con ficha del caso y
    propuesta de OT. Falta la de WhatsApp y la que ayuda al equipo. Ver abajo.
 5. **Códigos GS** — app separada y offline que se alimenta de la vista
@@ -477,6 +485,14 @@ ensuciar el prompt de conversación con instrucciones de formato.
 **Nexa propone, la persona confirma.** El botón "Crear la OT desde este caso"
 llena el formulario de Nueva OT y ahí se revisa antes de guardar. Nexa no
 inserta órdenes sola. Al guardar, la conversación queda con `orden_id`.
+
+**Lo que está verificado y lo que no.** Verificado: la llave está cargada como
+secreto, la función despliega y rechaza llamadas sin sesión (401), la pantalla
+carga sin errores en celular. **No verificado: que la IA responda de verdad** —
+eso necesita una sesión iniciada y no se puede probar desde acá. El primer
+mensaje lo tiene que mandar Jonatan. Si falla, lo más probable es el nombre del
+modelo (`nexa_config.modelo`, hoy `gpt-5.5`): se cambia con un `update` en la
+base, sin tocar la app ni republicar nada.
 
 ## Contexto de negocio que importa
 
