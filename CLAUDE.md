@@ -51,6 +51,11 @@ sw.js                   service worker
 08-terreno.sql          tipo_trabajo/sistema, montos y cotizaciones ocultos al técnico
 ```
 
+`08-terreno.sql` también agregó `ordenes.observaciones`, que en teoría venía de
+`03-informes.sql` pero nunca se había aplicado en la base real (solo la
+política de `movimientos_estado` de ese archivo se corrió aparte). Sin esa
+columna, guardar el informe técnico fallaba. Ya está al día.
+
 Los `.sql` son historial de migraciones. No se suben a GitHub Pages pero
 conviene mantenerlos versionados.
 
@@ -132,11 +137,17 @@ pantalla.** Esto se resolvió a nivel de base, no confiando en el front
   leerlas (solo la escritura estaba restringida) — ese hueco ya se cerró.
 - `ordenes.monto_cotizado` y `ordenes.monto_final` están en la misma tabla
   que cliente/patente/estado, que el técnico sí necesita — no se puede
-  resolver con una política de fila. Se usó `revoke select` sobre esas dos
-  columnas para **todos** los roles, y se abrió un único camino de lectura:
-  la función `ordenes_montos(orden_id)`, que decide según `mi_rol()`. Nadie,
-  ni siquiera dueño o coordinador, lee esas columnas directo de la tabla; el
-  front llama la función vía `db.rpc('ordenes_montos', ...)`.
+  resolver con una política de fila. Se revocó el `select` de **toda la
+  tabla** para `authenticated` y se volvió a otorgar columna por columna,
+  explícitamente, salvo esas dos (Supabase da `select` de tabla completa por
+  defecto, y eso le gana a un `revoke` de solo columna — no basta con
+  revocar la columna si la tabla completa sigue otorgada). Se abrió un único
+  camino de lectura para los montos: la función `ordenes_montos(orden_id)`,
+  que decide según `mi_rol()`. Nadie, ni siquiera dueño o coordinador, lee
+  esas columnas directo de la tabla; el front llama la función vía
+  `db.rpc('ordenes_montos', ...)`. **Si se agrega una columna nueva a
+  `ordenes`, hay que sumarla al `grant select (...)` de `08-terreno.sql` o
+  el técnico no la va a poder leer.**
 - Por si un técnico intenta escribir un monto en una orden que sí puede
   editar (la suya): el trigger `proteger_montos_tecnico` revierte el valor,
   pase lo que pase en la solicitud.
