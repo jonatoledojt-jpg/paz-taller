@@ -387,8 +387,7 @@ múltiple de reprogramaciones, un módulo nuevo separado de `visitas`.
   sobre `orden_ruta`; editar la agenda de una OT existente desde su detalle,
   en línea, sin pantalla intermedia
 - Nexa cara al cliente: chat, ficha del caso que se llena sola y botón que
-  propone la OT. Solo dueño y coordinador. **Todavía sin probar de punta a
-  punta contra la IA** — ver "Nexa" más abajo
+  propone la OT. Solo dueño y coordinador. Probada con un caso real
 
 **Detalles de implementación:**
 
@@ -430,15 +429,45 @@ El resto del formato no se toca sin preguntar.
 
 ## Nexa (el plan grande)
 
-Un agente que lee el grupo de WhatsApp del equipo y registra las OT
-automáticamente, para que nadie tenga que llenar formularios. Es lo que va a
-resolver el problema de adopción de raíz.
+Un agente que conversa y arma las OT solo, para que nadie tenga que llenar
+formularios. Es lo que va a resolver el problema de adopción de raíz.
 
-Restricciones técnicas ya verificadas: la Groups API de WhatsApp existe desde
-2026, máximo 8 participantes, requiere Official Business Account en Cloud API
-y **un número nuevo dedicado**. El grupo lo tiene que crear la API; no se puede
-conectar uno existente. No admite botones ni listas interactivas, solo texto y
-media.
+### Corrección de rumbo (14-09-2026) — leer antes de tocar nada de WhatsApp
+
+El plan original era que Nexa leyera **el grupo de WhatsApp del equipo**. Eso
+se descartó. El reparto que quedó es:
+
+- **El equipo usa la app.** No WhatsApp. Ahí ya está la Nexa de la etapa 1.
+- **WhatsApp es el canal con los clientes**, conversaciones uno a uno.
+
+Esto **borra** la Groups API y todas sus restricciones (máximo 8
+participantes, grupo creado por la API, número nuevo obligatorio). Todo eso
+aplicaba solo al plan del grupo del equipo; ya no corre. Si alguien lo
+reencuentra en un documento viejo, está desactualizado.
+
+Lo que sí aplica ahora (verificado el 14-09-2026):
+
+- Cloud API normal, uno a uno. Requiere Meta Business verificado (2 a 4 días
+  hábiles, a veces hasta dos semanas) y revisión del nombre para mostrar.
+- **Coexistencia**: desde 2025, y en todos los países desde mayo 2026, un
+  mismo número puede seguir en la app de WhatsApp Business *y* estar en la
+  Cloud API. Meta lo aprueba número por número según antigüedad y calidad.
+  Conviene intentarlo con el número actual antes de sacar uno nuevo: los
+  clientes ya lo tienen guardado. Exige abrir la app al menos cada 13 días.
+- **Ventana de 24 horas**: si el cliente escribe primero, se puede responder
+  libre y gratis por 24 horas, sin plantillas, y cada mensaje del cliente la
+  reinicia. Las plantillas aprobadas solo hacen falta para escribir primero
+  (por ejemplo "su módulo está listo") — eso queda para después.
+- El token permanente va como secreto de Supabase, igual que `OPENAI_API_KEY`.
+  Nunca en el `index.html`.
+- `nexa_conversaciones.canal` ya existe para esto (`app` / `whatsapp`).
+
+**Decisión pendiente antes de conectar:** si Nexa contesta sola al cliente o
+solo propone y una persona manda. Criterio acordado: que conteste sola para
+recolectar datos, y que precio, plazo o cualquier compromiso espere a una
+persona. Hoy en la app da precios referenciales porque el prompt los tiene y
+siempre hay alguien leyendo; en WhatsApp automático ese mismo texto le llega
+al cliente sin filtro.
 
 **Reglas de diseño acordadas:**
 
@@ -486,13 +515,11 @@ ensuciar el prompt de conversación con instrucciones de formato.
 llena el formulario de Nueva OT y ahí se revisa antes de guardar. Nexa no
 inserta órdenes sola. Al guardar, la conversación queda con `orden_id`.
 
-**Lo que está verificado y lo que no.** Verificado: la llave está cargada como
-secreto, la función despliega y rechaza llamadas sin sesión (401), la pantalla
-carga sin errores en celular. **No verificado: que la IA responda de verdad** —
-eso necesita una sesión iniciada y no se puede probar desde acá. El primer
-mensaje lo tiene que mandar Jonatan. Si falla, lo más probable es el nombre del
-modelo (`nexa_config.modelo`, hoy `gpt-5.5`): se cambia con un `update` en la
-base, sin tocar la app ni republicar nada.
+**Probada de punta a punta el 14-09-2026** por Jonatan, con un caso real
+(Actros 4144 2011, patente JYPZ19, GS17, caja que no pasa marchas altas).
+Nexa preguntó de a un dato a la vez, no tomó el código de falla como
+diagnóstico, y la ficha se llenó sola dejando vacío solo lo que el cliente no
+dijo. El modelo `gpt-5.5` responde bien.
 
 ## Contexto de negocio que importa
 

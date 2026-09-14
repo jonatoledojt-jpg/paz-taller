@@ -217,6 +217,9 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 .burbuja.yo{align-self:flex-end;background:var(--accion);color:#fff;border-bottom-right-radius:4px}
 .burbuja.ella{align-self:flex-start;background:var(--panel);border:1px solid var(--linea);border-bottom-left-radius:4px}
 .burbuja.esperando{color:var(--humo)}
+/* Deja aire bajo el último mensaje para que la barra de escribir no lo tape
+   cuando el chat se desplaza solo. */
+.chat .burbuja:last-child{scroll-margin-bottom:160px}
 /* La barra de escribir queda fija arriba de la navegación: en terreno se
    escribe con una mano y no conviene tener que bajar hasta el final. */
 .chat-barra{
@@ -696,12 +699,14 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 
         <div class="chat" id="nexaChat"></div>
 
+        <button class="btn claro" id="btnNexaVolver">Volver a los casos</button>
+
+        <!-- Va al final para que quede pegada abajo y no tape lo último
+             que dijo Nexa, que es justo lo que hay que leer. -->
         <div class="chat-barra">
           <textarea id="nexaTexto" rows="1" placeholder="Escribe lo que dijo el cliente"></textarea>
           <button class="btn" id="btnNexaEnviar">Enviar</button>
         </div>
-
-        <button class="btn claro" id="btnNexaVolver">Volver a los casos</button>
       </div>
     </section>
 
@@ -2349,7 +2354,7 @@ function pintarChatNexa(esperando) {
     b.textContent = "Nexa está escribiendo…";
     c.appendChild(b);
   }
-  c.lastElementChild?.scrollIntoView({ block: "nearest" });
+  c.lastElementChild?.scrollIntoView({ block: "end" });
 }
 
 $("btnNexaFicha").onclick = () => {
