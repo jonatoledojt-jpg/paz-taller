@@ -48,9 +48,9 @@ main.con-navinf{padding-bottom:96px}
   display:flex;background:var(--panel);border-top:1px solid var(--linea);
   padding-bottom:env(safe-area-inset-bottom)
 }
-.navinf button,.navinf a{
+.navinf button{
   flex:1;background:none;border:none;padding:12px 4px 10px;cursor:pointer;
-  color:var(--humo);font-size:13px;font-weight:500;text-decoration:none;text-align:center
+  color:var(--humo);font-size:13px;font-weight:500;text-align:center
 }
 .navinf button[aria-current="true"]{color:var(--tinta);box-shadow:inset 0 2px 0 var(--marca)}
 
@@ -169,6 +169,19 @@ h2{font-size:19px;font-weight:600;margin:0 0 16px}
 .item-cot .item-pie .sub{font-size:14px;font-weight:600}
 .item-cot .quitar-item{background:none;border:none;color:var(--alerta);font-size:14px;cursor:pointer;padding:6px 2px}
 
+.check-grande{display:flex;align-items:center;gap:12px;font-size:16px;color:var(--tinta);cursor:pointer}
+.check-grande input{width:26px;height:26px;flex:0 0 auto}
+
+/* Tablas de números (rentabilidad, global) */
+.tabla-num{width:100%;border-collapse:collapse;font-size:15px}
+.tabla-num td{padding:9px 0;border-bottom:1px solid var(--linea)}
+.tabla-num td:last-child{text-align:right;font-family:var(--mono);font-weight:500}
+.tabla-num tr.sub td{color:var(--humo);font-size:14px}
+.tabla-num tr.fuerte td{font-weight:700;font-size:17px;border-top:2px solid var(--tinta);border-bottom:none;padding-top:12px}
+.tabla-num tr.grupo td{padding-top:18px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--humo);border-bottom:none}
+.neg{color:var(--alerta)}
+.pos{color:var(--ok)}
+
 .foto-btn{
   display:block;padding:15px;border:1px dashed var(--humo);border-radius:8px;
   text-align:center;color:var(--humo);cursor:pointer;font-size:15px
@@ -269,9 +282,29 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         </div>
       </div>
 
+      <div id="gastosControles" class="oculto">
+        <div class="semana-nav">
+          <button type="button" id="btnMesAnt">◀</button>
+          <span class="lbl" id="mesLabel"></span>
+          <button type="button" id="btnMesSig">▶</button>
+        </div>
+        <div class="opciones oculto" id="selGastoVista" style="margin-bottom:14px">
+          <button type="button" data-v="mio" aria-pressed="true">Mi mes</button>
+          <button type="button" data-v="persona" aria-pressed="false">Por persona</button>
+          <button type="button" data-v="global" aria-pressed="false">Global</button>
+          <button type="button" data-v="rentabilidad" aria-pressed="false">Rentabilidad</button>
+        </div>
+        <div class="campo oculto" id="campoGastoPersona">
+          <label for="selGastoPersona">Colaborador</label>
+          <select id="selGastoPersona"></select>
+        </div>
+        <div class="seccion oculto" id="gastosResumen"></div>
+      </div>
+
       <div class="barra">
         <button class="btn" id="btnNueva">Nueva OT</button>
         <button class="btn oculto" id="btnAgendar">Agendar</button>
+        <button class="btn oculto" id="btnNuevoGasto">+ Registrar gasto</button>
         <button class="btn claro" id="btnRecargar" style="max-width:110px">Recargar</button>
       </div>
       <div id="listaOT" class="lista"></div>
@@ -401,11 +434,18 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         </div>
         <button type="button" class="btn claro oculto" id="btnEditarAgendaDet" style="margin-top:10px">Editar agenda</button>
       </div>
+
+      <div class="seccion oculto" id="detMargen">
+        <span class="rotulo">Margen de esta OT</span>
+        <div id="detMargenInfo"></div>
+      </div>
       <div class="seccion">
         <label class="foto-btn" for="dFoto">Subir foto o captura del escáner</label>
         <input id="dFoto" type="file" accept="image/*" capture="environment">
         <div class="miniaturas" id="detFotos"></div>
       </div>
+      <button class="btn claro oculto" id="btnAprobar">Cliente aprobó la cotización</button>
+      <div style="height:10px"></div>
       <button class="btn claro" id="btnCotizar">Cotización</button>
       <div style="height:10px"></div>
       <button class="btn" id="btnCierre">Informe técnico</button>
@@ -495,6 +535,87 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <button class="btn claro" id="btnCieCancelar">Cancelar</button>
     </section>
 
+    <!-- Registrar / editar gasto -->
+    <section id="vGasto" class="oculto">
+      <h2 id="gastoTitulo">Registrar gasto</h2>
+      <div id="gastoError" class="aviso oculto"></div>
+      <div class="seccion">
+        <div class="campo">
+          <label for="gMonto">Monto total pagado</label>
+          <input id="gMonto" inputmode="numeric" placeholder="35000">
+          <div class="pista" id="pistaGasto"></div>
+        </div>
+        <div class="campo">
+          <label class="check-grande" for="gFactura">
+            <input type="checkbox" id="gFactura">
+            <span>Tiene factura (da crédito de IVA)</span>
+          </label>
+        </div>
+        <div class="campo">
+          <label for="gFecha">Fecha</label>
+          <input id="gFecha" type="date">
+        </div>
+        <div class="campo">
+          <label for="gCategoria">Categoría</label>
+          <input id="gCategoria" list="dlCategorias" placeholder="Petróleo, repuestos, peaje…">
+          <datalist id="dlCategorias"></datalist>
+        </div>
+        <div class="campo">
+          <label>Área</label>
+          <div class="opciones" id="selArea">
+            <button type="button" data-v="terreno" aria-pressed="true">Terreno</button>
+            <button type="button" data-v="laboratorio" aria-pressed="false">Laboratorio</button>
+            <button type="button" data-v="coordinacion" aria-pressed="false">Coordinación</button>
+            <button type="button" data-v="administracion" aria-pressed="false">Administración</button>
+          </div>
+        </div>
+        <div class="campo">
+          <label>Medio de pago</label>
+          <div class="opciones" id="selMedioPago">
+            <button type="button" data-v="efectivo" aria-pressed="true">Efectivo</button>
+            <button type="button" data-v="transferencia" aria-pressed="false">Transferencia</button>
+            <button type="button" data-v="tarjeta" aria-pressed="false">Tarjeta</button>
+            <button type="button" data-v="credito_proveedor" aria-pressed="false">Crédito proveedor</button>
+          </div>
+        </div>
+        <div class="campo">
+          <label for="gDescripcion">Descripción</label>
+          <input id="gDescripcion" placeholder="Para qué fue">
+        </div>
+        <div class="campo">
+          <label for="gOrden">Asociar a una OT (opcional)</label>
+          <input id="gOrden" list="dlOrdenes" placeholder="Busca por OT, cliente, patente o módulo">
+          <datalist id="dlOrdenes"></datalist>
+        </div>
+        <label class="foto-btn" for="gFoto" id="lblGastoFoto">Foto del comprobante</label>
+        <input id="gFoto" type="file" accept="image/*" capture="environment">
+        <div class="miniaturas" id="previaGasto"></div>
+      </div>
+      <button class="btn" id="btnGuardarGasto">Guardar gasto</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnGastoCancelar">Cancelar</button>
+    </section>
+
+    <!-- Facturar OT -->
+    <section id="vFacturar" class="oculto">
+      <h2 id="factTitulo">Facturar</h2>
+      <div id="factError" class="aviso oculto"></div>
+      <div class="seccion">
+        <div class="campo">
+          <label for="fMontoFinal">Monto final cobrado (neto, sin IVA)</label>
+          <input id="fMontoFinal" inputmode="numeric" placeholder="350000">
+          <div class="pista" id="pistaFacturar"></div>
+        </div>
+        <div class="campo">
+          <label for="fNumFactura">Número de factura</label>
+          <input id="fNumFactura" inputmode="numeric" placeholder="Opcional">
+        </div>
+      </div>
+      <button class="btn" id="btnConfirmarFacturar">Marcar como facturado</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnFactCancelar">Cancelar</button>
+    </section>
+
     <!-- Informe -->
     <section id="vInforme" class="oculto">
       <div id="hojaInforme"></div>
@@ -510,7 +631,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     <button type="button" data-seccion="terreno">Terreno</button>
     <button type="button" data-seccion="laboratorio">Laboratorio</button>
     <button type="button" data-seccion="agenda">Agenda</button>
-    <a id="navGastos" href="https://jonatoledojt-jpg.github.io/Gastos/" target="_blank" rel="noopener">Gastos</a>
+    <button type="button" data-seccion="gastos">Gastos</button>
   </nav>
 </div>
 
@@ -527,7 +648,8 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
-  ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp"].forEach(v => $(v).classList.add("oculto"));
+  ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
+   "vGasto","vFacturar"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -564,9 +686,22 @@ const CERRADOS = ["facturado","entregado","instalado","resuelto_en_terreno","rec
 
 const ETIQUETA_FRANJA = { manana:"Mañana", tarde:"Tarde", todo_el_dia:"Todo el día" };
 const DIAS_SEMANA = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto",
+               "septiembre","octubre","noviembre","diciembre"];
+const ETIQUETA_AREA = {
+  terreno:"Terreno", laboratorio:"Laboratorio",
+  coordinacion:"Coordinación", administracion:"Administración"
+};
+const ETIQUETA_MEDIO = {
+  efectivo:"Efectivo", transferencia:"Transferencia",
+  tarjeta:"Tarjeta", credito_proveedor:"Crédito proveedor"
+};
+const AREA_POR_ROL = { dueno:"administracion", coordinador:"coordinacion", tecnico:"terreno" };
 
 let perfil = null, ordenActual = null, fotoNueva = null, seccionActiva = "terreno";
 let semanaOffset = 0, tecnicos = [], agendaOrigenActiva = "terreno";
+let mesOffset = 0, gastoVista = "mio", gastoEditandoId = null, fotoGasto = null;
+let gastoOrdenes = [], categoriasUsadas = [], montoCotizadoOT = null;
 
 // ---------- Sesión ----------
 $("btnEntrar").onclick = async () => {
@@ -609,11 +744,12 @@ async function cargarTecnicos() {
 }
 
 // ---------- Navegación (Terreno / Laboratorio / Agenda) ----------
-const SECCION_TIT = { terreno:"Terreno", laboratorio:"Laboratorio", agenda:"Agenda" };
+const SECCION_TIT = { terreno:"Terreno", laboratorio:"Laboratorio", agenda:"Agenda", gastos:"Gastos" };
 const SECCION_SUB = {
   terreno:"OT en terreno",
   laboratorio:"OT en el laboratorio",
-  agenda:"Lo agendado esta semana"
+  agenda:"Lo agendado esta semana",
+  gastos:"Lo gastado este mes"
 };
 
 $("navInf").querySelectorAll("button").forEach(b => {
@@ -623,14 +759,20 @@ $("navInf").querySelectorAll("button").forEach(b => {
 function cambiarSeccion(seccion) {
   seccionActiva = seccion;
   semanaOffset = 0;
+  mesOffset = 0;
+  const esDueno = perfil?.rol === "dueno";
   $("navInf").querySelectorAll("button").forEach(b => {
     b.setAttribute("aria-current", b.dataset.seccion === seccion ? "true" : "false");
   });
   $("seccionTitulo").textContent = SECCION_TIT[seccion];
   $("seccionSub").textContent = SECCION_SUB[seccion];
-  $("btnNueva").classList.toggle("oculto", seccion === "agenda");
+  $("btnNueva").classList.toggle("oculto", seccion !== "terreno" && seccion !== "laboratorio");
   $("btnAgendar").classList.toggle("oculto", !(seccion === "agenda" && ["dueno","coordinador"].includes(perfil?.rol)));
+  $("btnNuevoGasto").classList.toggle("oculto", seccion !== "gastos");
   $("agendaControles").classList.toggle("oculto", seccion !== "agenda");
+  $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
+  $("selGastoVista").classList.toggle("oculto", !(seccion === "gastos" && esDueno));
+  if (seccion === "gastos" && !esDueno) gastoVista = "mio";
   cargarSeccion();
 }
 
@@ -638,6 +780,7 @@ $("btnRecargar").onclick = cargarSeccion;
 
 async function cargarSeccion() {
   if (seccionActiva === "agenda") return cargarAgendaSemana();
+  if (seccionActiva === "gastos") return cargarGastos();
   return cargarOrdenes();
 }
 
@@ -672,7 +815,7 @@ function tarjetaOT(o, opts = {}) {
 async function cargarOrdenes() {
   $("listaOT").innerHTML = '<div class="cargando">Cargando órdenes…</div>';
   const { data, error } = await db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,clientes(nombre,rut),vehiculos(patente)")
     .eq("origen", seccionActiva)
     .not("estado", "in", `(${CERRADOS.join(",")})`)
     .order("fecha_ingreso", { ascending: false });
@@ -728,7 +871,7 @@ async function cargarAgendaSemana() {
   // lo agendado está en la otra pestaña.
   const { data:{ user } } = await db.auth.getUser();
   let query = db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,fecha_agendada,franja,tecnico_agendado,orden_ruta,fecha_ingreso,vehiculo_id,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,fecha_agendada,franja,tecnico_agendado,orden_ruta,fecha_ingreso,vehiculo_id,aprobado_cliente,numero_factura,clientes(nombre,rut),vehiculos(patente)")
     .gte("fecha_agendada", isoFecha(lunes)).lte("fecha_agendada", isoFecha(sabado))
     .order("fecha_agendada").order("orden_ruta", { nullsFirst: false });
   if (perfil?.rol === "tecnico") query = query.eq("tecnico_agendado", user.id);
@@ -1058,8 +1201,11 @@ async function abrirDetalle(o) {
   });
 
   $("btnCotizar").classList.toggle("oculto", perfil?.rol === "tecnico");
+  $("btnAprobar").classList.toggle("oculto",
+    perfil?.rol === "tecnico" || o.aprobado_cliente === true);
 
   pintarAgendaDet(o);
+  pintarMargenOT(o);
 
   $("detFotos").innerHTML = "";
   ver("vDetalle");
@@ -1114,8 +1260,64 @@ $("btnGuardarAgendaDet").onclick = async () => {
   pintarAgendaDet(ordenActual);
 };
 
+// El margen solo lo ve el dueño: el coordinador no ve los gastos de los
+// demás, así que para él saldría incompleto y eso engaña más que ayudar.
+async function pintarMargenOT(o) {
+  const caja = $("detMargen");
+  if (perfil?.rol !== "dueno") { caja.classList.add("oculto"); return; }
+
+  const { data, error } = await db.rpc("rentabilidad_ot", { p_orden_id: o.id });
+  if (error || !data?.[0]) { caja.classList.add("oculto"); return; }
+  const r = data[0];
+  caja.classList.remove("oculto");
+
+  if (r.tipo_ingreso === "sin_ingreso") {
+    $("detMargenInfo").innerHTML = `
+      <div class="dato"><span>Ingreso</span><span>Sin ingreso confirmado</span></div>
+      <div class="dato"><span>Gastos asociados</span><span>${r.hay_gastos ? "$" + miles(Number(r.monto_gastos)) : "sin gastos registrados"}</span></div>`;
+    return;
+  }
+
+  const ingreso = Number(r.ingreso);
+  const gastos = Number(r.monto_gastos);
+  const margen = ingreso - gastos;
+  const pct = ingreso > 0 ? Math.round((margen / ingreso) * 100) : null;
+  const etiquetaIngreso = r.tipo_ingreso === "facturado" ? "Facturado" : "Cotizado aprobado";
+
+  let diferencia = "";
+  if (r.tipo_ingreso === "facturado") {
+    const { data: m } = await db.rpc("ordenes_montos", { p_orden_id: o.id });
+    const cot = m?.[0]?.monto_cotizado;
+    if (cot != null && Number(cot) !== ingreso) {
+      const dif = ingreso - Number(cot);
+      diferencia = `<div class="dato"><span>Diferencia contra cotización</span><span class="${dif < 0 ? "neg" : "pos"}">${dif < 0 ? "−" : "+"}$${miles(Math.abs(dif))}</span></div>`;
+    }
+  }
+
+  $("detMargenInfo").innerHTML = `
+    <div class="dato"><span>${etiquetaIngreso}</span><span>$${miles(ingreso)}</span></div>
+    ${diferencia}
+    <div class="dato"><span>Gastos asociados</span><span>${r.hay_gastos ? "$" + miles(gastos) : "sin gastos registrados"}</span></div>
+    <div class="dato total"><span>Margen</span><span class="${margen < 0 ? "neg" : "pos"}">$${miles(margen)}${pct === null ? "" : ` · ${pct}%`}</span></div>`;
+}
+
+$("btnAprobar").onclick = async () => {
+  msg("detError", "");
+  const { error } = await db.from("ordenes")
+    .update({ aprobado_cliente: true, fecha_aprobacion: new Date().toISOString() })
+    .eq("id", ordenActual.id);
+  if (error) return msg("detError", "No se pudo marcar como aprobada: " + error.message);
+  ordenActual.aprobado_cliente = true;
+  if (confirm("Cotización marcada como aprobada. ¿Pasamos la OT a 'En reparación'?")) {
+    cambiarEstado("en_reparacion");
+  } else {
+    abrirDetalle(ordenActual);
+  }
+};
+
 async function cambiarEstado(nuevo) {
   if (nuevo === ordenActual.estado) return;
+  if (nuevo === "facturado") return abrirFacturar();
   const cierra = CERRADOS.includes(nuevo);
   const { error } = await db.from("ordenes")
     .update({ estado: nuevo, ...(cierra ? { fecha_cierre: new Date().toISOString() } : {}) })
@@ -1125,6 +1327,55 @@ async function cambiarEstado(nuevo) {
   if (cierra) { ver("vTablero"); cargarSeccion(); return; }
   abrirDetalle(ordenActual);
 }
+
+// ---------- Facturar ----------
+async function abrirFacturar() {
+  msg("factError", "");
+  $("factTitulo").textContent = "Facturar " + (ordenActual.numero_ot ?? "");
+  const { data: m } = await db.rpc("ordenes_montos", { p_orden_id: ordenActual.id });
+  montoCotizadoOT = m?.[0]?.monto_cotizado != null ? Number(m[0].monto_cotizado) : null;
+  $("fMontoFinal").value = m?.[0]?.monto_final ?? montoCotizadoOT ?? "";
+  $("fNumFactura").value = ordenActual.numero_factura ?? "";
+  actualizarPistaFacturar();
+  ver("vFacturar");
+}
+
+function actualizarPistaFacturar() {
+  const val = parseInt(($("fMontoFinal").value || "").replace(/\D/g, "") || "0", 10);
+  const p = $("pistaFacturar");
+  if (montoCotizadoOT == null) { p.textContent = "Sin cotización vigente para comparar."; p.className = "pista"; return; }
+  const dif = val - montoCotizadoOT;
+  if (dif === 0) {
+    p.textContent = `Igual a lo cotizado ($${miles(montoCotizadoOT)}).`;
+    p.className = "pista bien";
+  } else {
+    p.textContent = `Diferencia contra cotización: ${dif < 0 ? "−" : "+"}$${miles(Math.abs(dif))} (cotizado $${miles(montoCotizadoOT)})`;
+    p.className = "pista" + (dif < 0 ? " mal" : "");
+  }
+}
+$("fMontoFinal").oninput = e => { e.target.value = e.target.value.replace(/\D/g, ""); actualizarPistaFacturar(); };
+$("btnFactCancelar").onclick = () => abrirDetalle(ordenActual);
+
+$("btnConfirmarFacturar").onclick = async () => {
+  msg("factError", "");
+  const monto = parseInt(($("fMontoFinal").value || "").replace(/\D/g, "") || "0", 10);
+  if (!monto) return msg("factError", "Falta el monto final cobrado.");
+
+  $("btnConfirmarFacturar").disabled = true;
+  $("btnConfirmarFacturar").textContent = "Guardando…";
+  const { error } = await db.from("ordenes").update({
+    estado: "facturado",
+    monto_final: monto,
+    numero_factura: $("fNumFactura").value.trim() || null,
+    fecha_cierre: new Date().toISOString()
+  }).eq("id", ordenActual.id);
+  $("btnConfirmarFacturar").disabled = false;
+  $("btnConfirmarFacturar").textContent = "Marcar como facturado";
+  if (error) return msg("factError", "No se pudo facturar: " + error.message + " — no se perdió lo que escribiste.");
+  ordenActual.estado = "facturado";
+  ver("vTablero");
+  cargarSeccion();
+};
 
 $("dFoto").onchange = async e => {
   const f = e.target.files[0];
@@ -1153,6 +1404,396 @@ async function cargarFotos(orden_id) {
 
 $("btnVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
 
+
+// ---------- Gastos ----------
+// Cada uno ve lo suyo; el dueño ve todo. Eso lo garantiza el RLS
+// (11-gastos.sql), no estas consultas.
+grupoOpciones("selArea");
+grupoOpciones("selMedioPago");
+
+const primerDiaMes = off => { const h = new Date(); return new Date(h.getFullYear(), h.getMonth() + off, 1); };
+const rangoMes = off => {
+  const ini = primerDiaMes(off);
+  const fin = new Date(ini.getFullYear(), ini.getMonth() + 1, 0);
+  return { ini: isoFecha(ini), fin: isoFecha(fin), etiqueta: `${MESES[ini.getMonth()]} ${ini.getFullYear()}` };
+};
+
+$("btnMesAnt").onclick = () => { mesOffset--; cargarGastos(); };
+$("btnMesSig").onclick = () => { mesOffset++; cargarGastos(); };
+
+$("selGastoVista").querySelectorAll("button").forEach(b => {
+  b.onclick = () => {
+    $("selGastoVista").querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", "false"));
+    b.setAttribute("aria-pressed", "true");
+    gastoVista = b.dataset.v;
+    cargarGastos();
+  };
+});
+
+async function cargarGastos() {
+  const r = rangoMes(mesOffset);
+  $("mesLabel").textContent = r.etiqueta;
+  $("campoGastoPersona").classList.toggle("oculto", gastoVista !== "persona");
+  $("btnNuevoGasto").classList.toggle("oculto", gastoVista !== "mio");
+  if (gastoVista === "rentabilidad") return cargarRentabilidad(r);
+  if (gastoVista === "global") return cargarGastosGlobal(r);
+  if (gastoVista === "persona") return cargarGastosPersona(r);
+  return cargarGastosMios(r);
+}
+
+function totalesDe(lista) {
+  const total = lista.reduce((s, g) => s + Number(g.monto_total), 0);
+  const conF = lista.filter(g => g.tiene_factura).reduce((s, g) => s + Number(g.monto_total), 0);
+  const iva = lista.reduce((s, g) => s + Number(g.iva_credito), 0);
+  const neto = lista.reduce((s, g) => s + Number(g.monto_neto), 0);
+  return { total, conF, sinF: total - conF, iva, neto };
+}
+
+function pintarResumenGastos(t, extra = "") {
+  $("gastosResumen").classList.remove("oculto");
+  $("gastosResumen").innerHTML = `
+    <div class="dato"><span>Con factura</span><span>$${miles(t.conF)}</span></div>
+    <div class="dato"><span>Sin factura</span><span>$${miles(t.sinF)}</span></div>
+    <div class="dato total"><span>Total del mes</span><span>$${miles(t.total)}</span></div>
+    ${extra}`;
+}
+
+const SELECT_GASTO = "id,fecha,monto_total,monto_neto,iva_credito,tiene_factura,categoria,area," +
+  "descripcion,medio_pago,orden_id,ruta_comprobante,anulado,usuario_id,ordenes(numero_ot)";
+
+async function cargarGastosMios(r) {
+  $("listaOT").innerHTML = '<div class="cargando">Cargando gastos…</div>';
+  const { data:{ user } } = await db.auth.getUser();
+  const { data, error } = await db.from("gastos").select(SELECT_GASTO)
+    .eq("usuario_id", user.id).eq("anulado", false)
+    .gte("fecha", r.ini).lte("fecha", r.fin)
+    .order("fecha", { ascending: false }).order("id", { ascending: false });
+  if (error) { $("listaOT").innerHTML = '<div class="aviso">No se pudieron cargar los gastos. Revisa tu conexión.</div>'; return; }
+  pintarResumenGastos(totalesDe(data));
+  pintarListaGastos(data, true);
+}
+
+async function cargarGastosPersona(r) {
+  $("listaOT").innerHTML = '<div class="cargando">Cargando…</div>';
+  if (!$("selGastoPersona").options.length) {
+    const { data: gente } = await db.from("perfiles").select("id,nombre").order("nombre");
+    $("selGastoPersona").innerHTML = (gente || []).map(p => `<option value="${p.id}">${escapar(p.nombre)}</option>`).join("");
+    $("selGastoPersona").onchange = () => cargarGastos();
+  }
+  const uid = $("selGastoPersona").value;
+  if (!uid) { $("listaOT").innerHTML = '<div class="vacio"><p>Elige un colaborador.</p></div>'; return; }
+
+  const { data, error } = await db.from("gastos").select(SELECT_GASTO)
+    .eq("usuario_id", uid).eq("anulado", false)
+    .gte("fecha", r.ini).lte("fecha", r.fin)
+    .order("fecha", { ascending: false });
+  if (error) { $("listaOT").innerHTML = '<div class="aviso">No se pudo cargar.</div>'; return; }
+
+  const rAnt = rangoMes(mesOffset - 1);
+  const { data: previo } = await db.from("gastos").select("monto_total")
+    .eq("usuario_id", uid).eq("anulado", false).gte("fecha", rAnt.ini).lte("fecha", rAnt.fin);
+  const totalAnt = (previo || []).reduce((s, g) => s + Number(g.monto_total), 0);
+  const t = totalesDe(data);
+  const dif = t.total - totalAnt;
+
+  pintarResumenGastos(t, `
+    <div class="dato"><span>Mes anterior</span><span>$${miles(totalAnt)}</span></div>
+    <div class="dato"><span>Diferencia</span><span class="${dif > 0 ? "neg" : "pos"}">${dif >= 0 ? "+" : "−"}$${miles(Math.abs(dif))}</span></div>
+    ${desglose(data, "categoria", c => c)}`);
+  pintarListaGastos(data, false);
+}
+
+function desglose(lista, campo, etiquetar) {
+  const mapa = {};
+  lista.forEach(g => { mapa[g[campo]] = (mapa[g[campo]] || 0) + Number(g.monto_total); });
+  const filas = Object.entries(mapa).sort((a, b) => b[1] - a[1]);
+  if (!filas.length) return "";
+  return `<div style="margin-top:14px"><span class="rotulo">Por ${campo}</span>` +
+    filas.map(([k, v]) => `<div class="dato"><span>${escapar(etiquetar(k))}</span><span>$${miles(v)}</span></div>`).join("") +
+    "</div>";
+}
+
+async function cargarGastosGlobal(r) {
+  $("listaOT").innerHTML = '<div class="cargando">Cargando…</div>';
+  const { data, error } = await db.from("gastos").select(SELECT_GASTO + ",perfiles(nombre)")
+    .eq("anulado", false).gte("fecha", r.ini).lte("fecha", r.fin)
+    .order("fecha", { ascending: false });
+  if (error) { $("listaOT").innerHTML = '<div class="aviso">No se pudo cargar.</div>'; return; }
+  const t = totalesDe(data);
+  pintarResumenGastos(t, `
+    <div class="dato"><span>Total neto</span><span>$${miles(t.neto)}</span></div>
+    <div class="dato"><span>IVA crédito estimado</span><span>$${miles(t.iva)}</span></div>
+    ${desglose(data, "area", a => ETIQUETA_AREA[a] || a)}
+    ${desglose(data, "categoria", c => c)}`);
+  pintarListaGastos(data, false, true);
+}
+
+function pintarListaGastos(lista, propios, mostrarPersona = false) {
+  const cont = $("listaOT");
+  cont.innerHTML = "";
+  if (!lista.length) {
+    cont.innerHTML = '<div class="vacio"><p>No hay gastos registrados este mes.</p></div>';
+    return;
+  }
+  lista.forEach(g => {
+    const card = document.createElement("div");
+    card.className = "ot";
+    const f = new Date(g.fecha + "T00:00:00");
+    card.innerHTML = `
+      <div class="fila1">
+        <span class="num">${String(f.getDate()).padStart(2, "0")}-${String(f.getMonth() + 1).padStart(2, "0")}</span>
+        <span class="dias">$${miles(g.monto_total)}</span>
+      </div>
+      <div class="cliente"></div>
+      <div class="detalle"></div>
+      <div class="sintoma"></div>`;
+    card.querySelector(".cliente").textContent = g.categoria;
+    card.querySelector(".detalle").textContent =
+      `${ETIQUETA_MEDIO[g.medio_pago] || g.medio_pago} · ${ETIQUETA_AREA[g.area] || g.area} · ` +
+      (g.tiene_factura ? "con factura" : "sin factura") +
+      (mostrarPersona && g.perfiles?.nombre ? ` · ${g.perfiles.nombre}` : "");
+    card.querySelector(".sintoma").textContent =
+      [g.descripcion, g.ordenes?.numero_ot, g.ruta_comprobante ? "con comprobante" : null]
+        .filter(Boolean).join(" · ");
+
+    const acciones = document.createElement("div");
+    acciones.className = "reordenar";
+    if (propios && !g.anulado) {
+      const bEd = document.createElement("button");
+      bEd.type = "button"; bEd.textContent = "Editar";
+      bEd.onclick = () => abrirGasto(g);
+      const bAn = document.createElement("button");
+      bAn.type = "button"; bAn.textContent = "Anular";
+      bAn.onclick = () => anularGasto(g);
+      acciones.appendChild(bEd); acciones.appendChild(bAn);
+    }
+    if (g.ruta_comprobante) {
+      const bVer = document.createElement("button");
+      bVer.type = "button"; bVer.textContent = "Comprobante";
+      bVer.onclick = () => verComprobante(g.ruta_comprobante);
+      acciones.appendChild(bVer);
+    }
+    if (acciones.children.length) card.appendChild(acciones);
+    cont.appendChild(card);
+  });
+}
+
+async function verComprobante(ruta) {
+  const { data, error } = await db.storage.from("gastos-comprobantes").createSignedUrl(ruta, 120);
+  if (error) return alert("No se pudo abrir el comprobante: " + error.message);
+  window.open(data.signedUrl, "_blank", "noopener");
+}
+
+async function anularGasto(g) {
+  const motivo = prompt("¿Por qué se anula este gasto?");
+  if (!motivo) return;
+  const { error } = await db.from("gastos")
+    .update({ anulado: true, fecha_anulacion: new Date().toISOString(), motivo_anulacion: motivo })
+    .eq("id", g.id);
+  if (error) return alert("No se pudo anular: " + error.message);
+  cargarGastos();
+}
+
+// ---------- Formulario de gasto ----------
+$("btnNuevoGasto").onclick = () => abrirGasto(null);
+$("btnGastoCancelar").onclick = () => { ver("vTablero"); cargarGastos(); };
+
+async function abrirGasto(g) {
+  msg("gastoError", "");
+  gastoEditandoId = g?.id ?? null;
+  fotoGasto = null;
+  $("gastoTitulo").textContent = g ? "Editar gasto" : "Registrar gasto";
+  $("gMonto").value = g?.monto_total ?? "";
+  $("gFactura").checked = !!g?.tiene_factura;
+  $("gFecha").value = g?.fecha ?? isoFecha(new Date());
+  $("gCategoria").value = g?.categoria ?? "";
+  $("gDescripcion").value = g?.descripcion ?? "";
+  $("selArea").querySelector(`[data-v="${g?.area || AREA_POR_ROL[perfil?.rol] || "terreno"}"]`)?.click();
+  $("selMedioPago").querySelector(`[data-v="${g?.medio_pago || "efectivo"}"]`)?.click();
+  $("previaGasto").innerHTML = "";
+  $("lblGastoFoto").textContent = g?.ruta_comprobante ? "Cambiar comprobante" : "Foto del comprobante";
+  $("gFoto").value = "";
+  actualizarPistaGasto();
+  await cargarOrdenesParaGasto();
+  $("gOrden").value = g?.orden_id ? (gastoOrdenes.find(o => o.id === g.orden_id)?.texto ?? "") : "";
+  cargarCategorias();
+  ver("vGasto");
+}
+
+async function cargarOrdenesParaGasto() {
+  const { data } = await db.from("ordenes")
+    .select("id,numero_ot,tipo_trabajo,tipo_modulo,sistema,clientes(nombre),vehiculos(patente)")
+    .not("estado", "in", `(${CERRADOS.join(",")})`)
+    .order("fecha_ingreso", { ascending: false }).limit(200);
+  gastoOrdenes = (data || []).map(o => ({
+    id: o.id,
+    texto: [o.numero_ot, o.clientes?.nombre, o.vehiculos?.patente,
+            o.tipo_trabajo === "servicio" ? o.sistema : o.tipo_modulo].filter(Boolean).join(" · ")
+  }));
+  $("dlOrdenes").innerHTML = gastoOrdenes.map(o => `<option value="${escapar(o.texto)}">`).join("");
+}
+
+async function cargarCategorias() {
+  const { data } = await db.from("gastos").select("categoria").order("id", { ascending: false }).limit(300);
+  categoriasUsadas = [...new Set((data || []).map(g => g.categoria).filter(Boolean))].sort();
+  $("dlCategorias").innerHTML = categoriasUsadas.map(c => `<option value="${escapar(c)}">`).join("");
+}
+
+// Trim, espacios dobles, y si ya existe una parecida (sin importar
+// tildes ni mayúsculas) se reusa esa, para no tener "petroleo" y
+// "Petróleo" como dos categorías distintas.
+function normalizarCategoria(txt) {
+  const base = (txt || "").trim().replace(/\s+/g, " ");
+  if (!base) return "";
+  const plano = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const existente = categoriasUsadas.find(c => plano(c) === plano(base));
+  if (existente) return existente;
+  return base.charAt(0).toUpperCase() + base.slice(1).toLowerCase();
+}
+
+function actualizarPistaGasto() {
+  const total = parseInt(($("gMonto").value || "").replace(/\D/g, "") || "0", 10);
+  if (!total) { $("pistaGasto").textContent = ""; return; }
+  if ($("gFactura").checked) {
+    const neto = Math.round(total / 1.19);
+    $("pistaGasto").textContent = `Neto $${miles(neto)} · IVA crédito $${miles(total - neto)}`;
+  } else {
+    $("pistaGasto").textContent = "Sin factura: no da crédito de IVA.";
+  }
+}
+$("gMonto").oninput = e => { e.target.value = e.target.value.replace(/\D/g, ""); actualizarPistaGasto(); };
+$("gFactura").onchange = actualizarPistaGasto;
+
+$("gFoto").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  fotoGasto = await comprimir(f);
+  $("previaGasto").innerHTML = `<img src="${URL.createObjectURL(fotoGasto)}" alt="Comprobante">`;
+  $("lblGastoFoto").textContent = "Cambiar comprobante";
+};
+
+$("btnGuardarGasto").onclick = async () => {
+  msg("gastoError", "");
+  const monto = parseInt(($("gMonto").value || "").replace(/\D/g, "") || "0", 10);
+  const categoria = normalizarCategoria($("gCategoria").value);
+  if (!monto) return msg("gastoError", "Falta el monto.");
+  if (!categoria) return msg("gastoError", "Falta la categoría.");
+  if (!$("gFecha").value) return msg("gastoError", "Falta la fecha.");
+
+  $("btnGuardarGasto").disabled = true;
+  $("btnGuardarGasto").textContent = "Guardando…";
+  try {
+    const campos = {
+      fecha: $("gFecha").value,
+      monto_total: monto,
+      tiene_factura: $("gFactura").checked,
+      categoria,
+      area: elegido("selArea") || "terreno",
+      descripcion: $("gDescripcion").value.trim() || null,
+      medio_pago: elegido("selMedioPago") || "efectivo",
+      orden_id: gastoOrdenes.find(o => o.texto === $("gOrden").value)?.id ?? null
+    };
+
+    let id = gastoEditandoId;
+    if (id) {
+      const { error } = await db.from("gastos").update(campos).eq("id", id);
+      if (error) throw error;
+    } else {
+      const { data, error } = await db.from("gastos").insert(campos).select("id").single();
+      if (error) throw error;
+      id = data.id;
+    }
+
+    // La foto va después: si falla, el gasto igual quedó guardado.
+    let avisoFoto = "";
+    if (fotoGasto) {
+      const { data:{ user } } = await db.auth.getUser();
+      const ruta = `${user.id}/${id}/comprobante-${Date.now()}.jpg`;
+      const { error: eUp } = await db.storage.from("gastos-comprobantes")
+        .upload(ruta, fotoGasto, { contentType: "image/jpeg" });
+      if (eUp) avisoFoto = " El gasto quedó guardado, pero la foto no se pudo subir — puedes editarlo y reintentar.";
+      else await db.from("gastos").update({ ruta_comprobante: ruta }).eq("id", id);
+    }
+
+    gastoEditandoId = null;
+    fotoGasto = null;
+    ["gMonto","gCategoria","gDescripcion","gOrden"].forEach(k => $(k).value = "");
+    $("gFactura").checked = false;
+    $("gFecha").value = isoFecha(new Date());
+    $("previaGasto").innerHTML = "";
+    $("lblGastoFoto").textContent = "Foto del comprobante";
+    $("gFoto").value = "";
+    actualizarPistaGasto();
+
+    ver("vTablero");
+    await cargarGastos();
+    msg("gastoError", "");
+    alert("Gasto registrado." + avisoFoto);
+  } catch (e) {
+    msg("gastoError", "No se pudo guardar: " + (e.message || "error desconocido") +
+      " — no se perdió lo que escribiste, puedes reintentar.");
+  } finally {
+    $("btnGuardarGasto").disabled = false;
+    $("btnGuardarGasto").textContent = "Guardar gasto";
+  }
+};
+
+// ---------- Rentabilidad (solo dueño) ----------
+async function cargarRentabilidad(r) {
+  $("listaOT").innerHTML = '<div class="cargando">Calculando…</div>';
+  $("gastosResumen").classList.add("oculto");
+
+  const { data, error } = await db.rpc("resumen_rentabilidad", { p_mes: r.ini });
+  if (error) { $("listaOT").innerHTML = `<div class="aviso">No se pudo calcular: ${escapar(error.message)}</div>`; return; }
+  const x = data?.[0];
+  if (!x) { $("listaOT").innerHTML = '<div class="aviso">Sin datos.</div>'; return; }
+
+  const facturado = Number(x.facturado), margen = Number(x.margen);
+  const pct = facturado > 0 ? Math.round((margen / facturado) * 100) : null;
+
+  const { data: porArea } = await db.from("gastos").select("area,monto_neto")
+    .eq("anulado", false).gte("fecha", r.ini).lte("fecha", r.fin);
+  const mapaArea = {};
+  (porArea || []).forEach(g => { mapaArea[g.area] = (mapaArea[g.area] || 0) + Number(g.monto_neto); });
+
+  $("listaOT").innerHTML = `
+    <div class="seccion">
+      <table class="tabla-num">
+        <tr class="grupo"><td colspan="2">Ingresos</td></tr>
+        <tr><td>Facturado del mes</td><td>$${miles(facturado)}</td></tr>
+        <tr class="sub"><td>Plata cobrada, OT en estado facturado</td><td></td></tr>
+        <tr><td>Comprometido</td><td>$${miles(Number(x.comprometido))}</td></tr>
+        <tr class="sub"><td>Cotizaciones aprobadas aún no facturadas. No es plata cobrada — no se suma al facturado.</td><td></td></tr>
+
+        <tr class="grupo"><td colspan="2">Egresos (neto)</td></tr>
+        ${Object.entries(mapaArea).sort((a,b)=>b[1]-a[1])
+          .map(([a, v]) => `<tr><td>${ETIQUETA_AREA[a] || a}</td><td>$${miles(v)}</td></tr>`).join("")
+          || '<tr class="sub"><td>Sin gastos registrados este mes</td><td></td></tr>'}
+        <tr><td>Gastos netos del mes</td><td>$${miles(Number(x.gastos_netos))}</td></tr>
+        <tr><td>Costo fijo del mes</td><td>$${miles(Number(x.costo_fijo))}</td></tr>
+        <tr class="sub"><td>No incluye sueldos ni asistencia: todavía no están en el sistema.</td><td></td></tr>
+
+        <tr class="fuerte"><td>Margen del mes</td><td class="${margen < 0 ? "neg" : "pos"}">$${miles(margen)}</td></tr>
+        <tr><td>Margen %</td><td>${pct === null ? "sin facturación registrada" : pct + "%"}</td></tr>
+      </table>
+    </div>
+    <div class="seccion">
+      <div class="campo">
+        <label for="gCostoFijo">Costo fijo de ${r.etiqueta}</label>
+        <input id="gCostoFijo" inputmode="numeric" value="${Number(x.costo_fijo) || ""}" placeholder="0">
+      </div>
+      <button class="btn claro" id="btnGuardarCostoFijo">Guardar costo fijo</button>
+    </div>`;
+
+  $("btnGuardarCostoFijo").onclick = async () => {
+    const monto = parseInt(($("gCostoFijo").value || "").replace(/\D/g, "") || "0", 10);
+    const { error: e2 } = await db.from("costos_fijos_mensuales")
+      .upsert({ mes: r.ini, monto, creado_por: (await db.auth.getUser()).data.user.id },
+              { onConflict: "mes" });
+    if (e2) return alert("No se pudo guardar: " + e2.message);
+    cargarGastos();
+  };
+}
 
 // ---------- Cotización ----------
 // El formulario SIEMPRE crea una cotización nueva. No se edita una

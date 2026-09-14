@@ -33,10 +33,11 @@ agregar cualquier campo, preguntar si vale ese costo.
   `CACHE` de `sw.js` se sube de versión (`paz-taller-vN`) cada vez que hay un
   cambio de fondo en `index.html`, para que el service worker no sirva una
   versión vieja desde caché.
-- **Gastos** vive en **otro repo aparte**: `github.com/jonatoledojt-jpg/Gastos`,
-  publicado en `jonatoledojt-jpg.github.io/Gastos/`. Es una PWA propia, con su
-  propio diseño — no comparte código ni estilos con esta app. Desde acá solo
-  se linkea (pestaña "Gastos" en la barra inferior, `target="_blank"`).
+- **Gastos ya es parte de esta app** (sección propia en la barra inferior).
+  La app vieja `github.com/jonatoledojt-jpg/Gastos` queda **deprecada**:
+  guardaba todo en `localStorage`, o sea solo en el teléfono donde se
+  escribía, sin nube, sin login y sin respaldo. No se migraron datos; si
+  hace falta algo de ahí, se reingresa a mano.
 
 El `SUPABASE_URL` y la `anon key` están escritos al inicio del `<script>` del
 `index.html`. La anon key es pública por diseño y la protege el RLS.
@@ -59,6 +60,7 @@ sw.js                   service worker
 09-agenda.sql           PRIMER intento de agenda (sobre visitas) — reemplazado, ver abajo
 09-agenda-simple.sql    agenda SOBRE ordenes (el enfoque que quedó) (falta ejecutar)
 10-cotizaciones-vigente.sql  anular cotizaciones + cotización vigente
+11-gastos.sql           gastos, costos fijos, rentabilidad, bucket privado
 ```
 
 `09-agenda.sql` (con tabla `visitas`) se reemplazó por `09-agenda-simple.sql`
@@ -192,8 +194,9 @@ Barra fija abajo, siempre visible dentro de la app:
 - **Terreno** — OT con `origen = terreno`.
 - **Laboratorio** — OT con `origen = laboratorio`.
 - **Agenda** — OT con `fecha_agendada` puesta, vista semanal.
-- **Gastos** — link externo a `jonatoledojt-jpg.github.io/Gastos/` (otro
-  repo, otra app — ver "Stack"). No es una pantalla de esta app.
+- **Gastos** — gastos del mes. Para el dueño trae además las pestañas
+  Por persona, Global y Rentabilidad (ver "Gastos y rentabilidad").
+  Rentabilidad **no** va en la barra inferior: vive dentro de Gastos.
 
 Una misma OT puede aparecer en Agenda y también en Terreno o Laboratorio a
 la vez — no se duplica la tarjeta, es la misma fila de `ordenes` filtrada
@@ -209,6 +212,59 @@ navegación, no permiso.
 "técnico de laboratorio" — ambos son `rol = 'tecnico'`. Si algún día hace
 falta separar sus permisos o su pantalla por defecto de verdad, va a hacer
 falta un campo nuevo (por ejemplo `perfiles.area`).
+
+## Gastos y rentabilidad
+
+Ver `11-gastos.sql`. Objetivo de fondo: que el dueño pueda responder si la
+empresa es rentable, en qué se va la plata y qué OT dejan margen real.
+
+**El usuario escribe el monto total** (lo que dice la boleta). El neto y el
+IVA crédito los calcula un **trigger en la base**, no la pantalla: con
+factura, `neto = round(total / 1.19)` y el resto es IVA; sin factura, neto =
+total e IVA = 0. Verificado: $119.000 con factura → neto $100.000, IVA
+$19.000.
+
+**El mismo trigger fuerza `usuario_id = auth.uid()`** en el insert y lo deja
+intacto en el update. Nadie registra un gasto a nombre de otro, ni se lo
+traspasa después. Efecto lateral a tener presente: **no se pueden sembrar
+gastos desde el SQL Editor** (ahí `auth.uid()` es null); si algún día hay
+que importar histórico, se desactiva el trigger a mano para esa carga.
+
+**Aislamiento (RLS real, no filtro de pantalla):** cada usuario ve solo sus
+gastos no anulados; el dueño ve todos, incluidos los anulados. Está en la
+política `leer_gastos`, no en la consulta del front — un técnico tampoco los
+ve pegándole directo a la API.
+
+**No se borran gastos.** No hay política de `delete`: se anulan
+(`anulado`, `fecha_anulacion`, `motivo_anulacion`) y quedan fuera de los
+totales pero dentro del historial.
+
+**Comprobantes en bucket privado** `gastos-comprobantes` (pueden traer RUT,
+proveedor, dirección, patente). Ruta obligatoria
+`usuario_id/gasto_id/archivo.jpg`: la primera carpeta es el usuario y de ahí
+cuelga el permiso. Se ven con URL firmada temporal, no con link público.
+La foto se sube **después** de guardar el gasto: si falla la señal, el gasto
+igual quedó registrado y la foto se puede reintentar editándolo.
+
+**Rentabilidad (solo dueño), todo en NETO:**
+- Va por función `resumen_rentabilidad(mes)` porque `ordenes.monto_final` y
+  `monto_cotizado` tienen el SELECT revocado por columna (08-terreno.sql).
+- **Comprometido y facturado nunca se suman.** Comprometido = cotizaciones
+  aprobadas todavía no facturadas (una promesa). Facturado = plata cobrada.
+  En pantalla van en líneas separadas y con su explicación abajo.
+- Margen = facturado − gastos netos − costo fijo. Si no hubo facturación,
+  dice "sin facturación registrada" en vez de inventar un porcentaje.
+- No incluye sueldos ni asistencia: no están en el sistema todavía.
+
+**Margen por OT** (`rentabilidad_ot`, también solo dueño): el coordinador no
+ve los gastos de los demás, así que para él el margen saldría incompleto —
+y un margen incompleto engaña más que no mostrarlo. Si la OT no tiene gastos
+asociados dice "sin gastos registrados", no `$0`: no es lo mismo.
+
+**Categorías:** campo libre con `datalist`, sin tabla propia. Antes de
+guardar se hace trim, se colapsan espacios dobles, y si ya existe una
+categoría parecida ignorando tildes y mayúsculas **se reusa esa** — así
+"petroleo" escrito después de "Petróleo" no crea una segunda categoría.
 
 ## Cotizaciones
 
@@ -355,9 +411,10 @@ El resto del formato no se toca sin preguntar.
    en Supabase.
 2. ~~**Agenda de terreno y rutas**~~ — hecho, como capa sobre `ordenes` (ver
    "Agenda" más arriba). Falta ejecutar `09-agenda-simple.sql` en Supabase.
-3. ~~**Gastos**~~ — existe, pero como **app aparte**
-   (`github.com/jonatoledojt-jpg/Gastos`), no integrada a esta base de datos.
-   Asistencia y pagos de colaboradores siguen pendientes.
+3. ~~**Gastos**~~ — hecho y dentro de esta app, con rentabilidad. Falta
+   ejecutar `11-gastos.sql` en Supabase. **Asistencia, sueldos y pagos de
+   colaboradores siguen pendientes** — por eso el margen mensual todavía no
+   descuenta mano de obra, y hay que leerlo sabiendo eso.
 4. **Nexa** — agente de IA que lee el grupo de WhatsApp del equipo y crea las
    OT solo. Ver más abajo.
 5. **Códigos GS** — app separada y offline que se alimenta de la vista
