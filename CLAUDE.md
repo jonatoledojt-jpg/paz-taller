@@ -482,7 +482,18 @@ al cliente sin filtro.
 - Se guarda qué dedujo y si la corrigieron, para medir su tasa de error.
 - El ingreso manual sigue existiendo siempre, como respaldo.
 
-### Etapa 1, ya construida: Nexa cara al cliente, dentro de la app
+### Se llama PAZ, no Nexa (14-09-2026)
+
+Jonatan la rebautizó **PAZ**. En pantalla y en el prompt dice PAZ. En el
+código, en las tablas y en la Edge Function sigue diciendo `nexa`
+(`nexa_config`, `nexa_conversaciones`, `nexa_mensajes`, `/functions/v1/nexa`,
+ids `nexaChat`, `btnNexaEnviar`…). **Eso es a propósito:** renombrar tablas y
+la función implica migración y cambio de URL, riesgo que no vale la pena por
+un nombre interno. Si alguna vez se hace el cambio completo, hay que tocar
+las tres tablas, la función desplegada y todos los ids del `index.html` de
+una sola vez.
+
+### Etapa 1, ya construida: PAZ cara al cliente, dentro de la app
 
 WhatsApp queda para después (necesita número dedicado y papeleo). La primera
 Nexa vive en la app y se usa a mano: alguien copia lo que dijo el cliente y
@@ -511,9 +522,37 @@ Piezas:
 otra que extrae la ficha en JSON (`accion: "ficha"`). Van separadas para no
 ensuciar el prompt de conversación con instrucciones de formato.
 
-**Nexa propone, la persona confirma.** El botón "Crear la OT desde este caso"
-llena el formulario de Nueva OT y ahí se revisa antes de guardar. Nexa no
+**PAZ propone, la persona confirma.** El botón "Crear la OT desde este caso"
+llena el formulario de Nueva OT y ahí se revisa antes de guardar. PAZ no
 inserta órdenes sola. Al guardar, la conversación queda con `orden_id`.
+
+**Cómo termina un caso (regla de negocio de Jonatan):**
+
+- **Módulo que se envía** → PAZ le dicta al cliente los datos de envío y ahí
+  termina. Esos datos van en el prompt, no en el código.
+- **Visita, revisión o cualquier cosa en terreno** → hay que avisarle al
+  coordinador para que agende.
+
+El aviso al coordinador **no es una notificación**: no existen todavía. Es un
+bloque **"Casos por agendar"** arriba de todo en la pestaña Agenda, que el
+coordinador ve apenas abre la app (su sección por defecto es Agenda). Sale
+ahí toda conversación con `ficha->>atencion = 'terreno'` y `orden_id is null`,
+y desaparece cuando se crea la OT. Visible solo para dueño y coordinador.
+**Nunca hacer que PAZ diga "ya le avisé al coordinador" mientras no exista un
+canal real** — una asistente que miente es peor que una que no hace nada.
+
+**La ficha decide el tipo de trabajo**, para no obligar a inventar datos (pasó
+en la OT-2026-0009: quedó como laboratorio con un `tipo_modulo` inventado
+porque el formulario exigía uno):
+
+- `atencion = envio` → laboratorio + módulo
+- `atencion = terreno` con `modulo` → terreno + módulo
+- `atencion = terreno` sin `modulo` → terreno + servicio, usando `sistema`
+- `atencion = null` → no se toca nada, elige la persona
+
+Por eso la ficha tiene `atencion` y `sistema` además de los datos del cliente.
+`modulo` y `sistema` son excluyentes y se cuentan como un solo dato en el
+"faltan N".
 
 **Probada de punta a punta el 14-09-2026** por Jonatan, con un caso real
 (Actros 4144 2011, patente JYPZ19, GS17, caja que no pasa marchas altas).
