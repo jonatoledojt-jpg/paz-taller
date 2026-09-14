@@ -700,10 +700,12 @@ async function cargarAgendaSemana() {
   $("semanaLabel").textContent =
     `${lunes.getDate()} ${MES_CORTO[lunes.getMonth()]} – ${sabado.getDate()} ${MES_CORTO[sabado.getMonth()]}`;
 
+  // Se traen las dos pestañas de una: así el contador de cada una dice
+  // cuántas hay, y no parece que la agenda está vacía cuando en realidad
+  // lo agendado está en la otra pestaña.
   const { data:{ user } } = await db.auth.getUser();
   let query = db.from("ordenes")
     .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,fecha_agendada,franja,tecnico_agendado,orden_ruta,fecha_ingreso,vehiculo_id,clientes(nombre,rut),vehiculos(patente)")
-    .eq("origen", agendaOrigenActiva)
     .gte("fecha_agendada", isoFecha(lunes)).lte("fecha_agendada", isoFecha(sabado))
     .order("fecha_agendada").order("orden_ruta", { nullsFirst: false });
   if (perfil?.rol === "tecnico") query = query.eq("tecnico_agendado", user.id);
@@ -713,8 +715,19 @@ async function cargarAgendaSemana() {
     $("listaOT").innerHTML = '<div class="aviso">No se pudo cargar la agenda. Revisa tu conexión.</div>';
     return;
   }
-  if (!data.length) {
-    $("listaOT").innerHTML = '<div class="vacio"><p>No hay OT agendadas esta semana.</p></div>';
+
+  const cuenta = { terreno: 0, laboratorio: 0 };
+  data.forEach(o => { if (cuenta[o.origen] !== undefined) cuenta[o.origen]++; });
+  $("selAgendaOrigen").querySelector('[data-v="terreno"]').textContent = `Terreno (${cuenta.terreno})`;
+  $("selAgendaOrigen").querySelector('[data-v="laboratorio"]').textContent = `Laboratorio (${cuenta.laboratorio})`;
+
+  const dePestana = data.filter(o => o.origen === agendaOrigenActiva);
+  if (!dePestana.length) {
+    const otra = agendaOrigenActiva === "terreno" ? "laboratorio" : "terreno";
+    const pista = cuenta[otra]
+      ? `<p>Hay ${cuenta[otra]} en ${otra === "terreno" ? "Terreno" : "Laboratorio"} — tócala arriba.</p>`
+      : "";
+    $("listaOT").innerHTML = `<div class="vacio"><p>No hay OT agendadas esta semana en ${SECCION_TIT[agendaOrigenActiva]}.</p>${pista}</div>`;
     return;
   }
 
@@ -723,7 +736,7 @@ async function cargarAgendaSemana() {
   for (let i = 0; i < 6; i++) {
     const dia = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + i);
     const isoDia = isoFecha(dia);
-    const delDia = data.filter(o => o.fecha_agendada === isoDia);
+    const delDia = dePestana.filter(o => o.fecha_agendada === isoDia);
 
     const cab = document.createElement("div");
     cab.className = "dia-grupo";
@@ -818,7 +831,8 @@ $("selTipoTrabajo").querySelectorAll("button").forEach(b => {
 
 // ---------- Agendar esta orden (dentro del mismo formulario) ----------
 $("btnToggleAgendar").onclick = () => {
-  $("camposAgenda").classList.toggle("oculto");
+  const oculto = $("camposAgenda").classList.toggle("oculto");
+  $("btnToggleAgendar").textContent = oculto ? "+ Agendar esta orden" : "− No agendar esta orden";
 };
 
 // Acepta link de Maps, coordenadas o texto de referencia.
@@ -864,6 +878,7 @@ $("fRut").oninput = e => {
 
 $("btnNueva").onclick = () => {
   msg("nuevaError", "");
+  limpiarForm();
   ver("vNueva");
 };
 $("btnCancelar").onclick = () => {
@@ -958,6 +973,7 @@ function limpiarForm() {
   $("selFranja").querySelector('[data-v="manana"]').click();
   $("fTecnicoAgendado").value = "";
   $("camposAgenda").classList.add("oculto");
+  $("btnToggleAgendar").textContent = "+ Agendar esta orden";
 }
 
 async function clienteConRut(nombre, rut) {
