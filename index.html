@@ -132,11 +132,12 @@ h2{font-size:19px;font-weight:600;margin:0 0 16px}
 .pista.mal{color:var(--alerta)}
 .pista.bien{color:var(--ok)}
 
-.item-cot{display:flex;gap:6px;margin-bottom:8px;align-items:center}
-.item-cot input.desc{flex:1;min-width:0}
-.item-cot input.cant{width:52px;text-align:center;padding:13px 4px}
-.item-cot input.val{width:96px;text-align:right;padding:13px 8px}
-.item-cot button{background:none;border:none;color:var(--alerta);font-size:22px;line-height:1;cursor:pointer;padding:6px 4px}
+.item-cot{background:var(--fondo);border:1px solid var(--linea);border-radius:8px;padding:12px;margin-bottom:10px}
+.item-cot .campo{margin-bottom:10px}
+.item-cot .campo:last-child{margin-bottom:0}
+.item-cot .fila-cv{display:flex;gap:8px;align-items:center}
+.item-cot .fila-cv .campo{flex:1;margin-bottom:0}
+.item-cot .quitar-item{flex:0 0 auto;background:none;border:none;color:var(--alerta);font-size:26px;line-height:1;cursor:pointer;padding:8px}
 
 .foto-btn{
   display:block;padding:15px;border:1px dashed var(--humo);border-radius:8px;
@@ -287,13 +288,29 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <button type="button" class="btn claro" id="btnAgregarItem">+ Agregar ítem</button>
       </div>
       <div class="seccion">
+        <div class="campo">
+          <label for="cotValidez">Cotización válida por (días)</label>
+          <input id="cotValidez" inputmode="numeric" value="15">
+        </div>
         <div class="dato"><span>Neto</span><span id="cotNeto">$0</span></div>
         <div class="dato"><span>IVA 19%</span><span id="cotIva">$0</span></div>
         <div class="dato"><span>Total</span><span id="cotTotal">$0</span></div>
       </div>
       <button class="btn" id="btnGuardarCot">Guardar cotización</button>
       <div style="height:10px"></div>
+      <button class="btn claro" id="btnVerCotFormal">Ver cotización formal</button>
+      <div style="height:10px"></div>
       <button class="btn claro" id="btnCotVolver">Volver</button>
+    </section>
+
+    <!-- Cotización formal (imprimible) -->
+    <section id="vCotImp" class="oculto">
+      <div id="hojaCotizacion"></div>
+      <div class="noimprimir">
+        <button class="btn" id="btnImprimirCot">Imprimir o guardar PDF</button>
+        <div style="height:10px"></div>
+        <button class="btn claro" id="btnCotImpVolver">Volver</button>
+      </div>
     </section>
 
     <!-- Cierre de OT -->
@@ -358,7 +375,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
-  ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion"].forEach(v => $(v).classList.add("oculto"));
+  ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -632,7 +649,7 @@ async function abrirDetalle(o) {
 
   const actual = document.createElement("div");
   actual.innerHTML = `<span class="rotulo">Estado actual</span>
-    <span class="chip ${TONO[o.estado] || ""}" style="margin-top:0">${ETIQUETA[o.estado]}</span>`;
+    <span class="chip ${TONO[o.estado] || ""}" style="margin-top:0">${ETIQUETA[o.estado] || o.estado}</span>`;
   cont.appendChild(actual);
 
   if (siguiente) {
@@ -643,7 +660,7 @@ async function abrirDetalle(o) {
 
     const b = document.createElement("button");
     b.className = "paso-sig";
-    b.textContent = "Marcar como " + ETIQUETA[siguiente].toLowerCase();
+    b.textContent = "Marcar como " + (ETIQUETA[siguiente] || siguiente).toLowerCase();
     b.onclick = () => cambiarEstado(siguiente);
     cont.appendChild(b);
   }
@@ -655,7 +672,7 @@ async function abrirDetalle(o) {
 
   otros.forEach(e => {
     const b = document.createElement("button");
-    b.textContent = ETIQUETA[e];
+    b.textContent = ETIQUETA[e] || e;
     b.onclick = () => cambiarEstado(e);
     cont.appendChild(b);
   });
@@ -715,8 +732,10 @@ async function abrirCotizacion(o) {
   msg("cotError", "");
   $("cotTitulo").textContent = "Cotización " + (o.numero_ot ?? "");
 
-  const { data: cot } = await db.from("cotizaciones").select("id").eq("orden_id", o.id).maybeSingle();
+  const { data: cot } = await db.from("cotizaciones")
+    .select("id,validez_dias").eq("orden_id", o.id).maybeSingle();
   cotizacionId = cot?.id ?? null;
+  $("cotValidez").value = cot?.validez_dias ?? 15;
 
   cotItemsData = [];
   if (cotizacionId) {
@@ -738,10 +757,21 @@ function pintarItemsCotizacion() {
     const fila = document.createElement("div");
     fila.className = "item-cot";
     fila.innerHTML = `
-      <input class="desc" placeholder="Descripción">
-      <input class="cant" inputmode="decimal">
-      <input class="val" inputmode="numeric">
-      <button type="button" aria-label="Quitar ítem">×</button>`;
+      <div class="campo">
+        <label>Descripción</label>
+        <input class="desc" placeholder="Ej: Banqueo de módulo ADM">
+      </div>
+      <div class="fila-cv">
+        <div class="campo">
+          <label>Cantidad</label>
+          <input class="cant" inputmode="decimal" placeholder="1">
+        </div>
+        <div class="campo">
+          <label>Valor unitario</label>
+          <input class="val" inputmode="numeric" placeholder="0">
+        </div>
+        <button type="button" class="quitar-item" aria-label="Quitar ítem">×</button>
+      </div>`;
     const iDesc = fila.querySelector(".desc"), iCant = fila.querySelector(".cant"), iVal = fila.querySelector(".val");
     iDesc.value = item.descripcion;
     iCant.value = item.cantidad;
@@ -757,7 +787,7 @@ function pintarItemsCotizacion() {
       item.valor_unitario = parseInt(e.target.value || "0", 10);
       actualizarTotalesCot();
     };
-    fila.querySelector("button").onclick = () => {
+    fila.querySelector(".quitar-item").onclick = () => {
       cotItemsData.splice(i, 1);
       if (!cotItemsData.length) cotItemsData.push({ descripcion: "", cantidad: 1, valor_unitario: 0 });
       pintarItemsCotizacion();
@@ -780,24 +810,27 @@ $("btnAgregarItem").onclick = () => {
   pintarItemsCotizacion();
 };
 
-$("btnGuardarCot").onclick = async () => {
+async function guardarItemsCotizacion() {
   msg("cotError", "");
   const items = cotItemsData
     .map(i => ({ ...i, descripcion: i.descripcion.trim() }))
     .filter(i => i.descripcion && i.valor_unitario > 0);
-  if (!items.length) return msg("cotError", "Agrega al menos un ítem con descripción y valor.");
+  if (!items.length) { msg("cotError", "Agrega al menos un ítem con descripción y valor."); return false; }
+  const validez = parseInt($("cotValidez").value, 10) || 15;
 
-  $("btnGuardarCot").disabled = true;
-  $("btnGuardarCot").textContent = "Guardando…";
   try {
     const { data:{ user } } = await db.auth.getUser();
     let id = cotizacionId;
     if (!id) {
       const { data: nueva, error } = await db.from("cotizaciones")
-        .insert({ orden_id: ordenActual.id, creado_por: user.id }).select("id").single();
+        .insert({ orden_id: ordenActual.id, creado_por: user.id, validez_dias: validez })
+        .select("id").single();
       if (error) throw error;
       id = nueva.id;
       cotizacionId = id;
+    } else {
+      const { error } = await db.from("cotizaciones").update({ validez_dias: validez }).eq("id", id);
+      if (error) throw error;
     }
 
     const { error: eDel } = await db.from("cotizacion_items").delete().eq("cotizacion_id", id);
@@ -820,15 +853,89 @@ $("btnGuardarCot").onclick = async () => {
       await db.from("ordenes").update({ estado: "cotizado" }).eq("id", ordenActual.id);
       ordenActual.estado = "cotizado";
     }
-
-    abrirDetalle(ordenActual);
+    return true;
   } catch (e) {
     msg("cotError", "No se pudo guardar la cotización: " + (e.message || "error desconocido"));
-  } finally {
-    $("btnGuardarCot").disabled = false;
-    $("btnGuardarCot").textContent = "Guardar cotización";
+    return false;
   }
+}
+
+$("btnGuardarCot").onclick = async () => {
+  $("btnGuardarCot").disabled = true;
+  $("btnGuardarCot").textContent = "Guardando…";
+  const ok = await guardarItemsCotizacion();
+  $("btnGuardarCot").disabled = false;
+  $("btnGuardarCot").textContent = "Guardar cotización";
+  if (ok) abrirDetalle(ordenActual);
 };
+
+$("btnVerCotFormal").onclick = async () => {
+  $("btnVerCotFormal").disabled = true;
+  $("btnVerCotFormal").textContent = "Guardando…";
+  const ok = await guardarItemsCotizacion();
+  $("btnVerCotFormal").disabled = false;
+  $("btnVerCotFormal").textContent = "Ver cotización formal";
+  if (ok) mostrarCotizacionFormal();
+};
+
+async function mostrarCotizacionFormal() {
+  const { data: o } = await db.from("ordenes")
+    .select("numero_ot,tipo_modulo,clientes(nombre,rut),vehiculos(patente,modelo)")
+    .eq("id", ordenActual.id).single();
+  const { data: cot } = await db.from("cotizaciones")
+    .select("id,validez_dias,creado_en").eq("id", cotizacionId).single();
+  const { data: items } = await db.from("cotizacion_items")
+    .select("descripcion,cantidad,valor_unitario").eq("cotizacion_id", cotizacionId).order("orden_item");
+
+  const filas = items || [];
+  const neto = filas.reduce((s, i) => s + i.cantidad * i.valor_unitario, 0);
+  const iva = Math.round(neto * 0.19);
+  const vence = new Date(cot.creado_en);
+  vence.setDate(vence.getDate() + (cot.validez_dias || 15));
+
+  const filasHtml = filas.map(i => `
+    <tr>
+      <td>${escapar(i.descripcion)}</td>
+      <td>${i.cantidad}</td>
+      <td>$${miles(i.valor_unitario)}</td>
+      <td>$${miles(i.cantidad * i.valor_unitario)}</td>
+    </tr>`).join("");
+
+  $("hojaCotizacion").innerHTML = `
+  <div class="hoja">
+    <div class="cab">
+      <h1>PAZ SERVICES &nbsp;|&nbsp; COTIZACIÓN</h1>
+      <div class="sub">Reparación de módulos electrónicos Mercedes Benz &middot; Talca &middot; COT-${String(cot.id).padStart(4, "0")} &middot; ${escapar(o.numero_ot)}</div>
+    </div>
+
+    <table class="datos">
+      <tr><td class="et">Cliente</td><td>${escapar(o.clientes?.nombre)}</td></tr>
+      <tr><td class="et">RUT</td><td>${escapar(o.clientes?.rut ?? "—")}</td></tr>
+      <tr><td class="et">Vehículo</td><td>${escapar(o.vehiculos?.modelo ?? "—")}</td></tr>
+      <tr><td class="et">Patente</td><td>${escapar(o.vehiculos?.patente ?? "—")}</td></tr>
+      <tr><td class="et">Módulo</td><td>${escapar(o.tipo_modulo)}</td></tr>
+      <tr><td class="et">Fecha</td><td>${fechaCL(cot.creado_en)}</td></tr>
+      <tr><td class="et">Válida hasta</td><td>${fechaCL(vence)}</td></tr>
+    </table>
+
+    <h3>Detalle</h3>
+    <table class="valor">
+      <tr><td>Descripción</td><td>Cant.</td><td>Valor unit.</td><td>Subtotal</td></tr>
+      ${filasHtml}
+      <tr><td colspan="3">Neto</td><td>$${miles(neto)}</td></tr>
+      <tr><td colspan="3">IVA 19%</td><td>$${miles(iva)}</td></tr>
+      <tr class="total"><td colspan="3">Total</td><td>$${miles(neto + iva)}</td></tr>
+    </table>
+
+    <div class="firmas">
+      <div>Jonatan Daniel Toledo Orellana<br>Paz Services LTDA.</div>
+    </div>
+  </div>`;
+  ver("vCotImp");
+}
+
+$("btnImprimirCot").onclick = () => window.print();
+$("btnCotImpVolver").onclick = () => ver("vCotizacion");
 
 
 // ---------- Cierre de OT e informe ----------

@@ -43,6 +43,8 @@ sw.js                   service worker
 02-setup-extra.sql      perfiles, storage, permisos (ya ejecutado)
 03-informes.sql         campo observaciones (ya ejecutado)
 04-cotizaciones.sql     tablas cotizaciones y cotizacion_items (falta ejecutar)
+05-fix-rls.sql          endurece mi_rol() y agrega mi_sesion() de diagnóstico
+06-cotizacion-validez.sql  columna validez_dias en cotizaciones (falta ejecutar)
 ```
 
 Los `.sql` son historial de migraciones. No se suben a GitHub Pages pero
@@ -102,6 +104,9 @@ solo al dueño**.
 - Cotización con líneas de ítems (descripción, cantidad, valor unitario),
   IVA calculado al vuelo; al guardar avanza el estado a `cotizado` si
   corresponde
+- Cotización formal imprimible (mismo tratamiento visual que el informe
+  técnico), con número de cotización, tabla de ítems y fecha de validez
+  (`validez_dias`, 15 por defecto)
 
 **Detalles de implementación:**
 
