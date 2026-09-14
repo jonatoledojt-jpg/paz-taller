@@ -415,8 +415,8 @@ El resto del formato no se toca sin preguntar.
    ejecutar `11-gastos.sql` en Supabase. **Asistencia, sueldos y pagos de
    colaboradores siguen pendientes** — por eso el margen mensual todavía no
    descuenta mano de obra, y hay que leerlo sabiendo eso.
-4. **Nexa** — agente de IA que lee el grupo de WhatsApp del equipo y crea las
-   OT solo. Ver más abajo.
+4. **Nexa** — primera etapa hecha: chat dentro de la app, con ficha del caso y
+   propuesta de OT. Falta la de WhatsApp y la que ayuda al equipo. Ver abajo.
 5. **Códigos GS** — app separada y offline que se alimenta de la vista
    `v_conocimiento`.
 
@@ -444,6 +444,39 @@ media.
   pendientes. Nunca se inventa un dato.
 - Se guarda qué dedujo y si la corrigieron, para medir su tasa de error.
 - El ingreso manual sigue existiendo siempre, como respaldo.
+
+### Etapa 1, ya construida: Nexa cara al cliente, dentro de la app
+
+WhatsApp queda para después (necesita número dedicado y papeleo). La primera
+Nexa vive en la app y se usa a mano: alguien copia lo que dijo el cliente y
+Nexa responde y arma la ficha.
+
+Piezas:
+
+- `12-nexa.sql` — `nexa_config` (una fila: prompt, modelo, activa),
+  `nexa_conversaciones` (con `ficha jsonb` y `orden_id`), `nexa_mensajes`.
+  RLS: solo dueño y coordinador. El prompt lo edita solo el dueño.
+- `supabase/functions/nexa/index.ts` — Edge Function. Verifica la sesión y el
+  rol, lee el prompt con `service_role` y llama a la API de OpenAI.
+  Desplegar: `.\.tools\supabase.exe functions deploy nexa --use-api`.
+- Pantalla `vNexa` en el `index.html`, botón **Nexa** en el encabezado, visible
+  solo para dueño y coordinador.
+
+**Dónde vive cada secreto (no mover esto):**
+
+- La llave de OpenAI es un secreto de Supabase (`OPENAI_API_KEY`). Nunca en el
+  `index.html`, que es público.
+- El prompt vive en `nexa_config.prompt`, **no en el repo**: tiene precios y
+  reglas comerciales y el repo es público. Por eso `12-nexa.sql` lo deja vacío
+  y se carga aparte con un `update`.
+
+**Dos pasadas por cada mensaje:** una conversacional (`accion: "responder"`) y
+otra que extrae la ficha en JSON (`accion: "ficha"`). Van separadas para no
+ensuciar el prompt de conversación con instrucciones de formato.
+
+**Nexa propone, la persona confirma.** El botón "Crear la OT desde este caso"
+llena el formulario de Nueva OT y ahí se revisa antes de guardar. Nexa no
+inserta órdenes sola. Al guardar, la conversación queda con `orden_id`.
 
 ## Contexto de negocio que importa
 
