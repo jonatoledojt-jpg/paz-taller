@@ -353,17 +353,105 @@ async function procesarMensaje(msj: any) {
     }
   }
 
-  // La ficha se arma igual, conteste PAZ o no: sirve para que el equipo
-  // vea de qué se trata el caso sin leer toda la conversación.
+  // Los casos se arman igual, conteste PAZ o no: sirven para que el
+  // equipo vea de qué se trata sin leer toda la conversación.
   try {
     const crudo = await llamarIA(cfg.modelo, cfg.prompt_ficha, historial);
-    const ficha = JSON.parse(crudo.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim());
-    await admin.from("nexa_conversaciones")
-      .update({ ficha, titulo: ficha.cliente || null })
-      .eq("id", conversacion_id);
+    const limpio = crudo.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+    const { casos } = JSON.parse(limpio);
+    if (Array.isArray(casos) && casos.length) {
+      await sincronizarCasos(conversacion_id, telefono, casos);
+    }
   } catch (e) {
-    console.error("No se pudo armar la ficha:", e);
+    console.error("No se pudieron armar los casos:", e);
   }
+}
+
+// Un caso por vehículo. La IA relee el hilo completo y devuelve los casos
+// en el orden en que aparecieron; ese orden es la llave. Así, cuando el
+// cliente dice "tengo otro camión", nace un caso nuevo en vez de pisar el
+// anterior — que es exactamente lo que pasaba antes.
+async function sincronizarCasos(conversacion_id: number, telefono: string, casos: any[]) {
+  const { data: existentes } = await admin.from("casos")
+    .select("id,orden_en_conversacion,estado_caso,requiere_respuesta_humana")
+    .eq("conversacion_id", conversacion_id);
+  const porOrden = new Map((existentes ?? []).map((c) => [c.orden_en_conversacion, c]));
+
+  let ultimoId: number | null = null;
+
+  for (let i = 0; i < casos.length; i++) {
+    const c = casos[i] ?? {};
+    const orden = i + 1;
+    const previo: any = porOrden.get(orden);
+
+    const campos: Record<string, unknown> = {
+      telefono_whatsapp: telefono,
+      cliente_nombre:    c.cliente ?? null,
+      patente:           c.patente ? String(c.patente).toUpperCase() : null,
+      vehiculo_modelo:   c.vehiculo ?? null,
+      vehiculo_anio:     c.anio ? String(c.anio) : null,
+      ubicacion_texto:   c.ubicacion ?? null,
+      atencion:          ["terreno", "envio"].includes(c.atencion) ? c.atencion : null,
+      falla_reportada:   c.sintoma ?? null,
+      codigos_reportados: c.codigo ?? null,
+      sistema:           c.sistema ?? null,
+      modulo:            c.modulo ?? null,
+      se_desplaza:       typeof c.se_desplaza === "boolean" ? c.se_desplaza : null,
+      trabajos_previos:  c.trabajos_previos ?? null,
+      resumen_tecnico:   c.resumen ?? null,
+      faltantes:         Array.isArray(c.faltantes) ? c.faltantes : [],
+      conflictos:        Array.isArray(c.conflictos) ? c.conflictos : [],
+    };
+
+    // La alerta se levanta sola, pero NO se baja sola: si una persona
+    // ya la atendió, que la IA cambie de opinión no debe hacerla
+    // reaparecer. La baja quien responde, desde la app.
+    if (c.requiere_humano && !previo?.requiere_respuesta_humana) {
+      campos.requiere_respuesta_humana = true;
+      campos.motivo_alerta = c.motivo_alerta ?? "El cliente espera una respuesta del equipo.";
+      campos.alerta_creada_en = new Date().toISOString();
+    }
+
+    // Un caso con lo mínimo ya sirve para que alguien lo mire.
+    const listo = c.sintoma && (c.patente || c.vehiculo) && c.ubicacion;
+    if (listo && previo?.estado_caso === "recopilando_datos") {
+      campos.estado_caso = "listo_para_revision";
+    }
+
+    if (previo) {
+      await admin.from("casos").update(campos).eq("id", previo.id);
+      ultimoId = previo.id;
+    } else {
+      const { data: nuevo } = await admin.from("casos")
+        .insert({ conversacion_id, orden_en_conversacion: orden, ...campos })
+        .select("id").single();
+      ultimoId = nuevo?.id ?? ultimoId;
+    }
+  }
+
+  // Lo que llegó sin caso todavía (fotos, ubicación) se cuelga del último,
+  // que es el que se está conversando.
+  if (ultimoId) {
+    await admin.from("nexa_archivos")
+      .update({ caso_id: ultimoId })
+      .eq("conversacion_id", conversacion_id).is("caso_id", null);
+
+    const { data: conv } = await admin.from("nexa_conversaciones")
+      .select("ubicacion_gps").eq("id", conversacion_id).single();
+    if (conv?.ubicacion_gps) {
+      await admin.from("casos").update({ ubicacion_gps: conv.ubicacion_gps }).eq("id", ultimoId);
+    }
+    const { count } = await admin.from("nexa_archivos")
+      .select("id", { count: "exact", head: true }).eq("caso_id", ultimoId);
+    if (count) await admin.from("casos").update({ tiene_fotos: true }).eq("id", ultimoId);
+  }
+
+  // La ficha del primer caso se sigue guardando en la conversación
+  // mientras la pantalla vieja de la app la use. Se saca cuando la
+  // bandeja de casos la reemplace del todo.
+  await admin.from("nexa_conversaciones")
+    .update({ ficha: casos[0] ?? {}, titulo: casos[0]?.cliente ?? null })
+    .eq("id", conversacion_id);
 }
 
 Deno.serve(async (req) => {
