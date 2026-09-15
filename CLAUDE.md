@@ -462,6 +462,54 @@ Lo que sí aplica ahora (verificado el 14-09-2026):
   Nunca en el `index.html`.
 - `nexa_conversaciones.canal` ya existe para esto (`app` / `whatsapp`).
 
+### Cómo se corrige a PAZ: la tabla `paz_aprendizajes` (15-09-2026)
+
+**Antes de tocar el prompt, mirar acá.** El prompt (`nexa_config.prompt`) es el
+documento comercial grande: quién es PAZ, precios, condiciones. Se toca poco.
+Los **aprendizajes** son correcciones puntuales de criterio, viven en
+`paz_aprendizajes`, se prenden y apagan con un booleano, y PAZ los lee **en
+cada respuesta**. Una corrección vale desde el mensaje siguiente, sin
+desplegar nada y sin republicar la app.
+
+Ese es el punto: que Jonatan pueda corregir a PAZ sin pedirle a nadie que
+cambie código. Si aparece una conducta mala, la respuesta correcta casi
+siempre es **un aprendizaje nuevo**, no editar el prompt ni la función.
+
+Los siete criterios iniciales salieron de errores observados de verdad, no de
+teoría. Están redactados diciendo qué hacer, no qué evitar.
+
+### Lo que PAZ ya sabe antes de preguntar
+
+`contextoDelSistema()` en la Edge Function arma, antes de cada respuesta, un
+bloque con lo que la base ya tiene:
+
+- **Cliente por teléfono**: si el número está en `clientes.telefono`, PAZ no
+  pregunta el nombre.
+- **Patente**: se sacan del texto con una expresión regular (formato chileno
+  `BBBB99` y el antiguo `AB1234`), se buscan en `vehiculos`, y si existen PAZ
+  **confirma** en vez de preguntar marca, modelo y año.
+- **Historial**: las últimas 3 OT de esa patente, marcadas como contexto
+  interno — PAZ no se las recita al cliente.
+
+**Si el cliente dice un dato distinto al guardado, no se sobrescribe nada.**
+PAZ lo anota sin discutir y lo resuelve una persona. Un dato pisado por un
+malentendido es peor que un dato en conflicto.
+
+### Fotos, ubicación y tope de frecuencia
+
+- Las **imágenes** que manda el cliente se bajan de Meta y se guardan en el
+  bucket privado `paz-adjuntos`, con registro en `nexa_archivos`. La tabla
+  `archivos` no servía: cuelga de una OT, y el caso nace antes de que exista.
+- La **ubicación** de WhatsApp queda en `nexa_conversaciones.ubicacion_gps` y
+  `ubicacion_texto`. Cuando el caso se convierta en OT, el GPS se copia.
+- **Tope de 30 mensajes por hora y por teléfono** (`TOPE_POR_HORA`). Al
+  pasarse, se responde con una frase fija **sin llamar a la IA** y se anota en
+  `wa_log`. No bloquea al cliente para siempre: es por ventana de una hora.
+  Existe porque un reintento masivo de Meta o alguien jugando con el número
+  puede costar la cuota de OpenAI en minutos.
+- **Duplicados**: `nexa_mensajes.wa_id` tiene índice único. Si Meta reintenta
+  el mismo mensaje, el insert falla y no se contesta dos veces.
+
 ### Dónde quedó la conexión a WhatsApp (14-09-2026, 21:00)
 
 App de Meta creada (`Paz-Services`), número de prueba `+1 555 152-8643`,
