@@ -462,7 +462,37 @@ Lo que sí aplica ahora (verificado el 14-09-2026):
   Nunca en el `index.html`.
 - `nexa_conversaciones.canal` ya existe para esto (`app` / `whatsapp`).
 
-**Decisión pendiente antes de conectar:** si Nexa contesta sola al cliente o
+### Dónde quedó la conexión a WhatsApp (14-09-2026, 21:00)
+
+App de Meta creada (`Paz-Services`), número de prueba `+1 555 152-8643`,
+webhook apuntando a `/functions/v1/whatsapp` y **verificado**, campo `messages`
+**suscrito**, y las cuatro llaves cargadas como secretos de Supabase
+(`WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_APP_SECRET`,
+`WHATSAPP_VERIFY_TOKEN`).
+
+**Probado y funcionando:**
+- Salida: el `hello_world` llegó al celular de Jonatan. Token y phone id OK.
+- Entrada: el webhook de prueba del panel de Meta llegó completo, con la firma
+  verificada, y quedó guardado como conversación de canal `whatsapp`.
+
+**Único bloqueo: la app de Meta está SIN PUBLICAR.** Mientras lo esté, Meta
+entrega solo los webhooks disparados desde su propio panel, no los mensajes
+reales — ni siquiera los del dueño de la app. Comprobado: cinco mensajes
+enviados desde el celular, entregados con doble check, y cero llegaron a la
+base. Si alguien retoma esto y ve "todo verde pero no llega nada", es esto.
+
+Para publicar hacía falta la política de privacidad, que ya está en línea en
+`privacidad.html` (se publica junto con la app en GitHub Pages). Esa misma URL
+sirve para los tres campos que Meta pide; el de eliminación de datos apunta a
+`privacidad.html#eliminar`.
+
+**El número real es harina de otro costal.** Meta ofreció "migrar o
+desconectar" el +56 9 3374 0440, que es el WhatsApp del taller: eso lo sacaría
+del celular y dejaría al taller mudo, sin que los mensajes llegaran a ninguna
+parte. **No hacerlo.** El camino correcto es Coexistencia, que se inicia desde
+la app de WhatsApp Business, no desde el panel de desarrolladores.
+
+**Decisión pendiente antes de conectar:** si PAZ contesta sola al cliente o
 solo propone y una persona manda. Criterio acordado: que conteste sola para
 recolectar datos, y que precio, plazo o cualquier compromiso espere a una
 persona. Hoy en la app da precios referenciales porque el prompt los tiene y
