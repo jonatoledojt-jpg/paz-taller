@@ -232,6 +232,13 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 }
 .chat-barra .btn{flex:0 0 auto;width:auto;padding:15px 20px}
 .ficha-falta{color:var(--humo);font-weight:400}
+/* Criterios aprendidos */
+.crit-tit{font-size:16px;font-weight:600;margin-bottom:6px}
+.crit-txt{font-size:14.5px;color:var(--humo);line-height:1.5}
+.seccion.apagado{opacity:.5}
+.seccion.apagado .crit-tit::after{
+  content:" · apagado";font-weight:400;font-size:13px;color:var(--humo)
+}
 .ficha-cab{
   display:flex;width:100%;align-items:center;justify-content:space-between;gap:10px;
   background:none;border:none;padding:0;cursor:pointer;text-align:left
@@ -677,6 +684,8 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <!-- Inicio: casos anteriores -->
       <div id="nexaInicio">
         <button class="btn" id="btnNexaNuevo">Atender un caso nuevo</button>
+        <div style="height:10px"></div>
+        <button class="btn claro oculto" id="btnEntrenar">Enseñarle a PAZ</button>
         <span class="rotulo sep">Casos anteriores</span>
         <div id="nexaCasos" class="lista"></div>
       </div>
@@ -705,12 +714,39 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <button class="btn claro" id="btnNexaVolver">Volver a los casos</button>
 
         <!-- Va al final para que quede pegada abajo y no tape lo último
-             que dijo Nexa, que es justo lo que hay que leer. -->
+             que dijo PAZ, que es justo lo que hay que leer. -->
         <div class="chat-barra">
           <textarea id="nexaTexto" rows="1" placeholder="Escribe lo que dijo el cliente"></textarea>
           <button class="btn" id="btnNexaEnviar">Enviar</button>
         </div>
       </div>
+    </section>
+
+    <!-- Enseñarle a PAZ. Solo el dueño: son reglas comerciales. -->
+    <section id="vEntrenar" class="oculto">
+      <div class="seccion-tit">
+        <h2>Enseñarle a PAZ</h2>
+        <span>Solo tú</span>
+      </div>
+      <div id="entError" class="aviso oculto"></div>
+
+      <div class="seccion">
+        <div class="campo">
+          <label for="entTexto">Pega una conversación, o escribe una corrección</label>
+          <textarea id="entTexto" style="min-height:150px"
+            placeholder="Pega acá una conversación de WhatsApp que haya salido bien, o escribe derecho lo que PAZ debería hacer distinto."></textarea>
+          <div class="pista">PAZ saca los criterios de ahí. Tú decides cuáles se quedan.</div>
+        </div>
+        <button class="btn" id="btnSacarCriterios">Sacar criterios</button>
+      </div>
+
+      <div id="entPropuestas"></div>
+
+      <span class="rotulo sep">Lo que PAZ ya tiene aprendido</span>
+      <div id="entLista"></div>
+
+      <div style="height:14px"></div>
+      <button class="btn claro" id="btnEntVolver">Volver</button>
     </section>
 
   </main>
@@ -736,7 +772,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
-   "vGasto","vFacturar","vNexa"].forEach(v => $(v).classList.add("oculto"));
+   "vGasto","vFacturar","vNexa","vEntrenar"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -815,6 +851,7 @@ async function iniciar() {
   $("app").classList.remove("oculto");
   $("main").classList.add("con-navinf");
   $("btnNexa").classList.toggle("oculto", !["dueno","coordinador"].includes(perfil.rol));
+  $("btnEntrenar").classList.toggle("oculto", perfil.rol !== "dueno");
   seccionActiva = perfil.rol === "coordinador" ? "agenda" : "terreno";
   ver("vTablero");
   cambiarSeccion(seccionActiva);
@@ -2529,6 +2566,150 @@ $("btnNexaCrearOT").onclick = () => {
   }
   llenarFormularioDesdeFicha(f, nexaConvId);
 };
+
+
+// ══════════════════════════════════════════════════════════
+//  ENSEÑARLE A PAZ
+//
+//  Corregir a PAZ no es reescribir sus instrucciones: es agregar
+//  un criterio a una tabla que ella lee antes de cada respuesta.
+//  Una corrección vale desde el mensaje siguiente.
+//
+//  Solo el dueño. No es una decisión de pantalla: la política de
+//  la base exige rol dueño para escribir en paz_aprendizajes, así
+//  que aunque alguien llame la API directo, no puede.
+// ══════════════════════════════════════════════════════════
+
+$("btnEntrenar").onclick = () => {
+  msg("entError", "");
+  $("entPropuestas").innerHTML = "";
+  ver("vEntrenar");
+  cargarAprendizajes();
+};
+$("btnEntVolver").onclick = () => { ver("vNexa"); mostrarInicioNexa(); };
+
+async function cargarAprendizajes() {
+  $("entLista").innerHTML = '<div class="cargando">Cargando…</div>';
+  const { data, error } = await db.from("paz_aprendizajes")
+    .select("id,titulo,contenido,activo").order("id");
+  if (error) {
+    $("entLista").innerHTML = '<div class="aviso">No se pudieron cargar los criterios.</div>';
+    return;
+  }
+  if (!data.length) {
+    $("entLista").innerHTML = '<div class="vacio"><p>Todavía no le has enseñado nada.</p></div>';
+    return;
+  }
+
+  $("entLista").innerHTML = "";
+  data.forEach(a => {
+    const div = document.createElement("div");
+    div.className = "seccion" + (a.activo ? "" : " apagado");
+    div.innerHTML = `
+      <div class="crit-tit"></div>
+      <div class="crit-txt"></div>
+      <div class="reordenar">
+        <button type="button" class="alternar">${a.activo ? "Apagar" : "Prender"}</button>
+        <button type="button" class="borrar">Borrar</button>
+      </div>`;
+    div.querySelector(".crit-tit").textContent = a.titulo;
+    div.querySelector(".crit-txt").textContent = a.contenido;
+
+    div.querySelector(".alternar").onclick = async () => {
+      await db.from("paz_aprendizajes").update({ activo: !a.activo }).eq("id", a.id);
+      cargarAprendizajes();
+    };
+    // Apagar deja el criterio a la vista por si se quiere recuperar;
+    // borrar es para los que salieron mal y no sirven de nada.
+    div.querySelector(".borrar").onclick = async () => {
+      if (!confirm(`¿Borrar "${a.titulo}"? Si solo quieres que deje de aplicarlo, mejor apágalo.`)) return;
+      await db.from("paz_aprendizajes").delete().eq("id", a.id);
+      cargarAprendizajes();
+    };
+    $("entLista").appendChild(div);
+  });
+}
+
+$("btnSacarCriterios").onclick = async () => {
+  msg("entError", "");
+  const texto = $("entTexto").value.trim();
+  if (!texto) return msg("entError", "Pega una conversación o escribe la corrección primero.");
+
+  $("btnSacarCriterios").disabled = true;
+  $("btnSacarCriterios").textContent = "Leyendo…";
+  try {
+    const { data:{ session } } = await db.auth.getSession();
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/nexa`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON,
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ accion: "aprender", texto }),
+    });
+    const cuerpo = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(cuerpo.error || `Error ${r.status}.`);
+    pintarPropuestas(cuerpo.criterios || []);
+  } catch (e) {
+    msg("entError", e.message || "No se pudo leer el texto.");
+  } finally {
+    $("btnSacarCriterios").disabled = false;
+    $("btnSacarCriterios").textContent = "Sacar criterios";
+  }
+};
+
+// PAZ propone, el dueño confirma. Mismo criterio que con las OT:
+// nada entra al sistema sin que una persona lo mire.
+function pintarPropuestas(criterios) {
+  const caja = $("entPropuestas");
+  caja.innerHTML = "";
+  if (!criterios.length) {
+    caja.innerHTML = '<div class="aviso info">De ese texto no salió ningún criterio nuevo. ' +
+      'Prueba con una conversación donde PAZ haya hecho algo bien, o escribe derecho qué debería cambiar.</div>';
+    return;
+  }
+
+  const rot = document.createElement("span");
+  rot.className = "rotulo";
+  rot.textContent = `PAZ propone ${criterios.length} criterio${criterios.length === 1 ? "" : "s"} — revísalos antes de guardar`;
+  caja.appendChild(rot);
+
+  criterios.forEach((c, i) => {
+    const div = document.createElement("div");
+    div.className = "seccion";
+    div.innerHTML = `
+      <div class="campo">
+        <label for="pt${i}">Título</label>
+        <input id="pt${i}">
+      </div>
+      <div class="campo">
+        <label for="pc${i}">Qué tiene que hacer</label>
+        <textarea id="pc${i}" style="min-height:96px"></textarea>
+      </div>
+      <div class="reordenar">
+        <button type="button" class="descartar">Descartar</button>
+        <button type="button" class="guardar">Guardar</button>
+      </div>`;
+    div.querySelector(`#pt${i}`).value = c.titulo ?? "";
+    div.querySelector(`#pc${i}`).value = c.contenido ?? "";
+
+    div.querySelector(".descartar").onclick = () => div.remove();
+    div.querySelector(".guardar").onclick = async () => {
+      const titulo = div.querySelector(`#pt${i}`).value.trim();
+      const contenido = div.querySelector(`#pc${i}`).value.trim();
+      if (!titulo || !contenido) return msg("entError", "El criterio necesita título y contenido.");
+      const { data:{ user } } = await db.auth.getUser();
+      const { error } = await db.from("paz_aprendizajes")
+        .insert({ tipo: "criterio", titulo, contenido, creado_por: user.id });
+      if (error) return msg("entError", "No se pudo guardar: " + error.message);
+      div.remove();
+      msg("entError", "");
+      cargarAprendizajes();
+    };
+    caja.appendChild(div);
+  });
+}
 
 
 // ---------- Casos por agendar (arriba de la Agenda) ----------

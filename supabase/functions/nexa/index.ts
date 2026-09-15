@@ -107,7 +107,49 @@ Deno.serve(async (req) => {
       }, 503);
     }
 
-    const { accion = "responder", historial = [] } = await req.json();
+    const { accion = "responder", historial = [], texto = "" } = await req.json();
+
+    // Enseñarle a PAZ: se le pega una conversación real o una corrección
+    // y ella destila los criterios. No los guarda: los propone, y el
+    // dueño decide. Solo el dueño, porque los criterios son reglas
+    // comerciales del taller.
+    if (accion === "aprender") {
+      if (perfil.rol !== "dueno") {
+        return json({ error: "Solo el dueño puede enseñarle a PAZ." }, 403);
+      }
+      if (!texto.trim()) return json({ error: "No hay texto que revisar." }, 400);
+
+      const instrucciones = [
+        "Eres quien entrena a PAZ, la asistente de un taller de módulos",
+        "electrónicos de camiones Mercedes Benz en Talca, Chile.",
+        "Te van a pasar una conversación real con un cliente, o una",
+        "corrección escrita por el dueño.",
+        "Saca de ahí los CRITERIOS que PAZ debería seguir de ahora en adelante.",
+        "",
+        "Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:",
+        '{"criterios":[{"titulo":"...","contenido":"..."}]}',
+        "",
+        "Reglas para redactarlos:",
+        "- Entre 1 y 4 criterios. Si el texto no enseña nada nuevo, devuelve la lista vacía.",
+        "- El título es corto, una frase, en minúsculas salvo nombres propios.",
+        "- El contenido le habla a PAZ de tú y dice QUÉ HACER, no qué evitar.",
+        "- Concreto y accionable. Nada de 'ser profesional' o 'dar buen servicio'.",
+        "- Español chileno, directo, sin adornos.",
+        "- Si el texto menciona un precio, condición comercial o plazo, recógelo tal cual sin redondear ni inventar.",
+        "- No inventes reglas que no estén en el texto.",
+      ].join("\n");
+
+      const crudo = await llamarIA(apiKey, cfg.modelo, instrucciones, [
+        { role: "user", content: texto },
+      ]);
+      const limpio = crudo.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+      try {
+        const { criterios } = JSON.parse(limpio);
+        return json({ criterios: Array.isArray(criterios) ? criterios : [] });
+      } catch {
+        return json({ error: "No se entendió lo que devolvió la IA.", crudo: limpio }, 502);
+      }
+    }
 
     if (!Array.isArray(historial) || !historial.length) {
       return json({ error: "No hay conversación que procesar." }, 400);
