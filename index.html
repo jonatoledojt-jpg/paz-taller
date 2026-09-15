@@ -232,6 +232,12 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 }
 .chat-barra .btn{flex:0 0 auto;width:auto;padding:15px 20px}
 .ficha-falta{color:var(--humo);font-weight:400}
+/* Un caso que espera respuesta se ve distinto sin gritar */
+.ot.urgente{border-color:var(--marca);box-shadow:inset 3px 0 0 var(--marca)}
+.ot .marcas{
+  display:inline-block;margin-left:8px;font-size:12px;color:var(--humo);
+  text-transform:lowercase
+}
 /* Criterios aprendidos */
 .crit-tit{font-size:16px;font-weight:600;margin-bottom:6px}
 .crit-txt{font-size:14.5px;color:var(--humo);line-height:1.5}
@@ -681,13 +687,21 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
       <div id="nexaError" class="aviso oculto"></div>
 
-      <!-- Inicio: casos anteriores -->
+      <!-- Inicio: bandeja de casos -->
       <div id="nexaInicio">
         <button class="btn" id="btnNexaNuevo">Atender un caso nuevo</button>
         <div style="height:10px"></div>
         <button class="btn claro oculto" id="btnEntrenar">Enseñarle a PAZ</button>
-        <span class="rotulo sep">Casos anteriores</span>
+
+        <div class="opciones" id="selCasoFiltro" style="margin:20px 0 14px">
+          <button type="button" data-v="abiertos" aria-pressed="true">Abiertos</button>
+          <button type="button" data-v="alerta" aria-pressed="false">Te esperan</button>
+          <button type="button" data-v="archivados" aria-pressed="false">Archivados</button>
+        </div>
         <div id="nexaCasos" class="lista"></div>
+
+        <span class="rotulo sep">Conversaciones desde la app</span>
+        <div id="nexaConvApp" class="lista"></div>
       </div>
 
       <!-- Conversación abierta -->
@@ -720,6 +734,39 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <button class="btn" id="btnNexaEnviar">Enviar</button>
         </div>
       </div>
+    </section>
+
+    <!-- Detalle de un caso -->
+    <section id="vCaso" class="oculto">
+      <div class="seccion-tit">
+        <h2 id="casoTitulo">Caso</h2>
+        <span id="casoEstado"></span>
+      </div>
+      <div id="casoError" class="aviso oculto"></div>
+      <div id="casoAlerta" class="aviso oculto"></div>
+
+      <div class="seccion" id="casoFicha"></div>
+
+      <div class="seccion oculto" id="casoConflictosCaja">
+        <span class="rotulo">Datos que no calzan</span>
+        <div id="casoConflictos"></div>
+        <div class="pista" style="margin-top:8px">
+          PAZ no corrige nada por su cuenta. Lo resuelve una persona.
+        </div>
+      </div>
+
+      <div class="seccion oculto" id="casoFotosCaja">
+        <span class="rotulo">Lo que mandó el cliente</span>
+        <div class="miniaturas" id="casoFotos"></div>
+      </div>
+
+      <button class="btn" id="btnCasoOT">Crear la OT desde este caso</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnCasoArchivar">Archivar</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnCasoVerChat">Ver la conversación</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnCasoVolver">Volver a la bandeja</button>
     </section>
 
     <!-- Enseñarle a PAZ. Solo el dueño: son reglas comerciales. -->
@@ -772,7 +819,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
-   "vGasto","vFacturar","vNexa","vEntrenar"].forEach(v => $(v).classList.add("oculto"));
+   "vGasto","vFacturar","vNexa","vEntrenar","vCaso"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -827,6 +874,7 @@ let mesOffset = 0, gastoVista = "mio", gastoEditandoId = null, fotoGasto = null;
 let gastoOrdenes = [], categoriasUsadas = [], montoCotizadoOT = null;
 let nexaConvId = null, nexaMensajes = [], nexaFicha = {}, nexaOcupada = false;
 let nexaOrigenConv = null;  // conversación que originó la OT que se está creando
+let casoParaOT = null;      // caso que originó esa OT
 
 // ---------- Sesión ----------
 $("btnEntrar").onclick = async () => {
@@ -1173,6 +1221,7 @@ $("fRut").oninput = e => {
 $("btnNueva").onclick = () => {
   msg("nuevaError", "");
   nexaOrigenConv = null;   // si venía de un caso viejo, no se arrastra
+  casoParaOT = null;
   limpiarForm();
   ver("vNueva");
 };
@@ -1239,10 +1288,16 @@ $("btnGuardar").onclick = async () => {
 
     if (fotoNueva) await subirFoto(orden.id, fotoNueva, "recepcion");
 
-    // Deja el caso de Nexa apuntando a la OT que salió de él.
+    // Deja el caso de PAZ apuntando a la OT que salió de él.
     if (nexaOrigenConv) {
       await db.from("nexa_conversaciones").update({ orden_id: orden.id }).eq("id", nexaOrigenConv);
       nexaOrigenConv = null;
+    }
+    if (casoParaOT) {
+      await db.from("casos")
+        .update({ orden_id: orden.id, estado_caso: "convertido_a_ot", requiere_respuesta_humana: false })
+        .eq("id", casoParaOT);
+      casoParaOT = null;
     }
 
     limpiarForm();
@@ -2315,22 +2370,104 @@ function mostrarConversacionNexa() {
   pintarFichaNexa();
 }
 
-async function cargarCasosNexa() {
-  $("nexaCasos").innerHTML = '<div class="cargando">Cargando casos…</div>';
-  const { data, error } = await db.from("nexa_conversaciones")
-    .select("id,titulo,ficha,orden_id,actualizado_en")
-    .order("actualizado_en", { ascending: false }).limit(25);
+// ---------- Bandeja de casos ----------
+const ESTADO_CASO = {
+  recopilando_datos:  { txt: "Recopilando datos", tono: "trabajo" },
+  listo_para_revision:{ txt: "Listo para revisión", tono: "espera" },
+  convertido_a_ot:    { txt: "Con OT creada", tono: "listo" },
+  archivado:          { txt: "Archivado", tono: "" },
+  cerrado_sin_ot:     { txt: "Cerrado sin OT", tono: "" },
+};
+let casoFiltro = "abiertos", casoActual = null;
 
+grupoOpciones("selCasoFiltro");
+$("selCasoFiltro").querySelectorAll("button").forEach(b => {
+  b.addEventListener("click", () => { casoFiltro = b.dataset.v; cargarCasosNexa(); });
+});
+
+async function cargarCasosNexa() {
+  cargarConversacionesApp();
+  $("nexaCasos").innerHTML = '<div class="cargando">Cargando casos…</div>';
+
+  let q = db.from("casos")
+    .select("id,numero_caso,estado_caso,cliente_nombre,patente,vehiculo_modelo,falla_reportada,resumen_tecnico,ubicacion_texto,ubicacion_gps,tiene_fotos,orden_id,requiere_respuesta_humana,motivo_alerta,actualizado_en")
+    .order("actualizado_en", { ascending: false }).limit(60);
+
+  if (casoFiltro === "archivados")   q = q.eq("archivado", true);
+  else if (casoFiltro === "alerta")  q = q.eq("archivado", false).eq("requiere_respuesta_humana", true);
+  else                               q = q.eq("archivado", false);
+
+  const { data, error } = await q;
   if (error) {
     $("nexaCasos").innerHTML = '<div class="aviso">No se pudieron cargar los casos.</div>';
     return;
   }
+
+  // El contador de "Te esperan" se calcula aparte: tiene que verse aunque
+  // estés mirando otra pestaña.
+  const { count: esperan } = await db.from("casos")
+    .select("id", { count: "exact", head: true })
+    .eq("archivado", false).eq("requiere_respuesta_humana", true);
+  $("selCasoFiltro").querySelector('[data-v="alerta"]').textContent =
+    esperan ? `Te esperan (${esperan})` : "Te esperan";
+
   if (!data.length) {
-    $("nexaCasos").innerHTML = '<div class="vacio"><p>Todavía no hay casos atendidos.</p></div>';
+    const vacio = {
+      abiertos: "No hay casos abiertos.",
+      alerta: "Nadie está esperando respuesta. Todo al día.",
+      archivados: "No hay casos archivados.",
+    }[casoFiltro];
+    $("nexaCasos").innerHTML = `<div class="vacio"><p>${vacio}</p></div>`;
     return;
   }
 
   $("nexaCasos").innerHTML = "";
+  data.forEach(c => {
+    const e = ESTADO_CASO[c.estado_caso] || { txt: c.estado_caso, tono: "" };
+    const marcas = [
+      c.tiene_fotos ? "foto" : null,
+      (c.ubicacion_gps || c.ubicacion_texto) ? "ubicación" : null,
+      c.orden_id ? "OT" : null,
+    ].filter(Boolean).join(" · ");
+
+    const div = document.createElement("div");
+    div.className = "ot" + (c.requiere_respuesta_humana ? " urgente" : "");
+    div.tabIndex = 0;
+    div.innerHTML = `
+      <div class="fila1">
+        <span class="num">${c.numero_caso ?? ""}</span>
+        <span class="dias ${c.requiere_respuesta_humana ? "tarde" : ""}">${fechaCL(c.actualizado_en)}</span>
+      </div>
+      <div class="cliente"></div>
+      <div class="detalle"><span class="pat"></span> · <span class="mod"></span></div>
+      <div class="sintoma"></div>
+      <span class="chip ${e.tono}">${e.txt}</span>
+      ${marcas ? `<span class="marcas">${marcas}</span>` : ""}`;
+    div.querySelector(".cliente").textContent = c.cliente_nombre || "Cliente sin nombre";
+    div.querySelector(".pat").textContent = c.patente || "sin patente";
+    div.querySelector(".mod").textContent = c.vehiculo_modelo || "sin vehículo";
+    div.querySelector(".sintoma").textContent =
+      c.requiere_respuesta_humana
+        ? "Te espera: " + (c.motivo_alerta ?? "")
+        : (c.resumen_tecnico || c.falla_reportada || "");
+    div.onclick = () => abrirCaso(c.id);
+    $("nexaCasos").appendChild(div);
+  });
+}
+
+// Las conversaciones que nacen dentro de la app todavía no generan casos:
+// eso viene cuando la pantalla de chat se cuelgue de la bandeja. Mientras
+// tanto se listan aparte para que no queden invisibles.
+async function cargarConversacionesApp() {
+  const { data } = await db.from("nexa_conversaciones")
+    .select("id,titulo,ficha,orden_id,actualizado_en")
+    .eq("canal", "app").order("actualizado_en", { ascending: false }).limit(15);
+  const caja = $("nexaConvApp");
+  if (!data?.length) {
+    caja.innerHTML = '<div class="vacio" style="padding:20px"><p>Ninguna todavía.</p></div>';
+    return;
+  }
+  caja.innerHTML = "";
   data.forEach(c => {
     const f = c.ficha || {};
     const div = document.createElement("div");
@@ -2338,17 +2475,15 @@ async function cargarCasosNexa() {
     div.tabIndex = 0;
     div.innerHTML = `
       <div class="fila1">
-        <span class="num">CASO ${String(c.id).padStart(4, "0")}</span>
+        <span class="num">APP ${String(c.id).padStart(4, "0")}</span>
         <span class="dias">${fechaCL(c.actualizado_en)}</span>
       </div>
       <div class="cliente"></div>
-      <div class="detalle"><span class="pat"></span> · <span class="mod"></span></div>
-      <span class="chip ${c.orden_id ? "listo" : "espera"}">${c.orden_id ? "Con OT creada" : "Sin OT"}</span>`;
-    div.querySelector(".cliente").textContent = c.titulo || f.cliente || "Caso sin nombre";
-    div.querySelector(".pat").textContent = f.patente || "sin patente";
-    div.querySelector(".mod").textContent = f.modulo || f.sintoma || "sin detalle";
+      <div class="detalle"><span class="pat"></span></div>`;
+    div.querySelector(".cliente").textContent = c.titulo || f.cliente || "Sin nombre";
+    div.querySelector(".pat").textContent = f.patente || f.sintoma || "sin detalle";
     div.onclick = () => abrirCasoNexa(c.id);
-    $("nexaCasos").appendChild(div);
+    caja.appendChild(div);
   });
 }
 
@@ -2565,6 +2700,109 @@ $("btnNexaCrearOT").onclick = () => {
     return msg("nexaError", "La ficha todavía no tiene datos. Conversa un poco más con el cliente.");
   }
   llenarFormularioDesdeFicha(f, nexaConvId);
+};
+
+
+// ---------- Detalle de un caso ----------
+const CAMPOS_CASO = [
+  ["cliente_nombre", "Cliente"], ["telefono_whatsapp", "Teléfono"],
+  ["vehiculo_modelo", "Vehículo"], ["vehiculo_anio", "Año"],
+  ["patente", "Patente"], ["ubicacion_texto", "Ubicación"],
+  ["atencion", "Cómo se atiende"], ["modulo", "Módulo"], ["sistema", "Sistema"],
+  ["codigos_reportados", "Código de falla"], ["falla_reportada", "Falla"],
+  ["trabajos_previos", "Trabajos previos"],
+];
+
+async function abrirCaso(id) {
+  msg("casoError", "");
+  const { data, error } = await db.from("casos").select("*").eq("id", id).single();
+  if (error || !data) return msg("casoError", "No se pudo abrir el caso.");
+  casoActual = data;
+  ver("vCaso");
+  pintarCaso();
+}
+
+async function pintarCaso() {
+  const c = casoActual;
+  const e = ESTADO_CASO[c.estado_caso] || { txt: c.estado_caso };
+  $("casoTitulo").textContent = c.numero_caso ?? "Caso";
+  $("casoEstado").textContent = e.txt;
+
+  const al = $("casoAlerta");
+  if (c.requiere_respuesta_humana) {
+    al.className = "aviso info";
+    al.textContent = "Te está esperando: " + (c.motivo_alerta ?? "el cliente espera respuesta del equipo.");
+  } else {
+    al.classList.add("oculto");
+  }
+
+  const gps = c.ubicacion_gps || c.ubicacion_texto;
+  $("casoFicha").innerHTML =
+    CAMPOS_CASO.map(([k, et]) => {
+      let v = c[k];
+      if (k === "atencion") v = ETIQUETA_ATENCION[v] || v;
+      return `<div class="dato"><span>${et}</span>` +
+             `<span class="${v ? "" : "ficha-falta"}">${v ? escapar(v) : "—"}</span></div>`;
+    }).join("") +
+    (c.se_desplaza !== null
+      ? `<div class="dato"><span>¿Se desplaza?</span><span>${c.se_desplaza ? "Sí" : "No, quedó detenido"}</span></div>`
+      : "") +
+    (gps ? `<div class="enlaces"><a href="${enlaceUbicacion(gps)}" target="_blank" rel="noopener">Abrir en Maps</a></div>` : "") +
+    ((c.faltantes || []).length
+      ? `<div class="pista" style="margin-top:10px">Falta todavía: ${escapar((c.faltantes || []).join(", "))}</div>`
+      : "");
+
+  const conf = c.conflictos || [];
+  $("casoConflictosCaja").classList.toggle("oculto", !conf.length);
+  $("casoConflictos").innerHTML = conf.map(t => `<div class="dato"><span>${escapar(t)}</span></div>`).join("");
+
+  // Las fotos van en un bucket privado: se ven con un enlace firmado
+  // que caduca, no con una dirección pública.
+  const { data: archivos } = await db.from("nexa_archivos")
+    .select("id,ruta").eq("caso_id", c.id).order("creado_en");
+  $("casoFotosCaja").classList.toggle("oculto", !archivos?.length);
+  $("casoFotos").innerHTML = "";
+  for (const a of archivos ?? []) {
+    const { data: firmada } = await db.storage.from("paz-adjuntos").createSignedUrl(a.ruta, 3600);
+    if (!firmada?.signedUrl) continue;
+    const img = document.createElement("img");
+    img.src = firmada.signedUrl;
+    img.alt = "Lo que mandó el cliente";
+    img.onclick = () => window.open(firmada.signedUrl, "_blank", "noopener");
+    $("casoFotos").appendChild(img);
+  }
+
+  $("btnCasoOT").classList.toggle("oculto", !!c.orden_id);
+  $("btnCasoArchivar").textContent = c.archivado ? "Desarchivar" : "Archivar";
+}
+
+$("btnCasoVolver").onclick = () => { ver("vNexa"); mostrarInicioNexa(); };
+
+$("btnCasoVerChat").onclick = () => {
+  ver("vNexa");
+  abrirCasoNexa(casoActual.conversacion_id);
+};
+
+$("btnCasoArchivar").onclick = async () => {
+  const c = casoActual;
+  await db.from("casos").update({
+    archivado: !c.archivado,
+    estado_caso: !c.archivado && c.estado_caso !== "convertido_a_ot" ? "archivado" : c.estado_caso,
+  }).eq("id", c.id);
+  ver("vNexa");
+  mostrarInicioNexa();
+};
+
+// PAZ propone, la persona confirma. Igual que desde el chat: esto solo
+// llena el formulario, y al guardar el caso queda enlazado a la OT.
+$("btnCasoOT").onclick = () => {
+  const c = casoActual;
+  llenarFormularioDesdeFicha({
+    cliente: c.cliente_nombre, patente: c.patente, modulo: c.modulo,
+    sistema: c.sistema, codigo: c.codigos_reportados, sintoma: c.falla_reportada,
+    atencion: c.atencion, ubicacion: c.ubicacion_gps || c.ubicacion_texto,
+  }, c.conversacion_id);
+  casoParaOT = c.id;
 };
 
 

@@ -176,7 +176,15 @@ Deno.serve(async (req) => {
       const texto = await llamarIA(apiKey, cfg.modelo, cfg.prompt_ficha, historial);
       const limpio = texto.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
       try {
-        return json({ ficha: JSON.parse(limpio) });
+        const datos = JSON.parse(limpio);
+        // Las instrucciones devuelven {casos:[...]} desde que un cliente
+        // puede reportar varios camiones. Esta pantalla muestra una ficha
+        // sola, así que se queda con el caso que se está conversando.
+        const casos = Array.isArray(datos?.casos) ? datos.casos : null;
+        return json({
+          ficha: casos ? (casos[casos.length - 1] ?? {}) : datos,
+          total_casos: casos ? casos.length : 1,
+        });
       } catch {
         return json({ error: "No se pudo leer la ficha que devolvió la IA.", crudo: limpio }, 502);
       }
