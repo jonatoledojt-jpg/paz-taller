@@ -369,47 +369,18 @@ async function procesarMensaje(msj: any) {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
 
-  // Mantenimiento: suscribe la cuenta de WhatsApp Business a esta app.
+  // Acá hubo una puerta de mantenimiento (suscribir la cuenta de WhatsApp
+  // Business a la app, y probar el envío) protegida con la palabra de
+  // verificación. Se sacó el 15-09-2026, cuando la conexión quedó firme:
+  // era una puerta que podía mandar mensajes a nombre del taller y ya
+  // había cumplido su función.
   //
-  // En WhatsApp hay DOS suscripciones distintas y es un enredo clásico:
-  // una es el campo "messages" en el webhook de la app (se hace en el
-  // panel), y otra es que la cuenta de WhatsApp Business quede suscrita
-  // a la app. Sin la segunda, Meta genera los avisos pero no los entrega
-  // a nadie. El panel no siempre hace esta.
-  //
-  // Se protege con la misma palabra acordada con Meta, que solo conoce
-  // el dueño. El token nunca sale de Supabase.
-  if (req.method === "GET" && url.searchParams.has("clave")) {
-    const clave = Deno.env.get("WHATSAPP_VERIFY_TOKEN");
-    if (!clave || url.searchParams.get("clave")!.trim() !== clave.trim()) {
-      return new Response("La palabra no coincide con la guardada.", { status: 403 });
-    }
-    // Prueba de envío: manda un mensaje y devuelve lo que dijo Meta,
-    // para ver el error de verdad en vez de adivinar.
-    const probar = url.searchParams.get("probar_envio")?.trim();
-    if (probar) {
-      const res = await responderWhatsApp(probar, "Prueba de envío desde el sistema.");
-      return new Response(JSON.stringify(res, null, 2), {
-        status: 200, headers: { "Content-Type": "application/json; charset=utf-8" },
-      });
-    }
-
-    const waba = url.searchParams.get("waba")?.trim();
-    if (!waba) {
-      return new Response("La palabra está bien, pero falta el waba.", { status: 400 });
-    }
-    const cab = { Authorization: `Bearer ${Deno.env.get("WHATSAPP_TOKEN")}` };
-    const alta = await fetch(`${GRAPH}/${waba}/subscribed_apps`, { method: "POST", headers: cab });
-    const textoAlta = await alta.text();
-    const estado = await fetch(`${GRAPH}/${waba}/subscribed_apps`, { headers: cab });
-    return new Response(
-      JSON.stringify({
-        suscripcion: { http: alta.status, respuesta: textoAlta },
-        apps_suscritas_ahora: await estado.text(),
-      }, null, 2),
-      { status: 200, headers: { "Content-Type": "application/json; charset=utf-8" } },
-    );
-  }
+  // Dato que costó caro y conviene no olvidar: en WhatsApp hay DOS
+  // suscripciones distintas. Una es el campo "messages" del webhook, que
+  // se marca en el panel. La otra es que la cuenta de WhatsApp Business
+  // quede suscrita a la app (POST /{waba-id}/subscribed_apps), y el panel
+  // no la hace sola. Sin la segunda, Meta genera los avisos y no los
+  // entrega a nadie: todo se ve verde y no llega nada.
 
   // Meta comprueba el enlace una vez, con un GET.
   if (req.method === "GET") {
@@ -418,13 +389,8 @@ Deno.serve(async (req) => {
         esperado && url.searchParams.get("hub.verify_token") === esperado) {
       return new Response(url.searchParams.get("hub.challenge") ?? "", { status: 200 });
     }
-    const recibidos = [...url.searchParams.keys()];
     return new Response(
-      "Puerta de PAZ para WhatsApp.\n\n" +
-      (recibidos.length
-        ? `Recibí estos datos: ${recibidos.join(", ")}\n`
-        : "No recibí ningún dato.\n") +
-      "Para suscribir la cuenta hacen falta dos: clave y waba.\n",
+      "Puerta de PAZ para WhatsApp.\nAcá solo entra Meta.\n",
       { status: 400, headers: { "Content-Type": "text/plain; charset=utf-8" } },
     );
   }

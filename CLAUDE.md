@@ -510,7 +510,38 @@ malentendido es peor que un dato en conflicto.
 - **Duplicados**: `nexa_mensajes.wa_id` tiene índice único. Si Meta reintenta
   el mismo mensaje, el insert falla y no se contesta dos veces.
 
-### Dónde quedó la conexión a WhatsApp (14-09-2026, 21:00)
+### La conexión a WhatsApp quedó funcionando (15-09-2026)
+
+Cliente escribe por WhatsApp → entra al sistema → PAZ contesta. Probado de
+punta a punta con el número de prueba `+1 555 152-8643`.
+
+**Las tres trampas que costaron una tarde entera. Si algo se cae, mirar acá
+primero, en este orden:**
+
+1. **La app de Meta tiene que estar en modo activo (publicada).** Sin publicar,
+   Meta entrega solo los webhooks disparados desde su propio panel, ni siquiera
+   los mensajes del dueño de la app. Todo se ve verde y no llega nada.
+2. **Hay DOS suscripciones distintas.** El campo `messages` marcado en el panel
+   es una. La otra es que la cuenta de WhatsApp Business quede suscrita a la
+   app (`POST /{waba-id}/subscribed_apps`), y el panel no la hace sola. Mismo
+   síntoma: avisos generados que no llegan a ninguna parte.
+3. **El token.** Los temporales del asistente duran horas y al vencer producen
+   el peor error posible: los mensajes **entran** (eso va por la firma, no por
+   el token) pero las respuestas **no salen**, y en la base todo se ve perfecto.
+   Ya está puesto un **token permanente de usuario del sistema**, que no vence.
+   Si alguna vez hay que rehacerlo: `business.facebook.com` → Configuración del
+   negocio → Usuarios → Usuarios del sistema → asignarle la app y la cuenta de
+   WhatsApp → Generar token con `whatsapp_business_messaging` y
+   `whatsapp_business_management`, vencimiento **Nunca**.
+
+**Para diagnosticar**: `wa_log` guarda los golpes rechazados y los envíos que
+fallan. Un envío que se pierde en silencio es el error más caro de todos,
+porque la conversación queda perfecta en la base y el cliente no recibe nada.
+
+**Falta el número real.** Hoy es el de prueba, que solo habla con 5 teléfonos
+autorizados. Ningún cliente puede alcanzar a PAZ todavía.
+
+### Cómo se conectó (14-09-2026, 21:00)
 
 App de Meta creada (`Paz-Services`), número de prueba `+1 555 152-8643`,
 webhook apuntando a `/functions/v1/whatsapp` y **verificado**, campo `messages`
