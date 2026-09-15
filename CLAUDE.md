@@ -462,6 +462,38 @@ Lo que sí aplica ahora (verificado el 14-09-2026):
   Nunca en el `index.html`.
 - `nexa_conversaciones.canal` ya existe para esto (`app` / `whatsapp`).
 
+### Casos: una conversación, varios camiones (15-09-2026)
+
+**La conversación es el hilo con un teléfono. El caso es un camión.** Adentro
+de una conversación puede haber varios casos.
+
+Esto nació de un error real: un cliente reportó un Actros 4144 y después dijo
+"tengo otro camión con falla". Como había una sola ficha por conversación, el
+segundo camión **pisó al primero** y el caso original se perdió. En un taller
+de flotas eso pasa todos los días.
+
+Cómo se sincroniza (`sincronizarCasos()` en la Edge Function): la IA relee el
+hilo completo y devuelve `{"casos":[...]}` **en el orden en que aparecieron**.
+Ese orden es la llave (`orden_en_conversacion`), porque es lo único estable:
+la patente puede llegar tarde o no llegar nunca.
+
+**Reglas que no hay que romper:**
+
+- **La alerta la levanta PAZ, la baja una persona.** Si alguien ya atendió un
+  caso, que la IA cambie de opinión en la lectura siguiente no debe hacerla
+  reaparecer. Por eso `requiere_respuesta_humana` solo se pone en true si
+  estaba en false.
+- **Los conflictos no se resuelven solos.** Si el cliente dice un año distinto
+  al registrado, va a `conflictos` y lo mira una persona. Nunca se sobrescribe.
+- **PAZ no crea OT.** El botón del detalle llena el formulario de siempre; al
+  guardar, el caso queda con `orden_id` y `estado_caso = convertido_a_ot`.
+- Los adjuntos cuelgan del caso (`nexa_archivos.caso_id`), no solo de la
+  conversación: la foto del segundo camión va al caso del segundo camión.
+- Se **archiva**, no se borra.
+
+**Falta:** las conversaciones que nacen dentro de la app todavía no generan
+casos — se listan aparte en la bandeja para que no queden invisibles.
+
 ### Cómo se corrige a PAZ: la tabla `paz_aprendizajes` (15-09-2026)
 
 **Antes de tocar el prompt, mirar acá.** El prompt (`nexa_config.prompt`) es el
