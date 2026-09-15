@@ -475,8 +475,21 @@ Ese es el punto: que Jonatan pueda corregir a PAZ sin pedirle a nadie que
 cambie código. Si aparece una conducta mala, la respuesta correcta casi
 siempre es **un aprendizaje nuevo**, no editar el prompt ni la función.
 
-Los siete criterios iniciales salieron de errores observados de verdad, no de
+Los criterios iniciales salieron de errores observados de verdad, no de
 teoría. Están redactados diciendo qué hacer, no qué evitar.
+
+**Se editan desde la app**, en PAZ → *Enseñarle a PAZ*, visible solo para el
+dueño. Ahí se pega una conversación real de WhatsApp o una corrección escrita,
+y PAZ destila los criterios (`accion: "aprender"` en la Edge Function) y los
+**propone**: el dueño los revisa, edita y guarda. Mismo criterio que con las
+OT — nada entra al sistema sin que una persona lo mire.
+
+Los criterios se pueden **apagar** (siguen a la vista, dejan de aplicar) o
+borrar. Apagar es casi siempre lo correcto: deja el rastro de lo que se probó.
+
+**Solo el dueño, de verdad:** la política `esc_paz_aprendizajes` exige
+`mi_rol() = 'dueno'`, y la acción `aprender` de la función vuelve a comprobar
+el rol. No es que se le esconda el botón al coordinador.
 
 ### Lo que PAZ ya sabe antes de preguntar
 
