@@ -79,6 +79,9 @@ async function llamarIA(modelo: string, instrucciones: string, entrada: unknown)
 }
 
 // ---------- WhatsApp ----------
+// Devuelve lo que contestó Meta. Si falla, queda anotado en wa_log:
+// un envío que se pierde en silencio es el peor error posible acá,
+// porque en la base todo se ve bien y el cliente no recibe nada.
 async function responderWhatsApp(para: string, texto: string) {
   const r = await fetch(`${GRAPH}/${Deno.env.get("WHATSAPP_PHONE_ID")}/messages`, {
     method: "POST",
@@ -93,7 +96,16 @@ async function responderWhatsApp(para: string, texto: string) {
       text: { body: texto },
     }),
   });
-  if (!r.ok) console.error("No se pudo responder por WhatsApp:", await r.text());
+  const respuesta = await r.text();
+  if (!r.ok) {
+    console.error("No se pudo responder por WhatsApp:", respuesta);
+    await admin.from("wa_log").insert({
+      metodo: "ENVIO", firma_ok: false,
+      nota: `fallo el envio a ${para} (${r.status})`,
+      cuerpo: respuesta.slice(0, 4000),
+    }).then(() => {}, () => {});
+  }
+  return { ok: r.ok, status: r.status, respuesta };
 }
 
 // Baja la foto de Meta y la guarda. Las capturas del escáner son
@@ -372,6 +384,16 @@ Deno.serve(async (req) => {
     if (!clave || url.searchParams.get("clave")!.trim() !== clave.trim()) {
       return new Response("La palabra no coincide con la guardada.", { status: 403 });
     }
+    // Prueba de envío: manda un mensaje y devuelve lo que dijo Meta,
+    // para ver el error de verdad en vez de adivinar.
+    const probar = url.searchParams.get("probar_envio")?.trim();
+    if (probar) {
+      const res = await responderWhatsApp(probar, "Prueba de envío desde el sistema.");
+      return new Response(JSON.stringify(res, null, 2), {
+        status: 200, headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
+
     const waba = url.searchParams.get("waba")?.trim();
     if (!waba) {
       return new Response("La palabra está bien, pero falta el waba.", { status: 400 });
