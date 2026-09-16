@@ -184,7 +184,7 @@ Deno.serve(async (req) => {
       if (!caso_id) return json({ error: "Falta el caso." }, 400);
       const admin = createClient(URL_SUPABASE, SERVICE);
       const { data: caso } = await admin.from("casos")
-        .select("id,conversacion_id,cliente_nombre,patente,vehiculo_modelo,falla_reportada,resumen_tecnico,atencion,ubicacion_texto")
+        .select("id,conversacion_id,cliente_nombre,patente,vehiculo_modelo,falla_reportada,resumen_tecnico,atencion,ubicacion_texto,modo")
         .eq("id", caso_id).single();
       if (!caso) return json({ error: "No se encontró el caso." }, 404);
 
@@ -280,6 +280,19 @@ Deno.serve(async (req) => {
       }
 
       // accion === "enviar_respuesta"
+      //
+      // Modo aprendizaje: mientras dure el mes de entrenamiento, esto NO
+      // manda un WhatsApp de verdad. El dueño puede seguir redactando y
+      // revisando respuestas, pero el envío real queda cortado acá — es
+      // la misma regla que "PAZ no crea OT ni agenda visita real" aplicada
+      // al mensaje saliente.
+      if (caso.modo === "aprendizaje") {
+        return json({
+          error: "Este caso está en modo aprendizaje: no se manda WhatsApp real. " +
+                 "Revisa la respuesta y, si te sirve, márcala como Positivo en vez de enviarla.",
+        }, 409);
+      }
+
       if (!mensaje?.trim()) return json({ error: "El mensaje está vacío." }, 400);
       if (!ventanaAbierta) {
         return json({
@@ -326,6 +339,70 @@ Deno.serve(async (req) => {
       }).eq("id", caso_id);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
+    }
+
+    // ── Modo aprendizaje: reintentar el mismo escenario ──
+    //
+    // Después de agregar una regla correctiva, esto vuelve a generar la
+    // respuesta al ÚLTIMO mensaje del cliente en ese caso, con la regla
+    // ya activa, para comparar antes/después sin esperar a que el caso
+    // se repita de verdad. Solo el dueño: es parte de gestionar
+    // aprendizajes, igual que "Enseñarle a PAZ".
+    if (accion === "reintentar_caso") {
+      if (perfil.rol !== "dueno") {
+        return json({ error: "Solo el dueño puede reintentar un caso." }, 403);
+      }
+      if (!caso_id) return json({ error: "Falta el caso." }, 400);
+      const admin = createClient(URL_SUPABASE, SERVICE);
+
+      const { data: caso } = await admin.from("casos")
+        .select("conversacion_id").eq("id", caso_id).single();
+      if (!caso) return json({ error: "No se encontró el caso." }, 404);
+
+      const { data: previos } = await admin.from("nexa_mensajes")
+        .select("rol,contenido,creado_en").eq("conversacion_id", caso.conversacion_id).order("creado_en");
+      if (!previos?.length) return json({ error: "Ese caso todavía no tiene mensajes." }, 400);
+
+      const historialCompleto = previos.map((m) => ({ role: m.rol, content: m.contenido }));
+
+      // Se corta el historial justo después del último mensaje del
+      // cliente: así la IA responde a lo mismo que respondió antes, no
+      // a lo que vino después en la conversación real.
+      let idxUltimoUser = -1;
+      for (let i = historialCompleto.length - 1; i >= 0; i--) {
+        if (historialCompleto[i].role === "user") { idxUltimoUser = i; break; }
+      }
+      if (idxUltimoUser < 0) return json({ error: "Ese caso no tiene ningún mensaje del cliente." }, 400);
+      const historialParaReintento = historialCompleto.slice(0, idxUltimoUser + 1);
+      const ultimaDelCliente = historialParaReintento[idxUltimoUser];
+
+      const ultimaDePaz = previos
+        .slice().reverse().find((m) => m.rol === "assistant" && new Date(m.creado_en) > new Date(previos[idxUltimoUser].creado_en));
+
+      const { data: apr } = await admin.from("paz_aprendizajes")
+        .select("titulo,contenido").eq("activo", true).order("id");
+      const aprendizajes = apr?.length
+        ? "CRITERIOS DEL TALLER (mandan sobre cualquier costumbre tuya):\n" +
+          apr.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n")
+        : "";
+
+      const instrucciones = [
+        cfg.prompt,
+        "",
+        aprendizajes,
+        "",
+        "CANAL: WhatsApp con el cliente. Mensajes cortos, una pregunta por vez.",
+        "No repitas lo ya confirmado ni dejes la conversación colgada.",
+      ].filter(Boolean).join("\n");
+
+      const respuestaNueva = await llamarIA(apiKey, cfg.modelo, instrucciones, historialParaReintento);
+      if (!respuestaNueva) return json({ error: "La IA no devolvió nada. Reintenta." }, 502);
+
+      return json({
+        mensaje_cliente: ultimaDelCliente.content,
+        respuesta_original: ultimaDePaz?.contenido ?? "(PAZ no había respondido antes en este caso.)",
+        respuesta_nueva: respuestaNueva.replaceAll("**", "").replaceAll("*", ""),
+      });
     }
 
     if (!Array.isArray(historial) || !historial.length) {

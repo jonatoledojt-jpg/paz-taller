@@ -698,7 +698,19 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div style="height:10px"></div>
         <button class="btn claro oculto" id="btnEntrenar">Enseñarle a PAZ</button>
 
-        <div class="opciones" id="selCasoFiltro" style="margin:20px 0 14px">
+        <!-- Modo aprendizaje: mientras dura el mes de entrenamiento, los
+             casos nuevos nacen acá, separados de la operación real. Solo
+             el dueño ve esta pestaña — es él quien conversa y evalúa. -->
+        <div class="opciones oculto" id="selCasoModo" style="margin:20px 0 14px">
+          <button type="button" data-v="produccion" aria-pressed="true">Producción</button>
+          <button type="button" data-v="aprendizaje" aria-pressed="false">Entrenamiento</button>
+        </div>
+        <div class="aviso info oculto" id="avisoModoAprendizaje" style="margin-bottom:14px">
+          Estos son casos de prueba. No crean OT, no agendan visita real y PAZ no manda
+          WhatsApp real desde acá. Sirven para enseñarle criterio antes de soltarla con clientes.
+        </div>
+
+        <div class="opciones" id="selCasoFiltro" style="margin:0 0 14px">
           <button type="button" data-v="abiertos" aria-pressed="true">Abiertos</button>
           <button type="button" data-v="alerta" aria-pressed="false">Te esperan</button>
           <button type="button" data-v="archivados" aria-pressed="false">Archivados</button>
@@ -765,9 +777,50 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div class="miniaturas" id="casoFotos"></div>
       </div>
 
+      <!-- Evaluar este caso — modo aprendizaje, solo dueño. El dueño
+           conversó con PAZ, y acá decide si lo que hizo sirve, si hay
+           que corregirla, o si el caso no tiene valor y se descarta. -->
+      <div class="seccion oculto" id="casoEvaluarCaja">
+        <span class="rotulo">Evaluar este caso</span>
+        <div class="reordenar">
+          <button type="button" id="btnCasoPositivo">Positivo</button>
+          <button type="button" id="btnCasoNegativo">Negativo</button>
+          <button type="button" id="btnCasoDescartar">Descartar</button>
+        </div>
+
+        <div class="oculto" id="casoPositivoCaja" style="margin-top:14px">
+          <div class="campo">
+            <label for="casoPositivoTitulo">Título corto para este aprendizaje</label>
+            <input id="casoPositivoTitulo" placeholder="Ej: Responde bien cuando preguntan por el IVA">
+          </div>
+          <div class="reordenar">
+            <button type="button" id="btnCasoPositivoCancelar">Cancelar</button>
+            <button type="button" id="btnCasoPositivoGuardar">Guardar</button>
+          </div>
+        </div>
+
+        <div class="oculto" id="casoNegativoCaja" style="margin-top:14px">
+          <div class="campo">
+            <label for="casoNegativoRegla">Qué tiene que hacer distinto</label>
+            <textarea id="casoNegativoRegla" placeholder="Ej: si el caso ya está listo y el cliente agradece, responder breve, sin repetir el resumen."></textarea>
+          </div>
+          <div class="reordenar">
+            <button type="button" id="btnCasoNegativoCancelar">Cancelar</button>
+            <button type="button" id="btnCasoNegativoGuardar">Guardar corrección</button>
+          </div>
+        </div>
+
+        <div class="oculto" id="casoReintentoCaja" style="margin-top:16px">
+          <span class="rotulo sep">Comparar antes / después</span>
+          <div id="casoReintentoContenido"></div>
+          <button type="button" class="btn claro" id="btnCasoReintentar" style="margin-top:10px">Reintentar este caso</button>
+        </div>
+      </div>
+
       <!-- Modo asistido: la persona le dicta a PAZ qué decirle al
-           cliente, PAZ redacta, la persona revisa y recién ahí se manda. -->
-      <div class="seccion">
+           cliente, PAZ redacta, la persona revisa y recién ahí se manda.
+           No aplica en modo aprendizaje: no hay cliente real al otro lado. -->
+      <div class="seccion" id="casoAsistidoCaja">
         <span class="rotulo">Responder como PAZ</span>
         <div class="pista" id="casoVentana" style="margin-bottom:12px"></div>
 
@@ -817,6 +870,9 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
 
       <button class="btn" id="btnCasoOT">Crear la OT desde este caso</button>
+      <div class="pista mal oculto" id="casoOTBloqueada" style="margin:-4px 0 10px">
+        Este caso está en modo aprendizaje: no crea OT ni toca datos reales.
+      </div>
       <div style="height:10px"></div>
       <button class="btn claro oculto" id="btnCasoAtendido">Marcar atendido sin responder</button>
       <div style="height:10px"></div>
@@ -852,6 +908,16 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div id="entPropuestas"></div>
 
       <span class="rotulo sep">Lo que PAZ ya tiene aprendido</span>
+      <div class="campo">
+        <input id="entBuscar" placeholder="Buscar por palabra…">
+      </div>
+      <div class="opciones" id="selEntTipo" style="margin-bottom:14px">
+        <button type="button" data-v="" aria-pressed="true">Todos</button>
+        <button type="button" data-v="correccion">Correcciones</button>
+        <button type="button" data-v="criterio">Criterios</button>
+        <button type="button" data-v="respuesta_aprobada">Aprobados</button>
+        <button type="button" data-v="ejemplo">Ejemplos</button>
+      </div>
       <div id="entLista"></div>
 
       <div style="height:14px"></div>
@@ -2446,19 +2512,32 @@ const ESTADO_CASO = {
   archivado:          { txt: "Archivado", tono: "" },
   cerrado_sin_ot:     { txt: "Cerrado sin OT", tono: "" },
 };
-let casoFiltro = "abiertos", casoActual = null;
+let casoFiltro = "abiertos", casoActual = null, casoModo = "produccion";
 
 grupoOpciones("selCasoFiltro");
 $("selCasoFiltro").querySelectorAll("button").forEach(b => {
   b.addEventListener("click", () => { casoFiltro = b.dataset.v; cargarCasosNexa(); });
 });
 
+grupoOpciones("selCasoModo");
+$("selCasoModo").querySelectorAll("button").forEach(b => {
+  b.addEventListener("click", () => {
+    casoModo = b.dataset.v;
+    $("avisoModoAprendizaje").classList.toggle("oculto", casoModo !== "aprendizaje");
+    cargarCasosNexa();
+  });
+});
+
 async function cargarCasosNexa() {
   cargarConversacionesApp();
+  $("selCasoModo").classList.toggle("oculto", perfil?.rol !== "dueno");
   $("nexaCasos").innerHTML = '<div class="cargando">Cargando casos…</div>';
 
+  // Descartado sale de toda vista principal, sea cual sea el modo — no
+  // es borrado físico, pero para efectos de la bandeja no existe.
   let q = db.from("casos")
-    .select("id,numero_caso,estado_caso,cliente_nombre,patente,vehiculo_modelo,falla_reportada,resumen_tecnico,ubicacion_texto,ubicacion_gps,tiene_fotos,orden_id,requiere_respuesta_humana,motivo_alerta,actualizado_en")
+    .select("id,numero_caso,estado_caso,cliente_nombre,patente,vehiculo_modelo,falla_reportada,resumen_tecnico,ubicacion_texto,ubicacion_gps,tiene_fotos,orden_id,requiere_respuesta_humana,motivo_alerta,actualizado_en,modo,evaluacion_aprendizaje")
+    .eq("modo", casoModo).eq("descartado", false)
     .order("actualizado_en", { ascending: false }).limit(60);
 
   if (casoFiltro === "archivados")   q = q.eq("archivado", true);
@@ -2472,10 +2551,13 @@ async function cargarCasosNexa() {
   }
 
   // El contador de "Te esperan" se calcula aparte: tiene que verse aunque
-  // estés mirando otra pestaña.
+  // estés mirando otra pestaña. Se cuenta dentro del mismo modo que se
+  // está mirando — un caso de entrenamiento no cuenta como pendiente
+  // cuando estás viendo producción, ni al revés.
   const { count: esperan } = await db.from("casos")
     .select("id", { count: "exact", head: true })
-    .eq("archivado", false).eq("requiere_respuesta_humana", true);
+    .eq("archivado", false).eq("requiere_respuesta_humana", true)
+    .eq("modo", casoModo).eq("descartado", false);
   $("selCasoFiltro").querySelector('[data-v="alerta"]').textContent =
     esperan ? `Te esperan (${esperan})` : "Te esperan";
 
@@ -2510,6 +2592,8 @@ async function cargarCasosNexa() {
       <div class="detalle"><span class="pat"></span> · <span class="mod"></span></div>
       <div class="sintoma"></div>
       <span class="chip ${e.tono}">${e.txt}</span>
+      ${c.evaluacion_aprendizaje === "positivo" ? '<span class="chip listo">Positivo</span>' : ""}
+      ${c.evaluacion_aprendizaje === "negativo" ? '<span class="chip espera">Negativo</span>' : ""}
       ${marcas ? `<span class="marcas">${marcas}</span>` : ""}`;
     div.querySelector(".cliente").textContent = c.cliente_nombre || "Cliente sin nombre";
     div.querySelector(".pat").textContent = c.patente || "sin patente";
@@ -2647,9 +2731,11 @@ function pintarBadgeCasos() {
 }
 
 async function actualizarBadgeCasos() {
+  // Solo producción: un caso de entrenamiento no es una urgencia real,
+  // y mezclarlo en el aviso del encabezado le quitaría sentido al aviso.
   const { count } = await db.from("casos")
     .select("id", { count: "exact", head: true })
-    .eq("archivado", false).eq("requiere_respuesta_humana", true);
+    .eq("archivado", false).eq("requiere_respuesta_humana", true).eq("modo", "produccion");
   casosQueEsperan = count ?? 0;
   pintarBadgeCasos();
 }
@@ -2923,9 +3009,20 @@ async function pintarCaso() {
     $("casoFotos").appendChild(img);
   }
 
-  $("btnCasoOT").classList.toggle("oculto", !!c.orden_id);
+  const esAprendizaje = c.modo === "aprendizaje";
+  const esDueno = perfil?.rol === "dueno";
+
+  // Modo aprendizaje: sin OT, sin modo asistido de verdad. En su lugar,
+  // el dueño evalúa el caso — eso es lo que enseña a PAZ, no un cliente
+  // real recibiendo un mensaje.
+  $("btnCasoOT").classList.toggle("oculto", !!c.orden_id || esAprendizaje);
+  $("casoOTBloqueada").classList.toggle("oculto", !esAprendizaje || !!c.orden_id);
+  $("casoAsistidoCaja").classList.toggle("oculto", esAprendizaje);
+  $("casoEvaluarCaja").classList.toggle("oculto", !esAprendizaje || !esDueno);
   $("btnCasoArchivar").textContent = c.archivado ? "Desarchivar" : "Archivar";
   $("btnCasoAtendido").classList.toggle("oculto", !c.requiere_respuesta_humana);
+
+  if (esAprendizaje && esDueno) pintarEvaluacionCaso();
 
   // Deja el formulario de responder limpio cada vez que se abre el caso,
   // para no arrastrar el borrador de un caso al siguiente.
@@ -2935,9 +3032,20 @@ async function pintarCaso() {
   $("btnCasoToggleFecha").textContent = "+ Esta respuesta confirma una fecha de visita";
   $("casoFecha").value = "";
   $("selFranjaCaso").querySelector('[data-v="manana"]').click();
+  $("casoPositivoCaja").classList.add("oculto");
+  $("casoNegativoCaja").classList.add("oculto");
+  $("casoReintentoCaja").classList.add("oculto");
+  $("casoPositivoTitulo").value = "";
+  $("casoNegativoRegla").value = "";
   msg("casoError", "");
-  await pintarVentanaCaso();
+  if (!esAprendizaje) await pintarVentanaCaso();
   await pintarHistorialCaso();
+}
+
+function pintarEvaluacionCaso() {
+  const c = casoActual;
+  $("btnCasoPositivo").textContent = c.evaluacion_aprendizaje === "positivo" ? "✓ Positivo" : "Positivo";
+  $("btnCasoNegativo").textContent = c.evaluacion_aprendizaje === "negativo" ? "✓ Negativo" : "Negativo";
 }
 
 // Quién confirmó qué, con nombre, rol y fecha — la trazabilidad que pidió
@@ -3098,6 +3206,113 @@ $("btnCasoVerChat").onclick = () => {
   abrirCasoNexa(casoActual.conversacion_id);
 };
 
+// ---------- Evaluar un caso de entrenamiento ----------
+// Guarda el intercambio completo, no solo la última respuesta: un
+// aprendizaje aprobado es un ejemplo de buen criterio, no una frase
+// para que PAZ repita literal.
+async function transcripcionDelCaso() {
+  const { data } = await db.from("nexa_mensajes")
+    .select("rol,contenido").eq("conversacion_id", casoActual.conversacion_id).order("creado_en");
+  return (data ?? [])
+    .map(m => `${m.rol === "user" ? "Cliente" : "PAZ"}: ${m.contenido}`).join("\n");
+}
+
+$("btnCasoPositivo").onclick = () => {
+  $("casoNegativoCaja").classList.add("oculto");
+  $("casoPositivoCaja").classList.remove("oculto");
+};
+$("btnCasoPositivoCancelar").onclick = () => $("casoPositivoCaja").classList.add("oculto");
+
+$("btnCasoPositivoGuardar").onclick = async () => {
+  msg("casoError", "");
+  const titulo = $("casoPositivoTitulo").value.trim();
+  if (!titulo) return msg("casoError", "Ponle un título corto a este aprendizaje.");
+
+  $("btnCasoPositivoGuardar").disabled = true;
+  try {
+    const transcripcion = await transcripcionDelCaso();
+    const { data:{ user } } = await db.auth.getUser();
+    const { error } = await db.from("paz_aprendizajes").insert({
+      tipo: "respuesta_aprobada", titulo,
+      contenido: `Ejemplo aprobado por el dueño: ${titulo}. Revisa la transcripción del caso de origen para el criterio completo.`,
+      transcripcion, caso_id_origen: casoActual.id, creado_por: user.id,
+    });
+    if (error) throw error;
+    await db.from("casos").update({ evaluacion_aprendizaje: "positivo" }).eq("id", casoActual.id);
+    $("casoPositivoCaja").classList.add("oculto");
+    await abrirCaso(casoActual.id);
+    msg("casoError", "Guardado como aprendizaje. PAZ lo va a tener presente desde el próximo mensaje.", true);
+  } catch (e) {
+    msg("casoError", e.message || "No se pudo guardar.");
+  } finally {
+    $("btnCasoPositivoGuardar").disabled = false;
+  }
+};
+
+$("btnCasoNegativo").onclick = () => {
+  $("casoPositivoCaja").classList.add("oculto");
+  $("casoNegativoCaja").classList.remove("oculto");
+};
+$("btnCasoNegativoCancelar").onclick = () => $("casoNegativoCaja").classList.add("oculto");
+
+$("btnCasoNegativoGuardar").onclick = async () => {
+  msg("casoError", "");
+  const regla = $("casoNegativoRegla").value.trim();
+  if (!regla) return msg("casoError", "Escribe qué tiene que hacer distinto.");
+
+  $("btnCasoNegativoGuardar").disabled = true;
+  try {
+    const transcripcion = await transcripcionDelCaso();
+    const { data:{ user } } = await db.auth.getUser();
+    const titulo = "Corrección: " + (regla.length > 50 ? regla.slice(0, 50) + "…" : regla);
+    const { error } = await db.from("paz_aprendizajes").insert({
+      tipo: "correccion", titulo, contenido: regla,
+      transcripcion, caso_id_origen: casoActual.id, creado_por: user.id,
+    });
+    if (error) throw error;
+    await db.from("casos").update({ evaluacion_aprendizaje: "negativo" }).eq("id", casoActual.id);
+    await abrirCaso(casoActual.id);
+    // La corrección ya quedó activa: se ofrece reintentar de inmediato,
+    // para ver si sirvió sin esperar a que el caso se repita solo.
+    $("casoReintentoCaja").classList.remove("oculto");
+    $("casoReintentoContenido").innerHTML = "";
+    msg("casoError", "Corrección guardada. ¿Quieres ver cómo responde PAZ ahora con esta regla?", true);
+  } catch (e) {
+    msg("casoError", e.message || "No se pudo guardar.");
+  } finally {
+    $("btnCasoNegativoGuardar").disabled = false;
+  }
+};
+
+$("btnCasoReintentar").onclick = async () => {
+  msg("casoError", "");
+  $("btnCasoReintentar").disabled = true;
+  $("btnCasoReintentar").textContent = "Reintentando…";
+  try {
+    const r = await llamarNexaAccion({ accion: "reintentar_caso", caso_id: casoActual.id });
+    $("casoReintentoContenido").innerHTML = `
+      <div class="dato"><span>Cliente dijo</span></div>
+      <div class="pista" style="margin-bottom:10px">${escapar(r.mensaje_cliente)}</div>
+      <div class="dato"><span>Respuesta original</span></div>
+      <div class="pista" style="margin-bottom:10px">${escapar(r.respuesta_original)}</div>
+      <div class="dato"><span>Respuesta nueva, con la corrección</span></div>
+      <div class="crit-txt">${escapar(r.respuesta_nueva)}</div>`;
+  } catch (e) {
+    msg("casoError", e.message || "No se pudo reintentar.");
+  } finally {
+    $("btnCasoReintentar").disabled = false;
+    $("btnCasoReintentar").textContent = "Reintentar este caso";
+  }
+};
+
+$("btnCasoDescartar").onclick = async () => {
+  if (!confirm("¿Descartar este caso de prueba? No se borra, pero sale de la vista y deja de ser contexto para PAZ.")) return;
+  const { error } = await db.rpc("paz_descartar_caso", { p_caso_id: casoActual.id });
+  if (error) return msg("casoError", error.message || "No se pudo descartar.");
+  ver("vNexa");
+  mostrarInicioNexa();
+};
+
 $("btnCasoArchivar").onclick = async () => {
   const c = casoActual;
   await db.from("casos").update({
@@ -3144,33 +3359,57 @@ $("btnEntrenar").onclick = () => {
 };
 $("btnEntVolver").onclick = () => { ver("vNexa"); mostrarInicioNexa(); };
 
+const ETIQUETA_TIPO_APR = {
+  criterio: "Criterio", ejemplo: "Ejemplo",
+  respuesta_aprobada: "Aprobado", correccion: "Corrección",
+};
+let entTipoFiltro = "";
+grupoOpciones("selEntTipo");
+$("selEntTipo").querySelectorAll("button").forEach(b => {
+  b.addEventListener("click", () => { entTipoFiltro = b.dataset.v; cargarAprendizajes(); });
+});
+$("entBuscar").addEventListener("input", () => cargarAprendizajes());
+
 async function cargarAprendizajes() {
   $("entLista").innerHTML = '<div class="cargando">Cargando…</div>';
-  const { data, error } = await db.from("paz_aprendizajes")
-    .select("id,titulo,contenido,activo").order("id");
+  let q = db.from("paz_aprendizajes")
+    .select("id,tipo,titulo,contenido,activo,caso_id_origen,creado_en").order("id", { ascending: false });
+  if (entTipoFiltro) q = q.eq("tipo", entTipoFiltro);
+  const { data, error } = await q;
   if (error) {
     $("entLista").innerHTML = '<div class="aviso">No se pudieron cargar los criterios.</div>';
     return;
   }
-  if (!data.length) {
-    $("entLista").innerHTML = '<div class="vacio"><p>Todavía no le has enseñado nada.</p></div>';
+
+  const buscar = $("entBuscar").value.trim().toLowerCase();
+  const filtrados = buscar
+    ? data.filter(a => (a.titulo + " " + a.contenido).toLowerCase().includes(buscar))
+    : data;
+
+  if (!filtrados.length) {
+    $("entLista").innerHTML = '<div class="vacio"><p>Nada por acá todavía.</p></div>';
     return;
   }
 
   $("entLista").innerHTML = "";
-  data.forEach(a => {
+  filtrados.forEach(a => {
     const div = document.createElement("div");
     div.className = "seccion" + (a.activo ? "" : " apagado");
     div.innerHTML = `
+      <div class="pista" style="margin-bottom:4px">${ETIQUETA_TIPO_APR[a.tipo] ?? a.tipo} · ${fechaCL(a.creado_en)}</div>
       <div class="crit-tit"></div>
       <div class="crit-txt"></div>
       <div class="reordenar">
+        ${a.caso_id_origen ? '<button type="button" class="verCaso">Ver caso</button>' : ""}
         <button type="button" class="alternar">${a.activo ? "Apagar" : "Prender"}</button>
         <button type="button" class="borrar">Borrar</button>
       </div>`;
     div.querySelector(".crit-tit").textContent = a.titulo;
     div.querySelector(".crit-txt").textContent = a.contenido;
 
+    if (a.caso_id_origen) {
+      div.querySelector(".verCaso").onclick = () => { ver("vCaso"); abrirCaso(a.caso_id_origen); };
+    }
     div.querySelector(".alternar").onclick = async () => {
       await db.from("paz_aprendizajes").update({ activo: !a.activo }).eq("id", a.id);
       cargarAprendizajes();
@@ -3289,8 +3528,21 @@ async function cargarCasosPorAgendar() {
     return;
   }
 
+  // Modo aprendizaje: un caso de entrenamiento no puede aparecer acá
+  // como si fuera un cliente real esperando que lo agenden. Se pide
+  // primero qué conversaciones tienen al menos un caso de producción,
+  // y solo esas entran a la lista de abajo.
+  const { data: convProduccion } = await db.from("casos")
+    .select("conversacion_id").eq("modo", "produccion");
+  const idsProduccion = [...new Set((convProduccion ?? []).map(c => c.conversacion_id))];
+  if (!idsProduccion.length) {
+    caja.classList.add("oculto");
+    return;
+  }
+
   const { data, error } = await db.from("nexa_conversaciones")
     .select("id,titulo,ficha")
+    .in("id", idsProduccion)
     .is("orden_id", null)
     .eq("ficha->>atencion", "terreno")
     .order("actualizado_en", { ascending: false });
