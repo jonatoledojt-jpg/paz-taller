@@ -633,6 +633,43 @@ historial completo de `paz_respuestas_asistidas` para ese caso: instrucción,
 mensaje enviado, quién y cuándo, visible directamente en la app sin tener
 que consultar la base.
 
+### Dos errores más, misma tarde (16-09-2026): cancelar sin tocar nada, y responder dos veces
+
+**4. PAZ confirmaba una cancelación que no existía en ningún lado.** El
+cliente pidió cancelar una visita ya agendada ("es muy caro, cancela"), y
+PAZ le contestó "queda dado de baja" — pero nadie le construyó a PAZ la
+posibilidad de cancelar nada, así que la OT (`OT-2026-0004`) se quedó
+`agendado` para la fecha original. Es el mismo error de siempre, al revés:
+antes prometía una agenda que no existía; acá prometió una baja que tampoco
+existía. **Arreglado en `REGLAS_WHATSAPP`:** cancelar es tan serio como
+agendar — PAZ nunca dice "queda cancelada" ni "la dimos de baja"; dice que
+lo pasa al equipo. Y en `prompt_ficha`: pedir cancelar o reprogramar algo ya
+agendado ahora entra en la lista de motivos que levantan
+`requiere_respuesta_humana`.
+
+Esto chocaba con el arreglo del punto 1 de la sección anterior (`yaConvertido`
+bloqueaba toda alerta nueva una vez que el caso ya tenía OT). Se afinó: la
+alerta se bloquea solo si el **motivo es el mismo que ya se avisó antes**
+(`motivo_alerta` sin cambios); si el motivo es distinto —como pedir
+cancelar algo que antes solo se estaba agendando—, sí avisa, tenga OT o no.
+
+**5. PAZ respondía dos veces al mismo mensaje.** El cliente mandó dos
+mensajes seguidos con tres segundos de diferencia ("Cuáles son las que te
+envié" y luego "?"). Meta los entregó como dos avisos separados, y como
+`procesarMensaje` corre uno por aviso sin saber del otro, generó **dos
+respuestas casi idénticas, 195 milisegundos aparte** — como si dos personas
+del equipo contestaran el mismo mensaje sin mirarse. **Arreglado con una
+pausa de 2,5 segundos** antes de generar la respuesta: si en ese lapso llega
+un mensaje más nuevo del mismo cliente, este se retira y deja que el más
+nuevo conteste por los dos (que sí va a leer todo el historial, incluido el
+mensaje que se retiró). Le agrega ~2,5 s de latencia a cada respuesta, que
+es apenas perceptible por WhatsApp.
+
+Los cinco errores de esta tarde salieron de la misma prueba larga con varios
+camiones mezclados. Ninguno llegó a un cliente real. Vale la pena repetir
+una conversación así de larga, con cancelaciones y ráfagas de mensajes
+incluidas, antes de conectar el número de verdad.
+
 **Qué faltó a propósito**, siguiendo el mismo criterio de no sobre-construir:
 plantillas para fuera de la ventana de 24 horas, push notifications reales, y
 un job programado para avisar cuando un caso lleva mucho tiempo sin que nadie

@@ -293,6 +293,13 @@ LO QUE NO HACES
 - No dices que ya avisaste a alguien del equipo.
 - No das un precio final cerrado.
 - No recomiendas una reparación que no esté en tus instrucciones.
+- No confirmas que una visita quedó cancelada, dada de baja o reprogramada.
+  Cancelar es una decisión igual de seria que agendar: si un caso ya tiene
+  una visita en curso y el cliente pide anularla, cambiarla o dice que ya no
+  le sirve, dile que se lo pasas al equipo para confirmarlo, y nada más. No
+  digas "queda cancelada" ni "la dimos de baja" aunque suene obvio que el
+  cliente ya no la quiere — pasó de verdad: se lo dijiste a un cliente y la
+  orden se quedó agendada en el sistema, como si nada.
 Si no estás segura de algo, dilo y déjalo para que lo vea una persona.
 `.trim();
 
@@ -347,8 +354,9 @@ async function procesarMensaje(msj: any) {
 
   // wa_id tiene índice único: si Meta reintenta el mismo mensaje, el
   // insert falla acá y no se contesta dos veces.
-  const { error: errIns } = await admin.from("nexa_mensajes")
-    .insert({ conversacion_id, rol: "user", contenido, wa_id: msj.id ?? null });
+  const { data: insertado, error: errIns } = await admin.from("nexa_mensajes")
+    .insert({ conversacion_id, rol: "user", contenido, wa_id: msj.id ?? null })
+    .select("creado_en").single();
   if (errIns) {
     if (errIns.code === "23505") return;   // repetido, ya se procesó
     throw errIns;
@@ -360,6 +368,23 @@ async function procesarMensaje(msj: any) {
     } catch (e) {
       console.error("No se pudo guardar el adjunto:", e);
     }
+  }
+
+  // Pausa breve antes de contestar. Sin esto, cuando el cliente manda
+  // varios mensajes seguidos (pasó de verdad: "Cuáles son las que te
+  // envié" y "?" tres segundos después), cada uno dispara su propia
+  // llamada a la IA y su propio envío por WhatsApp — el cliente recibe
+  // dos respuestas casi iguales, una atrás de otra, como si dos personas
+  // le contestaran sin mirarse. Si durante la espera llega un mensaje más
+  // nuevo del mismo cliente, este se retira: el más nuevo va a leer todo
+  // el historial (incluido este mensaje) y contesta por los dos.
+  await new Promise((r) => setTimeout(r, 2500));
+  const { data: masReciente } = await admin.from("nexa_mensajes")
+    .select("creado_en").eq("conversacion_id", conversacion_id).eq("rol", "user")
+    .order("creado_en", { ascending: false }).limit(1).maybeSingle();
+  if (masReciente && insertado &&
+      new Date(masReciente.creado_en).getTime() > new Date(insertado.creado_en).getTime()) {
+    return;
   }
 
   const { data: cfg } = await admin.from("nexa_config")
@@ -431,7 +456,7 @@ async function procesarMensaje(msj: any) {
 // anterior — que es exactamente lo que pasaba antes.
 async function sincronizarCasos(conversacion_id: number, telefono: string, casos: any[]) {
   const { data: existentes } = await admin.from("casos")
-    .select("id,orden_en_conversacion,estado_caso,requiere_respuesta_humana,orden_id")
+    .select("id,orden_en_conversacion,estado_caso,requiere_respuesta_humana,orden_id,motivo_alerta")
     .eq("conversacion_id", conversacion_id);
   const porOrden = new Map((existentes ?? []).map((c) => [c.orden_en_conversacion, c]));
 
@@ -469,9 +494,20 @@ async function sincronizarCasos(conversacion_id: number, telefono: string, casos
     // La alerta se levanta sola, pero NO se baja sola: si una persona
     // ya la atendió, que la IA cambie de opinión no debe hacerla
     // reaparecer. La baja quien responde, desde la app.
-    if (c.requiere_humano && !previo?.requiere_respuesta_humana && !yaConvertido) {
+    //
+    // Pero "ya tiene OT" no puede bloquear TODA alerta futura: pasó de
+    // verdad que un cliente pidió cancelar una visita ya agendada y la
+    // alerta no saltó, porque el caso ya estaba convertido. La diferencia
+    // está en si el motivo es el mismo de siempre o uno nuevo: si el
+    // texto que trae esta lectura no es el que ya se avisó, es una
+    // necesidad distinta y sí tiene que avisar, aunque el caso ya tenga OT.
+    const motivoNuevo = (c.motivo_alerta ?? "").trim();
+    const motivoYaAvisado = (previo?.motivo_alerta ?? "").trim();
+    const esMotivoDistinto = motivoNuevo && motivoNuevo !== motivoYaAvisado;
+
+    if (c.requiere_humano && !previo?.requiere_respuesta_humana && (!yaConvertido || esMotivoDistinto)) {
       campos.requiere_respuesta_humana = true;
-      campos.motivo_alerta = c.motivo_alerta ?? "El cliente espera una respuesta del equipo.";
+      campos.motivo_alerta = motivoNuevo || "El cliente espera una respuesta del equipo.";
       campos.alerta_creada_en = new Date().toISOString();
     }
 
