@@ -2674,15 +2674,15 @@ async function abrirCasoNexa(id) {
   mostrarConversacionNexa();
 }
 
-$("btnNexaNuevo").onclick = async () => {
+// La conversación nace recién con el primer mensaje, no al abrir la
+// pantalla — antes se creaba la fila en nexa_conversaciones apenas se
+// tocaba este botón, y quien entraba y se arrepentía sin escribir nada
+// dejaba una conversación vacía en la bandeja ("APP 0001", sin nombre,
+// sin detalle). Acá solo se limpia la pantalla; enviarNexa() es quien
+// crea la fila, y solo cuando hay texto de verdad que guardar.
+$("btnNexaNuevo").onclick = () => {
   msg("nexaError", "");
-  $("btnNexaNuevo").disabled = true;
-  const { data:{ user } } = await db.auth.getUser();
-  const { data, error } = await db.from("nexa_conversaciones")
-    .insert({ creado_por: user.id }).select("id").single();
-  $("btnNexaNuevo").disabled = false;
-  if (error) return msg("nexaError", "No se pudo abrir el caso: " + (error.message || "error desconocido"));
-  nexaConvId = data.id;
+  nexaConvId = null;
   nexaFicha = {};
   nexaMensajes = [];
   mostrarConversacionNexa();
@@ -2848,7 +2848,7 @@ async function llamarNexaAccion(cuerpo) {
 }
 
 async function enviarNexa() {
-  if (nexaOcupada || !nexaConvId) return;
+  if (nexaOcupada || (!nexaConvId && !$("nexaTexto").value.trim())) return;
   msg("nexaError", "");
   const texto = $("nexaTexto").value.trim();
   const ultimo = nexaMensajes[nexaMensajes.length - 1];
@@ -2860,6 +2860,13 @@ async function enviarNexa() {
   $("btnNexaEnviar").disabled = true;
   try {
     if (texto) {
+      if (!nexaConvId) {
+        const { data:{ user } } = await db.auth.getUser();
+        const { data, error } = await db.from("nexa_conversaciones")
+          .insert({ creado_por: user.id }).select("id").single();
+        if (error) throw new Error("No se pudo abrir el caso: " + (error.message || "error desconocido"));
+        nexaConvId = data.id;
+      }
       nexaMensajes.push({ rol: "user", contenido: texto });
       $("nexaTexto").value = "";
       $("nexaTexto").style.height = "";
