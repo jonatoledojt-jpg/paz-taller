@@ -1,4 +1,4 @@
-﻿const CACHE = "paz-taller-v16";
+﻿const CACHE = "paz-taller-v17";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {

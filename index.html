@@ -914,8 +914,12 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div style="height:14px"></div>
 
         <div class="campo">
-          <label for="entArchivo">Subir conversaciones reales de WhatsApp (día a día, humano a humano)</label>
-          <input type="file" id="entArchivo" accept=".txt" multiple>
+          <span class="rotulo">Subir conversaciones reales de WhatsApp (día a día, humano a humano)</span>
+          <label class="btn claro" for="entArchivo" style="display:block;text-align:center;font-size:16px">
+            Elegir archivo(s) .txt
+          </label>
+          <input type="file" id="entArchivo" accept=".txt" multiple style="position:absolute;width:1px;height:1px;opacity:0">
+          <div class="pista" id="entArchivoNombre"></div>
           <div class="pista">
             Abre la conversación en WhatsApp → nombre del contacto → Más →
             <b>Exportar chat</b> → <b>Sin archivos multimedia</b>. Eso genera
@@ -3417,6 +3421,7 @@ $("btnEntrenar").onclick = () => {
   $("entPropuestas").innerHTML = "";
   $("entTexto").value = "";
   $("entArchivo").value = "";
+  $("entArchivoNombre").textContent = "";
   pintarContadorEnt();
   ver("vEntrenar");
   cargarAprendizajes();
@@ -3441,6 +3446,8 @@ $("entArchivo").onchange = async () => {
       $("entTexto").value = previo ? `${previo}\n\n${bloque}` : bloque;
     }
     pintarContadorEnt();
+    $("entArchivoNombre").textContent =
+      `Agregado: ${archivos.map(f => f.name).join(", ")} — revisa el cuadro de abajo.`;
   } catch (e) {
     msg("entError", "No se pudo leer el archivo. ¿Es un .txt exportado de WhatsApp?");
   } finally {
