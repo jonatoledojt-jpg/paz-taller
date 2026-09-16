@@ -494,6 +494,13 @@ la patente puede llegar tarde o no llegar nunca.
 **Falta:** las conversaciones que nacen dentro de la app todavía no generan
 casos — se listan aparte en la bandeja para que no queden invisibles.
 
+**Bug real encontrado y corregido (15-09-2026):** un caso con OT ya creada
+seguía apareciendo como "te espera" cada vez que llegaba un mensaje nuevo del
+mismo cliente, porque `sincronizarCasos` no sabía que ya había pasado por una
+persona. Se agregó `yaConvertido` (si el caso tiene `orden_id`, no se toca ni
+la alerta ni el estado desde la sincronización — de ahí en adelante esos
+campos son responsabilidad de la app, no de la IA).
+
 ### Cómo se corrige a PAZ: la tabla `paz_aprendizajes` (15-09-2026)
 
 **Antes de tocar el prompt, mirar acá.** El prompt (`nexa_config.prompt`) es el

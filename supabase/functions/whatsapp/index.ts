@@ -373,7 +373,7 @@ async function procesarMensaje(msj: any) {
 // anterior — que es exactamente lo que pasaba antes.
 async function sincronizarCasos(conversacion_id: number, telefono: string, casos: any[]) {
   const { data: existentes } = await admin.from("casos")
-    .select("id,orden_en_conversacion,estado_caso,requiere_respuesta_humana")
+    .select("id,orden_en_conversacion,estado_caso,requiere_respuesta_humana,orden_id")
     .eq("conversacion_id", conversacion_id);
   const porOrden = new Map((existentes ?? []).map((c) => [c.orden_en_conversacion, c]));
 
@@ -383,6 +383,11 @@ async function sincronizarCasos(conversacion_id: number, telefono: string, casos
     const c = casos[i] ?? {};
     const orden = i + 1;
     const previo: any = porOrden.get(orden);
+    // Un caso con OT ya pasó por una persona. Si sigue conversándose
+    // (el cliente pregunta algo más sobre el mismo camión), PAZ actualiza
+    // los datos pero no reabre la alerta ni retrocede el estado — eso
+    // pasó de verdad: una OT ya creada volvía a aparecer como "te espera".
+    const yaConvertido = !!previo?.orden_id;
 
     const campos: Record<string, unknown> = {
       telefono_whatsapp: telefono,
@@ -406,7 +411,7 @@ async function sincronizarCasos(conversacion_id: number, telefono: string, casos
     // La alerta se levanta sola, pero NO se baja sola: si una persona
     // ya la atendió, que la IA cambie de opinión no debe hacerla
     // reaparecer. La baja quien responde, desde la app.
-    if (c.requiere_humano && !previo?.requiere_respuesta_humana) {
+    if (c.requiere_humano && !previo?.requiere_respuesta_humana && !yaConvertido) {
       campos.requiere_respuesta_humana = true;
       campos.motivo_alerta = c.motivo_alerta ?? "El cliente espera una respuesta del equipo.";
       campos.alerta_creada_en = new Date().toISOString();
@@ -414,7 +419,7 @@ async function sincronizarCasos(conversacion_id: number, telefono: string, casos
 
     // Un caso con lo mínimo ya sirve para que alguien lo mire.
     const listo = c.sintoma && (c.patente || c.vehiculo) && c.ubicacion;
-    if (listo && previo?.estado_caso === "recopilando_datos") {
+    if (listo && previo?.estado_caso === "recopilando_datos" && !yaConvertido) {
       campos.estado_caso = "listo_para_revision";
     }
 
