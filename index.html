@@ -893,13 +893,23 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 
       <div class="seccion">
         <div class="campo">
-          <label for="entTexto">Pega una conversación, o escribe una corrección</label>
-          <textarea id="entTexto" style="min-height:220px"
-            placeholder="Pega acá una conversación de WhatsApp que haya salido bien, o escribe derecho lo que PAZ debería hacer distinto."></textarea>
+          <label for="entCasoSel">Cargar la conversación completa de un caso</label>
+          <select id="entCasoSel"><option value="">Elige un caso…</option></select>
           <div class="pista">
-            PAZ saca los criterios de ahí. Tú decides cuáles se quedan.
-            Puedes pegar varias veces seguidas: se va agregando, no se reemplaza.
+            WhatsApp del celular solo deja copiar un mensaje a la vez, así que
+            no sirve para pegar una conversación completa. Si el caso ya
+            pasó por el número de prueba, está guardado — lo trae directo
+            de la base, completo, sin copiar nada del teléfono.
           </div>
+        </div>
+        <button class="btn claro" id="btnEntCargarCaso" type="button">Cargar esa conversación</button>
+
+        <div style="height:14px"></div>
+
+        <div class="campo">
+          <label for="entTexto">O pega texto a mano (una corrección escrita, una conversación de otro medio)</label>
+          <textarea id="entTexto" style="min-height:220px"
+            placeholder="Escribe derecho lo que PAZ debería hacer distinto, o pega texto que no venga de un caso ya guardado."></textarea>
           <div class="pista" id="entContador"></div>
         </div>
         <button class="btn" id="btnSacarCriterios">Sacar criterios</button>
@@ -3356,6 +3366,52 @@ $("btnEntrenar").onclick = () => {
   pintarContadorEnt();
   ver("vEntrenar");
   cargarAprendizajes();
+  cargarCasosParaEntrenar();
+};
+
+// El WhatsApp del celular solo deja copiar un mensaje a la vez desde el
+// selector múltiple — no alcanza para pegar una conversación completa.
+// Como el caso ya quedó guardado con cada mensaje real, se trae directo
+// de la base: mismo dato, sin depender del portapapeles del teléfono.
+async function cargarCasosParaEntrenar() {
+  const sel = $("entCasoSel");
+  sel.innerHTML = '<option value="">Elige un caso…</option>';
+  const { data } = await db.from("casos")
+    .select("id,conversacion_id,numero_caso,cliente_nombre,patente,creado_en")
+    .order("creado_en", { ascending: false })
+    .limit(30);
+  (data ?? []).forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c.id;
+    const quien = [c.cliente_nombre, c.patente].filter(Boolean).join(" · ") || "sin datos aún";
+    const fecha = c.creado_en ? new Date(c.creado_en).toLocaleDateString("es-CL") : "";
+    opt.textContent = `${c.numero_caso} — ${quien} (${fecha})`;
+    opt.dataset.conversacionId = c.conversacion_id;
+    sel.appendChild(opt);
+  });
+}
+
+$("btnEntCargarCaso").onclick = async () => {
+  msg("entError", "");
+  const sel = $("entCasoSel");
+  const opt = sel.selectedOptions[0];
+  if (!sel.value) return msg("entError", "Elige primero un caso de la lista.");
+
+  $("btnEntCargarCaso").disabled = true;
+  try {
+    const { data } = await db.from("nexa_mensajes")
+      .select("rol,contenido")
+      .eq("conversacion_id", opt.dataset.conversacionId)
+      .order("creado_en");
+    const transcripcion = (data ?? [])
+      .map(m => `${m.rol === "user" ? "Cliente" : "PAZ"}: ${m.contenido}`).join("\n");
+    if (!transcripcion) return msg("entError", "Ese caso todavía no tiene mensajes.");
+    const previo = $("entTexto").value.trim();
+    $("entTexto").value = previo ? `${previo}\n\n---\n\n${transcripcion}` : transcripcion;
+    pintarContadorEnt();
+  } finally {
+    $("btnEntCargarCaso").disabled = false;
+  }
 };
 $("btnEntVolver").onclick = () => { ver("vNexa"); mostrarInicioNexa(); };
 
