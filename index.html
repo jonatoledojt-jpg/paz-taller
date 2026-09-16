@@ -316,6 +316,10 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <button id="btnSalir">Salir</button>
     </div>
   </header>
+  <div id="avisoActualizacion" class="oculto" style="position:sticky;top:0;z-index:19;background:var(--marca);color:#14181C;padding:10px 16px;text-align:center;font-size:14px;font-weight:500">
+    Hay una versión nueva de la app.
+    <button type="button" id="btnActualizarApp" style="margin-left:8px;background:#14181C;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:13px">Actualizar</button>
+  </div>
   <main id="main">
 
     <!-- Tablero (Terreno / Laboratorio / Agenda) -->
@@ -3894,7 +3898,25 @@ function comprimir(file) {
 
 // ---------- Arranque ----------
 db.auth.getSession().then(({ data }) => { if (data.session) iniciar(); });
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+// La app se queda abierta horas sin recargar -- sin esto, un cambio ya
+// publicado no se nota hasta que alguien cierre la app del todo a mano
+// (pasó varias veces el 16-09: código ya subido, pantalla vieja igual).
+// Revisa cada vez que vuelve a primer plano, que es cuando de verdad
+// importa que esté al día, y avisa en vez de quedarse desactualizada
+// en silencio -- no recarga sola para no perder algo a medio escribir.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").then(reg => {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reg.update().catch(() => {});
+    });
+  }).catch(() => {});
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    $("avisoActualizacion").classList.remove("oculto");
+  });
+}
+$("btnActualizarApp").onclick = () => location.reload();
 </script>
 </body>
 </html>
