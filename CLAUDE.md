@@ -72,11 +72,13 @@ sw.js                   service worker
 19b-rol-agente-rpc.sql       las ocho funciones paz_* que PAZ usa para escribir
 19c-rol-agente-lectura.sql   permisos de lectura del rol agente
 19d-rol-agente-rpc-extra.sql tres RPC más para los remates de sincronizarCasos
+20-modo-aprendizaje.sql      casos.modo, evaluación positivo/negativo, descartar
+20b-fix-mi-rol-null.sql      corrige NULL en mi_rol() que se saltaba el guardia de dueño
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 ```
 
-**De la 01 a la 19d están todas aplicadas en la base real** (verificado el
+**De la 01 a la 20b están todas aplicadas en la base real** (verificado el
 16-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
 en este documento: preguntarle a la base.
 
@@ -762,6 +764,38 @@ de llegar a la función); el riesgo que este cambio cierra es específicamente
 el de PAZ actuando **sola**, sin nadie en el medio, que es lo que pasa en
 `whatsapp/index.ts`.
 
+### Fuga de seguridad real encontrada y corregida (16-09-2026): `mi_rol() <> 'dueno'`
+
+Probando `paz_descartar_caso` recién creada, una llamada **sin ninguna
+sesión** — solo con la anon key, que es pública y está en el `index.html` —
+logró descartar un caso real. La causa: `mi_rol()` devuelve `NULL` cuando no
+hay sesión, y en SQL `NULL <> 'dueno'` es `NULL`, no verdadero. Un
+`if NULL then` de PL/pgSQL **no entra al bloque** — la excepción nunca se
+lanzaba, y la llamada seguía de largo como si el guardia no existiera.
+
+Se buscó el mismo patrón en todo el proyecto y apareció **dos veces más, en
+`11-gastos.sql`, de antes de esta sesión** — `resumen_rentabilidad` y
+`rentabilidad_ot`. Se probó en vivo: una llamada anónima devolvió el
+resumen financiero completo (hoy en $0 porque no hay datos reales
+todavía, pero la fuga era real y llevaba tiempo expuesta).
+
+**Corregido en `20b-fix-mi-rol-null.sql`** cambiando `mi_rol() <> 'dueno'`
+por `coalesce(mi_rol()::text, '') <> 'dueno'` en las tres funciones — así
+`NULL` se trata como cadena vacía, que sí es distinta de `'dueno'`, y el
+guardia funciona de verdad. El resto de cada función se releyó con
+`pg_get_functiondef` directo desde la base antes de tocarla, para no
+reconstruir de memoria y arriesgar una regresión.
+
+**La lección que vale la pena anotar para cualquier función nueva:** las
+políticas RLS con `using (mi_rol() in (...))` son seguras solas —
+Postgres trata una condición `NULL` en RLS como "esta fila no se ve", falla
+**cerrado**. Pero un `IF` de PL/pgSQL con una comparación que puede dar
+`NULL` falla **abierto** — no lanza la excepción, sigue de largo. Si algún
+día se escribe una función `security definer` nueva con un guardia manual,
+usar `paz_verificar_agente()` como modelo (usa `not exists(...)`, que es
+seguro ante `NULL` por construcción) o envolver la comparación en
+`coalesce(...)`, nunca comparar `mi_rol()` pelado con `<>` o `=`.
+
 **Qué faltó a propósito**, siguiendo el mismo criterio de no sobre-construir:
 plantillas para fuera de la ventana de 24 horas, push notifications reales, y
 un job programado para avisar cuando un caso lleva mucho tiempo sin que nadie
@@ -993,6 +1027,70 @@ Por eso la ficha tiene `atencion` y `sistema` además de los datos del cliente.
 Nexa preguntó de a un dato a la vez, no tomó el código de falla como
 diagnóstico, y la ficha se llenó sola dejando vacío solo lo que el cliente no
 dijo. El modelo `gpt-5.5` responde bien.
+
+## Modo aprendizaje (16-09-2026)
+
+Un mes de entrenamiento antes de soltar a PAZ con clientes de verdad. El
+dueño conversa con ella —por el número de prueba de WhatsApp, ya aislado de
+clientes reales porque solo hablan los teléfonos autorizados— y evalúa cada
+caso. Lo que aprueba se vuelve un aprendizaje permanente en la misma tabla
+de siempre, `paz_aprendizajes`; no se creó una tabla nueva.
+
+**`casos.modo`** (`aprendizaje` / `produccion`) se fija al nacer el caso,
+según `nexa_config.modo_casos_defecto` (hoy: `aprendizaje`). **Nunca cambia
+solo** — si algún día hay que pasar un caso de entrenamiento a producción,
+lo hace una persona a mano. Los 4 casos que existían antes de este cambio
+quedaron en `aprendizaje` por el valor por defecto de la columna.
+
+**Un caso de aprendizaje no puede tocar nada real:**
+- No crea OT: el botón "Crear la OT desde este caso" se oculta y se
+  reemplaza por un aviso.
+- No agenda visita real: sin OT no hay `fecha_agendada` que tocar.
+- No manda WhatsApp real: `enviar_respuesta` en `nexa/index.ts` lo bloquea
+  del lado del servidor si `caso.modo === 'aprendizaje'` — no es solo un
+  botón escondido en pantalla.
+- El widget viejo "Casos por agendar" de la pestaña Agenda (que lee
+  `nexa_conversaciones.ficha`, la capa de compatibilidad de antes de que
+  existieran los casos) se corrigió para excluir conversaciones que no
+  tengan al menos un caso `produccion` — sin eso, un caso de entrenamiento
+  podía aparecer ahí como si fuera un cliente real esperando agenda.
+
+**Bandeja con pestañas Producción / Entrenamiento**, visible la segunda
+solo para el dueño. El badge del encabezado y el contador de "Te esperan"
+cuentan **solo casos de producción** — una alerta de una conversación de
+prueba no es una urgencia real y mezclarla le quitaría sentido al aviso.
+
+**Tres acciones por caso de entrenamiento** (dueño únicamente, la política
+de `casos` ya lo permitía escribir; `paz_descartar_caso` lo exige explícito):
+
+- **Positivo**: pide un título corto, guarda el intercambio completo (no
+  solo la última respuesta) en `paz_aprendizajes` como `respuesta_aprobada`,
+  vinculado al caso vía `caso_id_origen`. Es un ejemplo de buen criterio,
+  no una frase para que PAZ repita literal.
+- **Negativo**: pide la regla correctiva, la guarda como `correccion` con
+  la transcripción del error. No se borra nunca — queda para comparar si
+  PAZ vuelve a fallar parecido.
+- **Descartar** (`paz_descartar_caso`): para pruebas sin valor. No es
+  borrado físico — sale de toda vista, deja de ser contexto para PAZ, pero
+  se puede auditar después.
+
+**Reintentar este caso**: después de guardar una corrección, se puede volver
+a generar la respuesta al mismo mensaje del cliente, con la regla ya activa
+(los aprendizajes se leen frescos en cada llamada, así que no hace falta
+nada especial para que la tome en cuenta). Muestra mensaje del cliente,
+respuesta original y respuesta nueva, lado a lado — para ver si sirvió sin
+esperar a que el caso se repita solo. No reemplaza la conversación real; es
+una comparación, no se guarda como mensaje.
+
+**"Enseñarle a PAZ" ahora tiene filtro por tipo** (criterio / ejemplo /
+aprobado / corrección) y buscador por palabra, y cada entrada que viene de
+un caso evaluado trae un enlace "Ver caso" a su origen.
+
+**Qué falta a propósito:** el orden explícito "primero correcciones, luego
+criterios, luego aprobados" que describía el plan no se implementó como tal
+— hoy todos los aprendizajes activos se leen juntos, sin distinguir tipo al
+armar el bloque para la IA. Es una mejora posible, no crítica: el efecto
+práctico (la IA los ve todos) es el mismo.
 
 ## Contexto de negocio que importa
 
