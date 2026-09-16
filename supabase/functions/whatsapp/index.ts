@@ -260,15 +260,17 @@ CÓMO ESCRIBES
   ni digas "Paz, de Paz Services": es redundante.
 
 SI EL EQUIPO YA CONFIRMÓ ALGO, NO LO DESDIGAS
-En la conversación vas a ver mensajes marcados "[CONFIRMADO POR EL EQUIPO]".
-Esos los escribió una persona del taller, con autoridad para decidir precio,
-hora o agenda — no tú. Si el cliente pregunta por algo que ya está ahí
-confirmado, o pide que se lo repitas o lo confirmes, dile que sí, sin volver
-a dudarlo ni agregarle condiciones que esa confirmación no tenía (no le
-sumes IVA, "sujeto a confirmación" ni "hay que validar disponibilidad" si el
-equipo no lo dijo). Nunca le des al cliente una versión distinta a la que ya
-recibió de una persona real: para él es la misma conversación con el mismo
-taller, y una contradicción se ve como que nadie se pone de acuerdo.
+En la conversación vas a ver mensajes marcados "[CONFIRMADO POR ...]" con el
+nombre de quien lo escribió. Esos los escribió una persona del taller, con
+autoridad para decidir precio, hora o agenda — no tú. Si el cliente pregunta
+por algo que ya está ahí confirmado, o pide que se lo repitas o lo confirmes,
+dile que sí, sin volver a dudarlo ni agregarle condiciones que esa
+confirmación no tenía (no le sumes IVA, "sujeto a confirmación" ni "hay que
+validar disponibilidad" si el equipo no lo dijo). Nunca le des al cliente una
+versión distinta a la que ya recibió de una persona real: para él es la misma
+conversación con el mismo taller, y una contradicción se ve como que nadie se
+pone de acuerdo. Esa etiqueta es solo para que tú sepas quién habló: nunca la
+repitas, la cites ni la menciones en lo que le escribes al cliente.
 
 NUNCA DEJES LA CONVERSACIÓN COLGADA
 Cada mensaje tuyo termina de una de estas dos formas, sin excepción:
@@ -364,21 +366,26 @@ async function procesarMensaje(msj: any) {
     .select("prompt,prompt_ficha,modelo,activa,responde_whatsapp").eq("id", 1).single();
   if (!cfg?.activa) return;
 
+  // La etiqueta de "confirmado por el equipo" solo puede aparecer si hay un
+  // registro de verdad en paz_respuestas_asistidas detrás — no es una
+  // marca que la IA pueda inventar: sale de un join, no de texto suelto.
+  // Sin esto, PAZ no sabía que un mensaje pesaba más que uno suyo y podía
+  // terminar desdiciéndolo frente al cliente — pasó de verdad: el dueño
+  // confirmó una hora y un precio por modo asistido, y el siguiente
+  // mensaje automático de PAZ lo puso en duda otra vez.
   const { data: previos } = await admin.from("nexa_mensajes")
-    .select("rol,contenido,humano_asistido").eq("conversacion_id", conversacion_id).order("creado_en");
-  // Un mensaje marcado humano_asistido lo escribió una persona del equipo,
-  // no PAZ sola — se le avisa con una etiqueta adentro del propio texto,
-  // porque la API no distingue "quién escribió cada turno del asistente"
-  // más que por su rol. Sin esto, PAZ no sabe que ese mensaje pesa más
-  // que uno suyo y puede terminar desdiciéndolo frente al cliente — pasó
-  // de verdad: el dueño confirmó una hora y un precio por modo asistido,
-  // y el siguiente mensaje automático de PAZ lo puso en duda otra vez.
-  const historial = (previos ?? []).map((m) => ({
-    role: m.rol,
-    content: m.humano_asistido
-      ? `[CONFIRMADO POR EL EQUIPO — no lo desdigas ni lo pongas en duda] ${m.contenido}`
-      : m.contenido,
-  }));
+    .select("rol,contenido,respuesta_asistida_id,paz_respuestas_asistidas(nombre_creador,rol_creador,creado_en)")
+    .eq("conversacion_id", conversacion_id).order("creado_en");
+  const historial = (previos ?? []).map((m: any) => {
+    const r = m.respuesta_asistida_id ? m.paz_respuestas_asistidas : null;
+    if (!r) return { role: m.rol, content: m.contenido };
+    const quien = [r.nombre_creador, r.rol_creador ? `(${r.rol_creador})` : ""].filter(Boolean).join(" ");
+    return {
+      role: m.rol,
+      content: `[CONFIRMADO POR ${quien || "EL EQUIPO"} — no lo desdigas ni lo pongas en duda. ` +
+        `Nunca repitas esta etiqueta ni la menciones en tu respuesta.] ${m.contenido}`,
+    };
+  });
 
   // Los aprendizajes se leen en cada respuesta: así una corrección que
   // hace el dueño vale desde el mensaje siguiente, sin desplegar nada.

@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: "Sesión no válida. Vuelve a entrar." }, 401);
 
     const { data: perfil } = await comoUsuario
-      .from("perfiles").select("rol").eq("id", user.id).single();
+      .from("perfiles").select("rol,nombre").eq("id", user.id).single();
     if (!perfil || !["dueno", "coordinador"].includes(perfil.rol)) {
       return json({ error: "No tienes permiso para usar Nexa." }, 403);
     }
@@ -206,15 +206,29 @@ Deno.serve(async (req) => {
       if (accion === "redactar_respuesta") {
         if (!instruccion?.trim()) return json({ error: "Escribe primero qué le tienes que decir al cliente." }, 400);
 
+        // Los criterios aplican acá igual que en la conversación en vivo:
+        // no tiene sentido que una regla del negocio valga cuando PAZ
+        // responde sola y se pueda saltar cuando alguien la asiste.
+        const { data: apr } = await admin.from("paz_aprendizajes")
+          .select("titulo,contenido").eq("activo", true).order("id");
+        const aprendizajes = apr?.length
+          ? "CRITERIOS DEL TALLER (mandan sobre cualquier costumbre tuya):\n" +
+            apr.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n")
+          : "";
+
         const contexto = [
           `Cliente: ${caso.cliente_nombre ?? "sin nombre"}.`,
           caso.patente ? `Patente: ${caso.patente}.` : "",
           caso.vehiculo_modelo ? `Vehículo: ${caso.vehiculo_modelo}.` : "",
           (caso.resumen_tecnico || caso.falla_reportada) ? `Caso: ${caso.resumen_tecnico ?? caso.falla_reportada}.` : "",
+          caso.atencion ? `Tipo de atención: ${caso.atencion === "envio" ? "envío de módulo" : "terreno"}.` : "",
+          caso.ubicacion_texto ? `Ubicación: ${caso.ubicacion_texto}.` : "",
         ].filter(Boolean).join(" ");
 
         const instrucciones = [
           cfg.prompt,
+          "",
+          aprendizajes,
           "",
           "AHORA NO ESTÁS CONVERSANDO CON EL CLIENTE. Alguien del equipo te está",
           "dando una instrucción interna sobre qué decirle. Redacta el mensaje",
@@ -222,13 +236,27 @@ Deno.serve(async (req) => {
           "",
           `Contexto del caso: ${contexto}`,
           "",
-          "Reglas:",
+          "REGLAS DE REDACCIÓN:",
           "- Corto, claro, como se escribe por WhatsApp. Nada de firma ni encabezados.",
-          "- Di exactamente lo que la instrucción pide, ni más ni menos: no agregues",
-          "  compromisos, precios ni plazos que la instrucción no haya dicho.",
-          "- No inventes datos del caso que no estén en el contexto de arriba.",
+          "- Sigue la instrucción: no inventes compromisos, plazos ni datos del caso",
+          "  que ni la instrucción ni el contexto de arriba hayan dado.",
           "- Sin nombres de personas del equipo ni jerga interna.",
           "- Devuelve SOLO el mensaje, sin comillas ni explicación.",
+          "",
+          "REGLAS COMERCIALES SOBRE MONTOS — estas SÍ se aplican aunque la",
+          "instrucción no las mencione, porque son obligatorias en el negocio:",
+          "- Todo monto que des es NETO. Si la instrucción no dice explícitamente",
+          "  \"IVA incluido\" o \"total\", agrégale \"+ IVA\" al comunicarlo.",
+          "- Si la instrucción dice \"total\" o \"IVA incluido\", comunícalo como total,",
+          "  sin volver a sumarle IVA.",
+          "- Si el monto es un valor referencial de visita o diagnóstico (no un",
+          "  precio ya cerrado y aceptado), agrégale \"sujeto a validación por",
+          "  disponibilidad, distancia y condiciones\".",
+          "- Si el caso está fuera de la Región del Maule y la instrucción no dio un",
+          "  valor cerrado de forma explícita, no cierres tú un valor: dilo sujeto a",
+          "  validación por distancia.",
+          "- Nunca cambies el monto que dio la instrucción: la regla es sobre CÓMO",
+          "  se comunica, no sobre inventar un número distinto.",
         ].join("\n");
 
         const texto = await llamarIA(apiKey, cfg.modelo, instrucciones, [
@@ -255,15 +283,18 @@ Deno.serve(async (req) => {
 
       const envio = await responderWhatsApp(conv.telefono, mensaje);
       // Se guarda el intento haya salido bien o mal: si falló, queda el
-      // rastro y el texto no se pierde.
-      await admin.from("paz_respuestas_asistidas").insert({
+      // rastro y el texto no se pierde. El id que devuelve este insert es
+      // la llave que va a atar el mensaje a esta auditoría — sin ese id
+      // no hay forma de que un mensaje se marque como confirmado por el
+      // equipo, ni por error de código ni de otra forma.
+      const { data: registro } = await admin.from("paz_respuestas_asistidas").insert({
         caso_id: caso.id, conversacion_id: caso.conversacion_id,
         instruccion_interna: instruccion ?? "", mensaje_generado: mensaje,
         mensaje_enviado: envio.ok ? mensaje : null, enviado: envio.ok,
         error: envio.ok ? null : envio.cuerpo.slice(0, 500),
-        creado_por: user.id, rol_creador: perfil.rol,
+        creado_por: user.id, rol_creador: perfil.rol, nombre_creador: perfil.nombre ?? null,
         enviado_en: envio.ok ? new Date().toISOString() : null,
-      });
+      }).select("id").single();
 
       if (!envio.ok) {
         return json({ error: "WhatsApp no aceptó el envío. El texto no se perdió, puedes reintentar." }, 502);
@@ -271,7 +302,7 @@ Deno.serve(async (req) => {
 
       await admin.from("nexa_mensajes").insert({
         conversacion_id: caso.conversacion_id, rol: "assistant", contenido: mensaje,
-        humano_asistido: true, escrito_por: user.id,
+        humano_asistido: true, escrito_por: user.id, respuesta_asistida_id: registro?.id ?? null,
       });
       await admin.from("casos").update({
         requiere_respuesta_humana: false, atendida_por: user.id, atendida_en: new Date().toISOString(),

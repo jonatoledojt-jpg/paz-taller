@@ -782,11 +782,38 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
             <label for="casoPreview">Vista previa — revísala antes de enviar</label>
             <textarea id="casoPreview" style="min-height:96px"></textarea>
           </div>
-          <div class="reordenar">
+
+          <!-- Confirmado con el cliente pero invisible para el equipo es
+               justo el error que no queremos repetir: si esta respuesta
+               fija una fecha, que quede también en la Agenda, no solo
+               en el chat. -->
+          <button type="button" class="btn claro" id="btnCasoToggleFecha">+ Esta respuesta confirma una fecha de visita</button>
+          <div id="casoFechaCaja" class="oculto" style="margin-top:12px">
+            <div class="campo">
+              <label for="casoFecha">Fecha confirmada</label>
+              <input id="casoFecha" type="date">
+            </div>
+            <div class="campo">
+              <label>Franja</label>
+              <div class="opciones" id="selFranjaCaso">
+                <button type="button" data-v="manana" aria-pressed="true">Mañana</button>
+                <button type="button" data-v="tarde" aria-pressed="false">Tarde</button>
+                <button type="button" data-v="todo_el_dia" aria-pressed="false">Todo el día</button>
+              </div>
+            </div>
+            <div class="pista" id="casoFechaAviso"></div>
+          </div>
+
+          <div class="reordenar" style="margin-top:12px">
             <button type="button" id="btnCancelarRespuesta">Cancelar</button>
             <button type="button" id="btnEnviarRespuesta">Enviar por WhatsApp</button>
           </div>
         </div>
+      </div>
+
+      <div class="oculto" id="casoHistorialCaja">
+        <span class="rotulo">Quién confirmó qué</span>
+        <div id="casoHistorial"></div>
       </div>
 
       <button class="btn" id="btnCasoOT">Crear la OT desde este caso</button>
@@ -1195,6 +1222,7 @@ grupoOpciones("selOrigen");
 grupoOpciones("selTipoTrabajo");
 grupoOpciones("selFranja");
 grupoOpciones("selFranjaDet");
+grupoOpciones("selFranjaCaso");
 const elegido = cont => $(cont).querySelector('[aria-pressed="true"]')?.dataset.v ?? null;
 
 $("selTipoTrabajo").querySelectorAll("button").forEach(b => {
@@ -2899,9 +2927,46 @@ async function pintarCaso() {
   // para no arrastrar el borrador de un caso al siguiente.
   $("casoInstruccion").value = "";
   $("casoPreviewCaja").classList.add("oculto");
+  $("casoFechaCaja").classList.add("oculto");
+  $("btnCasoToggleFecha").textContent = "+ Esta respuesta confirma una fecha de visita";
+  $("casoFecha").value = "";
+  $("selFranjaCaso").querySelector('[data-v="manana"]').click();
   msg("casoError", "");
   await pintarVentanaCaso();
+  await pintarHistorialCaso();
 }
+
+// Quién confirmó qué, con nombre, rol y fecha — la trazabilidad que pidió
+// Jonatan. Se lee de paz_respuestas_asistidas, que es donde queda el
+// registro real; no se reconstruye de la conversación.
+async function pintarHistorialCaso() {
+  const { data } = await db.from("paz_respuestas_asistidas")
+    .select("instruccion_interna,mensaje_enviado,enviado,error,nombre_creador,rol_creador,creado_en")
+    .eq("caso_id", casoActual.id).order("creado_en", { ascending: false });
+
+  $("casoHistorialCaja").classList.toggle("oculto", !data?.length);
+  if (!data?.length) return;
+
+  $("casoHistorial").innerHTML = data.map(r => `
+    <div class="seccion">
+      <div class="crit-tit">${escapar(r.nombre_creador ?? "—")}${r.rol_creador ? ` <span style="font-weight:400;color:var(--humo)">(${r.rol_creador})</span>` : ""}</div>
+      <div class="pista" style="margin-bottom:8px">${fechaCL(r.creado_en)} · ${r.enviado ? "enviado" : "no se pudo enviar"}</div>
+      <div class="crit-txt"><b>Instrucción:</b> ${escapar(r.instruccion_interna)}</div>
+      ${r.mensaje_enviado ? `<div class="crit-txt" style="margin-top:6px"><b>Mensaje:</b> ${escapar(r.mensaje_enviado)}</div>` : ""}
+      ${r.error ? `<div class="pista mal" style="margin-top:6px">${escapar(r.error)}</div>` : ""}
+    </div>`).join("");
+}
+
+$("btnCasoToggleFecha").onclick = () => {
+  const oculto = $("casoFechaCaja").classList.toggle("oculto");
+  $("btnCasoToggleFecha").textContent = oculto
+    ? "+ Esta respuesta confirma una fecha de visita"
+    : "− No confirma una fecha";
+  $("casoFechaAviso").textContent = casoActual?.orden_id
+    ? ""
+    : "Este caso todavía no tiene una OT creada: la fecha no va a aparecer en la Agenda hasta que la crees.";
+  $("casoFechaAviso").className = casoActual?.orden_id ? "pista" : "pista mal";
+};
 
 // La ventana de 24 horas: cuánto queda para poder responderle texto
 // libre y gratis al cliente. Se calcula acá mismo, mirando el último
@@ -2972,12 +3037,37 @@ $("btnEnviarRespuesta").onclick = async () => {
       accion: "enviar_respuesta", caso_id: casoActual.id,
       instruccion: $("casoInstruccion").value.trim(), mensaje,
     });
+
+    // Confirmado con el cliente pero invisible para el equipo era
+    // justo el hueco: si esta respuesta fijó una fecha, se refleja acá
+    // mismo en la OT — nunca se crea una OT sola, solo se actualiza
+    // una que ya existe y que una persona ya vinculó a este caso.
+    let avisoAgenda = "";
+    const confirmaFecha = !$("casoFechaCaja").classList.contains("oculto");
+    const fecha = $("casoFecha").value;
+    if (confirmaFecha && fecha) {
+      if (casoActual.orden_id) {
+        const { error: errAgenda } = await db.from("ordenes").update({
+          fecha_agendada: fecha, franja: elegido("selFranjaCaso") || "manana",
+        }).eq("id", casoActual.orden_id);
+        avisoAgenda = errAgenda
+          ? " La agenda no se pudo actualizar: revísala a mano."
+          : " La Agenda quedó al día con esta fecha.";
+      } else {
+        avisoAgenda = " Ojo: este caso no tiene OT, así que la fecha no quedó en la Agenda.";
+      }
+    }
+
     // El texto solo se limpia si el envío salió bien: si falla, se queda
     // ahí para reintentar sin volver a escribirlo.
     $("casoInstruccion").value = "";
     $("casoPreviewCaja").classList.add("oculto");
     await abrirCaso(casoActual.id);
     actualizarBadgeCasos();
+    if (avisoAgenda) {
+      const bien = avisoAgenda.includes("quedó al día");
+      msg("casoError", "Mensaje enviado." + avisoAgenda, bien);
+    }
   } catch (e) {
     msg("casoError", e.message || "No se pudo enviar. El texto sigue arriba, puedes reintentar.");
   } finally {
