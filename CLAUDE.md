@@ -494,6 +494,69 @@ la patente puede llegar tarde o no llegar nunca.
 **Falta:** las conversaciones que nacen dentro de la app todavía no generan
 casos — se listan aparte en la bandeja para que no queden invisibles.
 
+### Modo asistido y alertas en vivo (15-09-2026)
+
+**Quién decide qué se le dice al cliente sigue siendo una persona.** PAZ
+recolecta datos sola, pero agenda, precio final, condiciones y compromisos
+los redacta a pedido: dueño o coordinador escriben una **instrucción
+interna** en el detalle del caso ("Dile que el jueves en la mañana tenemos
+disponibilidad"), PAZ la convierte en un mensaje breve y claro para el
+cliente, y recién con **Enviar por WhatsApp** sale — nunca antes de que
+alguien lo revise en la vista previa.
+
+Tres acciones nuevas en la Edge Function `nexa` (`redactar_respuesta`,
+`enviar_respuesta`, `marcar_atendido`), protegidas igual que el resto: exigen
+sesión de dueño o coordinador. El técnico nunca llega ni a la pantalla —
+`btnNexa` sigue oculto para él, no hace falta un cerrojo aparte.
+
+**La ventana de 24 horas de WhatsApp se respeta de verdad, no se ignora.**
+Si el cliente escribió hace menos de 24 horas, el texto libre es gratis; si
+no, WhatsApp solo deja plantillas aprobadas (no construidas todavía —
+necesitan medio de pago cargado en Meta, cosa que se saltó a propósito
+porque no hacía falta hasta ahora). La función comprueba la ventana antes de
+intentar el envío y explica el motivo si está cerrada, en vez de dejar que
+WhatsApp lo rechace en silencio. La app también la muestra en el detalle del
+caso ("quedan 17 h 42 min…"), calculada del lado del cliente para no gastar
+una llamada a la función solo por mirar el reloj.
+
+**Todo queda en `paz_respuestas_asistidas`**: la instrucción interna, quién
+la escribió y con qué rol, el mensaje que salió, si se envió, y el error si
+falló. Un envío fallido **no borra el texto**: la persona lo ve en pantalla y
+puede reintentar sin volver a escribirlo. Los mensajes que salen por este
+camino quedan marcados en `nexa_mensajes` (`humano_asistido`, `escrito_por`)
+para distinguirlos de lo que PAZ contesta sola — eso importa el día que se
+quiera medir qué tanto está resolviendo sin ayuda.
+
+**Nunca crea OT.** Enviar un mensaje asistido apaga la alerta del caso, nada
+más. La OT sigue naciendo solo del botón "Crear la OT desde este caso", con
+revisión humana.
+
+**Alertas, por qué existen:** cuando el cliente pregunta algo que PAZ no
+puede decidir sola (disponibilidad, precio final, agendar, un reclamo por
+demora, si ya van en camino), lo declara ella misma en la misma pasada que
+arma la ficha del caso — sin llamada extra, sin costo adicional. El caso
+queda `requiere_respuesta_humana = true` con un `motivo_alerta` en una línea.
+
+**Cómo se entera la app, sin refrescar:** Realtime de Supabase sobre la
+tabla `casos` (con `replica identity full`, para que el evento de UPDATE
+traiga también el valor anterior). La app compara viejo contra nuevo —
+**solo avisa cuando pasa de false a true**, nunca en cada mensaje que llega
+después mientras el caso ya estaba esperando. Sin esa comparación, cada
+mensaje del cliente habría hecho sonar el timbre de nuevo.
+
+El aviso es un timbre corto por Web Audio (sin archivo que cargar) más
+vibración si el celular la soporta, y un número en el botón PAZ del
+encabezado. **Esto solo funciona con la app abierta.** Push de verdad —que
+llegue con la pantalla apagada— es la segunda etapa, deliberadamente no
+construida todavía: complejidad real (Service Worker con push subscription,
+servidor de notificaciones) que no vale la pena antes de que el número real
+de WhatsApp esté conectado.
+
+**Qué faltó a propósito**, siguiendo el mismo criterio de no sobre-construir:
+plantillas para fuera de la ventana de 24 horas, push notifications reales, y
+un job programado para avisar cuando un caso lleva mucho tiempo sin que nadie
+lo mire (hoy la alerta nace de la conversación, no del tiempo transcurrido).
+
 **Bug real encontrado y corregido (15-09-2026):** un caso con OT ya creada
 seguía apareciendo como "te espera" cada vez que llegaba un mensaje nuevo del
 mismo cliente, porque `sincronizarCasos` no sabía que ya había pasado por una
