@@ -552,6 +552,43 @@ construida todavía: complejidad real (Service Worker con push subscription,
 servidor de notificaciones) que no vale la pena antes de que el número real
 de WhatsApp esté conectado.
 
+### Dos errores reales encontrados en la primera prueba larga (15/16-09-2026)
+
+Jonatan probó una conversación larga simulando varios camiones del mismo
+teléfono, y aparecieron dos fallas de verdad — quedan acá porque el mismo
+patrón puede repetirse si se toca esta parte sin leerlo primero.
+
+**1. PAZ se desdecía a sí misma frente al cliente.** El dueño confirmó por
+modo asistido una hora y un precio ("el jueves a las 10:00, $150.000"). Diez
+segundos después, respondiendo sola, PAZ le dijo al cliente que no podía
+confirmar esa hora y le agregó IVA que nadie había mencionado. La causa: al
+armar el historial para la IA, un mensaje escrito por una persona y uno
+escrito por PAZ se veían exactamente igual — ningún dato distinguía cuál
+pesaba más. **Arreglado:** `procesarMensaje` ahora marca los mensajes con
+`humano_asistido = true` con una etiqueta dentro del propio texto
+(`[CONFIRMADO POR EL EQUIPO — no lo desdigas]`) antes de mandarlos a la IA, y
+`REGLAS_WHATSAPP` tiene una sección explícita: lo que el equipo ya confirmó
+no se pone en duda ni se le agregan condiciones nuevas — pero tampoco se
+convierte en "queda agendado", que sigue siendo solo de una persona.
+
+**2. PAZ separaba un caso en dos.** Un cliente mandó un módulo GS por
+Chilexpress, sacado de la patente PP1865 — un solo caso, y la tabla `casos`
+ya lo tenía bien unido: `"Módulo GS de PP1865… enviado a taller."` Pero al
+responder en vivo, PAZ vuelve a reconstruir el panorama desde el texto crudo
+del chat en cada turno, sin mirar esa tabla — y terminó preguntándole al
+cliente *"¿es el camión PP1865 o el módulo GS enviado?"*, como si fueran dos
+cosas para elegir. **Arreglado:** `contextoDelSistema` ahora consulta
+`casos` por `conversacion_id` y le pasa a la IA la lista ya resuelta, con la
+instrucción explícita de no volver a separar lo que el sistema ya unió. Esto
+importa sobre todo cuando un mismo teléfono tiene varios casos abiertos a la
+vez (una flota, por ejemplo) — mientras más casos mezclados en una
+conversación, más fácil que PAZ pierda el hilo sin este contexto.
+
+**Ninguno de los dos llegó a un cliente real** — la prueba fue con el propio
+Jonatan haciendo de cliente, en el número de prueba. Vale la pena repetir
+una conversación larga con varios casos antes de conectar el número real,
+para confirmar que estos dos arreglos sostienen bajo uso de verdad.
+
 **Qué faltó a propósito**, siguiendo el mismo criterio de no sobre-construir:
 plantillas para fuera de la ventana de 24 horas, push notifications reales, y
 un job programado para avisar cuando un caso lleva mucho tiempo sin que nadie

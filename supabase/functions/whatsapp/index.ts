@@ -163,8 +163,36 @@ function patentesEn(texto: string): string[] {
 
 // Arma lo que el sistema YA sabe, para que PAZ no lo pregunte de nuevo.
 // Es texto que se le pasa a la IA, no algo que se le diga al cliente.
-async function contextoDelSistema(telefono: string, historial: { content: string }[]) {
+async function contextoDelSistema(telefono: string, historial: { content: string }[], conversacion_id: number) {
   const lineas: string[] = [];
+
+  // Los CASOS ya están separados y resueltos por la tabla `casos` — un
+  // vehículo enviado por encomienda es UN caso, aunque en el chat se haya
+  // hablado del vehículo y del módulo por separado. Sin esto, PAZ vuelve a
+  // reconstruir todo desde el texto crudo en cada respuesta y puede volver
+  // a separar lo que el sistema ya tenía unido: pasó de verdad, preguntó
+  // "¿es el camión PP1865 o el módulo GS enviado?" cuando son la misma cosa.
+  const { data: casos } = await admin.from("casos")
+    .select("orden_en_conversacion,patente,vehiculo_modelo,atencion,modulo,sistema,falla_reportada,resumen_tecnico")
+    .eq("conversacion_id", conversacion_id).order("orden_en_conversacion");
+  if (casos?.length) {
+    lineas.push(
+      "CASOS DE ESTA CONVERSACIÓN, ya identificados por el sistema. Cada uno es " +
+      "UNA sola cosa — si un caso es un módulo enviado de cierta patente, el " +
+      "módulo y la patente son EL MISMO caso, no dos para elegir:\n" +
+      casos.map((c: any, i: number) =>
+        `  ${i + 1}. Patente ${c.patente ?? "sin patente"}` +
+        (c.vehiculo_modelo ? ` (${c.vehiculo_modelo})` : "") +
+        ` — ${c.atencion === "envio" ? "módulo enviado al taller" : "atención en terreno"}` +
+        (c.modulo ? `, módulo ${c.modulo}` : "") +
+        (c.sistema ? `, sistema ${c.sistema}` : "") +
+        `: ${c.resumen_tecnico ?? c.falla_reportada ?? "sin resumen todavía"}`
+      ).join("\n") +
+      "\nSi el cliente pregunta algo sin decir a cuál se refiere, usa el hilo de " +
+      "los últimos mensajes para deducir cuál de ESTOS es. No le des una lista " +
+      "de opciones que mezcle un vehículo con su propio módulo.",
+    );
+  }
 
   const { data: cli } = await admin.from("clientes")
     .select("id,nombre,rut,ciudad").eq("telefono", telefono).limit(1);
@@ -230,6 +258,17 @@ CÓMO ESCRIBES
 - Te llamas Paz. Te presentas UNA sola vez, al inicio de una conversación nueva:
   "Hola, soy Paz. ¿En qué te puedo ayudar?". Después no repites tu nombre
   ni digas "Paz, de Paz Services": es redundante.
+
+SI EL EQUIPO YA CONFIRMÓ ALGO, NO LO DESDIGAS
+En la conversación vas a ver mensajes marcados "[CONFIRMADO POR EL EQUIPO]".
+Esos los escribió una persona del taller, con autoridad para decidir precio,
+hora o agenda — no tú. Si el cliente pregunta por algo que ya está ahí
+confirmado, o pide que se lo repitas o lo confirmes, dile que sí, sin volver
+a dudarlo ni agregarle condiciones que esa confirmación no tenía (no le
+sumes IVA, "sujeto a confirmación" ni "hay que validar disponibilidad" si el
+equipo no lo dijo). Nunca le des al cliente una versión distinta a la que ya
+recibió de una persona real: para él es la misma conversación con el mismo
+taller, y una contradicción se ve como que nadie se pone de acuerdo.
 
 NUNCA DEJES LA CONVERSACIÓN COLGADA
 Cada mensaje tuyo termina de una de estas dos formas, sin excepción:
@@ -326,8 +365,20 @@ async function procesarMensaje(msj: any) {
   if (!cfg?.activa) return;
 
   const { data: previos } = await admin.from("nexa_mensajes")
-    .select("rol,contenido").eq("conversacion_id", conversacion_id).order("creado_en");
-  const historial = (previos ?? []).map((m) => ({ role: m.rol, content: m.contenido }));
+    .select("rol,contenido,humano_asistido").eq("conversacion_id", conversacion_id).order("creado_en");
+  // Un mensaje marcado humano_asistido lo escribió una persona del equipo,
+  // no PAZ sola — se le avisa con una etiqueta adentro del propio texto,
+  // porque la API no distingue "quién escribió cada turno del asistente"
+  // más que por su rol. Sin esto, PAZ no sabe que ese mensaje pesa más
+  // que uno suyo y puede terminar desdiciéndolo frente al cliente — pasó
+  // de verdad: el dueño confirmó una hora y un precio por modo asistido,
+  // y el siguiente mensaje automático de PAZ lo puso en duda otra vez.
+  const historial = (previos ?? []).map((m) => ({
+    role: m.rol,
+    content: m.humano_asistido
+      ? `[CONFIRMADO POR EL EQUIPO — no lo desdigas ni lo pongas en duda] ${m.contenido}`
+      : m.contenido,
+  }));
 
   // Los aprendizajes se leen en cada respuesta: así una corrección que
   // hace el dueño vale desde el mensaje siguiente, sin desplegar nada.
@@ -338,7 +389,7 @@ async function procesarMensaje(msj: any) {
       apr.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n")
     : "";
 
-  const contexto = await contextoDelSistema(telefono, historial);
+  const contexto = await contextoDelSistema(telefono, historial, conversacion_id);
 
   if (cfg.responde_whatsapp) {
     const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, contexto]
