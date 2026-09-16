@@ -62,11 +62,22 @@ sw.js                   service worker
 10-cotizaciones-vigente.sql  anular cotizaciones + cotización vigente
 11-gastos.sql           gastos, costos fijos, rentabilidad, bucket privado
 12-nexa.sql             nexa_config, nexa_conversaciones, nexa_mensajes
-supabase/functions/nexa/index.ts   Edge Function de Nexa (llama a la IA)
+13-whatsapp.sql         prepara el canal WhatsApp (telefono, wa_id, interruptor de respuesta)
+14-wa-diagnostico.sql   tabla wa_log, para ver qué le llega al webhook y qué se rechaza
+15-paz-memoria.sql      paz_aprendizajes, nexa_archivos, bucket paz-adjuntos
+16-casos.sql            casos (un caso por vehículo, no por conversación)
+17-modo-asistido.sql    paz_respuestas_asistidas, marca humano_asistido en los mensajes
+18-trazabilidad.sql     nombre_creador, respuesta_asistida_id (enlace duro mensaje↔auditoría)
+19a-rol-agente-enum.sql     agrega 'agente' al enum de roles
+19b-rol-agente-rpc.sql       las ocho funciones paz_* que PAZ usa para escribir
+19c-rol-agente-lectura.sql   permisos de lectura del rol agente
+19d-rol-agente-rpc-extra.sql tres RPC más para los remates de sincronizarCasos
+supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
+supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 ```
 
-**De la 01 a la 12 están todas aplicadas en la base real** (verificado el
-14-09-2026 contra `information_schema`). Si alguna vez hay duda, no confiar
+**De la 01 a la 19d están todas aplicadas en la base real** (verificado el
+16-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
 en este documento: preguntarle a la base.
 
 `09-agenda.sql` (con tabla `visitas`) se reemplazó por `09-agenda-simple.sql`
@@ -669,6 +680,87 @@ Los cinco errores de esta tarde salieron de la misma prueba larga con varios
 camiones mezclados. Ninguno llegó a un cliente real. Vale la pena repetir
 una conversación así de larga, con cancelaciones y ráfagas de mensajes
 incluidas, antes de conectar el número de verdad.
+
+### Rol `agente`: PAZ ya no escribe con la llave maestra (16-09-2026)
+
+Hasta acá, cuando PAZ conversaba sola con un cliente, todo lo que escribía en
+la base pasaba por `service_role` — la llave que se salta cualquier permiso.
+Funcionaba, pero sin ningún límite de por medio: un error de código ahí
+podría, en teoría, tocar cualquier columna de cualquier tabla. Esto cierra
+esa puerta.
+
+**Cómo queda armado:**
+
+- **Un usuario de Supabase propio para PAZ**, con `perfiles.rol = 'agente'`
+  (`paz.agente@sistema.pazservices.local`). Sus credenciales están en
+  `PAZ_AGENT_EMAIL` / `PAZ_AGENT_PASSWORD`, secretos de Supabase — igual que
+  `OPENAI_API_KEY` o `WHATSAPP_TOKEN`.
+- **`supabase/functions/whatsapp/index.ts` inicia sesión como ese usuario**
+  una vez por cada aviso de Meta (`iniciarSesionPaz()`), y usa esa sesión
+  (no `service_role`) para todo lo que antes hacía con `admin`.
+- **Nunca escribe directo en las tablas.** Todo pasa por ocho funciones
+  `security definer` en la base (`19a-rol-agente-enum.sql`, `19b`, `19c`, `19d`):
+  `paz_abrir_conversacion`, `paz_guardar_mensaje`, `paz_actualizar_ubicacion`,
+  `paz_adjuntar_archivo`, `paz_sincronizar_caso`, `paz_finalizar_sincronizacion`,
+  `paz_actualizar_ficha_conversacion`, y la guardia interna
+  `paz_verificar_agente()` que todas llaman primero. Cada una valida que
+  quien llama es de verdad el agente, recibe parámetros explícitos (nunca un
+  JSON libre volcado directo a una tabla), y escribe solo las columnas que
+  declara.
+- **`paz_sincronizar_caso` nunca toca `orden_id`, `estado_caso` más allá de
+  recopilando→listo, `archivado`, `atendida_por` ni `atendida_en`.** Crear
+  una OT, cerrar o archivar un caso sigue siendo solo de una persona — eso
+  se probó explícitamente antes de dar esto por bueno (ver más abajo).
+- **Las dos reglas que costaron errores reales de encontrar** (la alerta se
+  levanta sola pero no se baja sola; un caso con OT no vuelve a alertar por
+  el mismo motivo pero sí por uno distinto) viven ahora **dentro de la RPC**,
+  no en el código de la función — un solo lugar, protegido, en vez de lógica
+  repartida en TypeScript.
+- **Lectura**: se agregó `'agente'` a las políticas de `select` de
+  `paz_aprendizajes`, `nexa_conversaciones`, `nexa_mensajes`, `nexa_archivos`,
+  `casos` y `paz_respuestas_asistidas` (`19c-rol-agente-lectura.sql`) —
+  necesita leer su propio trabajo para armar el contexto de cada respuesta.
+  **`clientes`, `vehiculos` y `ordenes` ya eran de lectura abierta** para
+  cualquier autenticado, así que no hizo falta tocarlas; `agente` hereda el
+  mismo límite de columnas de `ordenes` que ya tenía todo el mundo (sin
+  montos). **Nunca se agregó `'agente'` a `gastos`, `costos_fijos_mensuales`,
+  `cotizaciones` ni `cotizacion_items`** — eso sigue completamente vedado.
+- **Tres cosas se quedaron en la llave maestra, a propósito:** escribir en
+  `wa_log` (registro interno, sin política de escritura para nadie más),
+  subir el archivo binario al bucket `paz-adjuntos` (Storage no tiene
+  política de subida para `agente` todavía — solo el registro en la base del
+  archivo va por RPC), y leer `nexa_config` (tiene precios y reglas
+  comerciales; no se abrió esa tabla a un rol más). Si algún día se quiere
+  cerrar también esas tres, hay que sumar política de Storage y una lectura
+  acotada de `nexa_config` sin exponer el prompt completo.
+
+**Cómo se creó el usuario:** con una función temporal (`bootstrap-agente`),
+protegida por un secreto de un solo uso, que llamó `admin.auth.admin.createUser(...)`
+y luego se borró — mismo patrón que la puerta de mantenimiento de WhatsApp
+que también se sacó una vez cumplida su función. **Ojo con esto si se repite
+algún día:** Supabase tiene un trigger que crea automáticamente una fila en
+`perfiles` apenas nace un usuario nuevo, con `rol = 'tecnico'` por defecto —
+el `insert` explícito a `perfiles` que hace el bootstrap choca con eso
+(`duplicate key value violates unique constraint perfiles_pkey`). La
+solución es un `update`, no un segundo `insert`.
+
+**Probado antes de conectarlo**, sin depender de que Jonatan mandara nada:
+con la sesión real de PAZ (no `service_role`), se llamó cada RPC por
+separado — abrir conversación, guardar un mensaje, deduplicar por `wa_id`,
+sincronizar un caso, simular que ya tenía OT y confirmar que no se repite la
+alerta con el mismo motivo pero sí con uno distinto, y que nunca tocó
+`orden_id`/`estado_caso`/`archivado`. También se confirmó que un usuario
+sin sesión de agente (anon puro) recibe `"Esta función es solo para el
+agente PAZ."` al intentar llamar cualquiera de las RPC. Todos los datos de
+prueba se borraron después.
+
+**Lo que queda pendiente, a propósito:** el `nexa/index.ts` que atiende la
+app (chat interno, modo asistido, enseñar a PAZ) sigue usando `service_role`
+para sus escrituras — pero ahí quien actúa siempre es una persona ya
+autenticada como dueño o coordinador (su propia sesión ya pasó por RLS antes
+de llegar a la función); el riesgo que este cambio cierra es específicamente
+el de PAZ actuando **sola**, sin nadie en el medio, que es lo que pasa en
+`whatsapp/index.ts`.
 
 **Qué faltó a propósito**, siguiendo el mismo criterio de no sobre-construir:
 plantillas para fuera de la ventana de 24 horas, push notifications reales, y

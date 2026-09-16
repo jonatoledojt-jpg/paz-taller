@@ -14,10 +14,28 @@
 //   WHATSAPP_PHONE_ID      identificador del número (Phone Number ID)
 //   WHATSAPP_APP_SECRET    clave secreta de la app, para validar la firma
 //   WHATSAPP_VERIFY_TOKEN  palabra acordada con Meta al enlazar el webhook
+//   PAZ_AGENT_EMAIL        correo del usuario agente de PAZ (rol_usuario='agente')
+//   PAZ_AGENT_PASSWORD     contraseña de ese usuario
+//
+// ── Rol agente (16-09-2026) ──────────────────────────────────────────
+// Todo lo que PAZ escribe sola (conversación, casos, archivos, ubicación)
+// pasa por RPC `security definer` (paz_*), llamadas con la sesión de un
+// usuario propio de PAZ — nunca con la llave maestra (service_role). Si
+// algún día hay un error de código acá, el daño posible queda acotado a
+// lo que esas RPC permiten, no a cualquier columna de cualquier tabla.
+// Las RPC viven en 19a, 19b, 19c y 19d (rol-agente).
+//
+// Tres cosas SÍ se quedan en la llave maestra, a propósito, no por
+// descuido: escribir en wa_log (registro interno, sin RLS de escritura
+// para nadie más), subir el archivo binario al bucket (Storage no tiene
+// política de subida para 'agente' todavía) y leer nexa_config (tiene
+// precios y reglas comerciales; PAZ necesita leerlo para funcionar, pero
+// no se abrió esa tabla a un rol más).
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const URL_SUPABASE = Deno.env.get("SUPABASE_URL")!;
+const ANON         = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE      = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const GRAPH        = "https://graph.facebook.com/v21.0";
 
@@ -27,6 +45,20 @@ const GRAPH        = "https://graph.facebook.com/v21.0";
 const TOPE_POR_HORA = 30;
 
 const admin = createClient(URL_SUPABASE, SERVICE);
+
+// Sesión de PAZ, una por invocación del webhook (no por mensaje: un
+// mismo aviso de Meta puede traer varios mensajes juntos).
+async function iniciarSesionPaz() {
+  const cliente = createClient(URL_SUPABASE, ANON);
+  const email = Deno.env.get("PAZ_AGENT_EMAIL");
+  const password = Deno.env.get("PAZ_AGENT_PASSWORD");
+  if (!email || !password) {
+    throw new Error("Faltan PAZ_AGENT_EMAIL / PAZ_AGENT_PASSWORD.");
+  }
+  const { error } = await cliente.auth.signInWithPassword({ email, password });
+  if (error) throw new Error(`PAZ no pudo iniciar sesión: ${error.message}`);
+  return cliente;
+}
 
 // ---------- Firma de Meta ----------
 // Sin esto el webhook es un buzón abierto: cualquiera podría meter
@@ -82,6 +114,8 @@ async function llamarIA(modelo: string, instrucciones: string, entrada: unknown)
 // Devuelve lo que contestó Meta. Si falla, queda anotado en wa_log:
 // un envío que se pierde en silencio es el peor error posible acá,
 // porque en la base todo se ve bien y el cliente no recibe nada.
+// wa_log se sigue escribiendo con la llave maestra: es un registro
+// interno de diagnóstico, no hay política de escritura para nadie más.
 async function responderWhatsApp(para: string, texto: string) {
   const r = await fetch(`${GRAPH}/${Deno.env.get("WHATSAPP_PHONE_ID")}/messages`, {
     method: "POST",
@@ -110,7 +144,10 @@ async function responderWhatsApp(para: string, texto: string) {
 
 // Baja la foto de Meta y la guarda. Las capturas del escáner son
 // justamente lo que el taller revisa: perderlas sería perder el caso.
-async function guardarAdjunto(conversacion_id: number, mediaId: string, mime: string, cat: string) {
+// La subida del archivo sigue con la llave maestra (Storage no tiene
+// política de subida para 'agente' todavía); el registro en la base
+// —lo que sí es dato de negocio— va por RPC.
+async function guardarAdjunto(paz: any, conversacion_id: number, mediaId: string, mime: string, cat: string) {
   const token = Deno.env.get("WHATSAPP_TOKEN");
   const cab = { Authorization: `Bearer ${token}` };
 
@@ -129,27 +166,21 @@ async function guardarAdjunto(conversacion_id: number, mediaId: string, mime: st
     .upload(ruta, datos, { contentType: mime, upsert: true });
   if (error) throw error;
 
-  await admin.from("nexa_archivos").insert({
-    conversacion_id, ruta, mime, wa_media_id: mediaId, categoria: cat,
+  const { error: errRpc } = await paz.rpc("paz_adjuntar_archivo", {
+    p_conversacion_id: conversacion_id, p_caso_id: null, p_ruta: ruta,
+    p_categoria: cat, p_mime: mime, p_wa_media_id: mediaId,
   });
-  await admin.from("nexa_conversaciones")
-    .update({ tiene_fotos: true }).eq("id", conversacion_id);
+  if (errRpc) throw errRpc;
 }
 
 // ---------- Conversación ----------
 // Un caso abierto por teléfono. Si el anterior se archivó o se cerró,
 // se abre otro: así una consulta nueva no arrastra el contexto de un
 // camión viejo.
-async function conversacionDe(telefono: string) {
-  const { data } = await admin.from("nexa_conversaciones")
-    .select("id").eq("canal", "whatsapp").eq("telefono", telefono)
-    .eq("cerrada", false).maybeSingle();
-  if (data) return data.id as number;
-
-  const { data: nueva, error } = await admin.from("nexa_conversaciones")
-    .insert({ canal: "whatsapp", telefono }).select("id").single();
+async function conversacionDe(paz: any, telefono: string) {
+  const { data, error } = await paz.rpc("paz_abrir_conversacion", { p_telefono: telefono });
   if (error) throw error;
-  return nueva.id as number;
+  return data as number;
 }
 
 // ---------- Consultar antes de preguntar ----------
@@ -163,7 +194,7 @@ function patentesEn(texto: string): string[] {
 
 // Arma lo que el sistema YA sabe, para que PAZ no lo pregunte de nuevo.
 // Es texto que se le pasa a la IA, no algo que se le diga al cliente.
-async function contextoDelSistema(telefono: string, historial: { content: string }[], conversacion_id: number) {
+async function contextoDelSistema(paz: any, telefono: string, historial: { content: string }[], conversacion_id: number) {
   const lineas: string[] = [];
 
   // Los CASOS ya están separados y resueltos por la tabla `casos` — un
@@ -172,7 +203,7 @@ async function contextoDelSistema(telefono: string, historial: { content: string
   // reconstruir todo desde el texto crudo en cada respuesta y puede volver
   // a separar lo que el sistema ya tenía unido: pasó de verdad, preguntó
   // "¿es el camión PP1865 o el módulo GS enviado?" cuando son la misma cosa.
-  const { data: casos } = await admin.from("casos")
+  const { data: casos } = await paz.from("casos")
     .select("orden_en_conversacion,patente,vehiculo_modelo,atencion,modulo,sistema,falla_reportada,resumen_tecnico")
     .eq("conversacion_id", conversacion_id).order("orden_en_conversacion");
   if (casos?.length) {
@@ -194,7 +225,7 @@ async function contextoDelSistema(telefono: string, historial: { content: string
     );
   }
 
-  const { data: cli } = await admin.from("clientes")
+  const { data: cli } = await paz.from("clientes")
     .select("id,nombre,rut,ciudad").eq("telefono", telefono).limit(1);
   if (cli?.length) {
     const c = cli[0];
@@ -204,7 +235,7 @@ async function contextoDelSistema(telefono: string, historial: { content: string
 
   const dichas = patentesEn(historial.map((m) => m.content).join(" "));
   for (const p of dichas.slice(0, 3)) {
-    const { data: veh } = await admin.from("vehiculos")
+    const { data: veh } = await paz.from("vehiculos")
       .select("patente,marca,modelo,anio,clientes(nombre)").eq("patente", p).limit(1);
     if (!veh?.length) {
       lineas.push(`La patente ${p} no está registrada. Pregunta marca, modelo y año.`);
@@ -219,7 +250,7 @@ async function contextoDelSistema(telefono: string, historial: { content: string
       "Si te dice algo distinto, anótalo sin discutir y sin corregirlo.",
     );
 
-    const { data: ots } = await admin.from("ordenes")
+    const { data: ots } = await paz.from("ordenes")
       .select("numero_ot,estado,sintoma_cliente,fecha_ingreso,vehiculos!inner(patente)")
       .eq("vehiculos.patente", p).order("fecha_ingreso", { ascending: false }).limit(3);
     if (ots?.length) {
@@ -304,15 +335,15 @@ Si no estás segura de algo, dilo y déjalo para que lo vea una persona.
 `.trim();
 
 // ---------- Procesar un mensaje ----------
-async function procesarMensaje(msj: any) {
+async function procesarMensaje(paz: any, msj: any) {
   const telefono = String(msj.from ?? "").trim();
   if (!telefono) return;
 
-  const conversacion_id = await conversacionDe(telefono);
+  const conversacion_id = await conversacionDe(paz, telefono);
 
   // Tope por hora. Se cuenta antes de guardar y antes de llamar a la IA.
   const desde = new Date(Date.now() - 3600_000).toISOString();
-  const { count } = await admin.from("nexa_mensajes")
+  const { count } = await paz.from("nexa_mensajes")
     .select("id", { count: "exact", head: true })
     .eq("conversacion_id", conversacion_id).eq("rol", "user").gte("creado_en", desde);
   if ((count ?? 0) >= TOPE_POR_HORA) {
@@ -342,29 +373,33 @@ async function procesarMensaje(msj: any) {
   } else if (msj.type === "location") {
     const l = msj.location ?? {};
     const texto = [l.name, l.address].filter(Boolean).join(", ");
-    await admin.from("nexa_conversaciones").update({
-      ubicacion_gps: `${l.latitude},${l.longitude}`,
-      ubicacion_texto: texto || null,
-    }).eq("id", conversacion_id);
+    const { error } = await paz.rpc("paz_actualizar_ubicacion", {
+      p_conversacion_id: conversacion_id,
+      p_gps: `${l.latitude},${l.longitude}`,
+      p_texto: texto || null,
+    });
+    if (error) console.error("No se pudo guardar la ubicación:", error);
     contenido = `[el cliente compartió su ubicación${texto ? ": " + texto : ""}]`;
   } else {
     contenido = `[el cliente envió ${msj.type}, revísalo en WhatsApp]`;
   }
   if (!contenido) return;
 
-  // wa_id tiene índice único: si Meta reintenta el mismo mensaje, el
-  // insert falla acá y no se contesta dos veces.
-  const { data: insertado, error: errIns } = await admin.from("nexa_mensajes")
-    .insert({ conversacion_id, rol: "user", contenido, wa_id: msj.id ?? null })
-    .select("creado_en").single();
-  if (errIns) {
-    if (errIns.code === "23505") return;   // repetido, ya se procesó
-    throw errIns;
-  }
+  // wa_id tiene índice único: si Meta reintenta el mismo mensaje, la RPC
+  // no inserta nada y devuelve null — no se contesta dos veces.
+  const { data: idMensaje, error: errIns } = await paz.rpc("paz_guardar_mensaje", {
+    p_conversacion_id: conversacion_id, p_rol: "user", p_contenido: contenido,
+    p_wa_id: msj.id ?? null, p_humano_asistido: false,
+  });
+  if (errIns) throw errIns;
+  if (!idMensaje) return;   // repetido, ya se procesó
+
+  const { data: insertado } = await paz.from("nexa_mensajes")
+    .select("creado_en").eq("id", idMensaje).single();
 
   if (adjunto?.id) {
     try {
-      await guardarAdjunto(conversacion_id, adjunto.id, adjunto.mime, adjunto.cat);
+      await guardarAdjunto(paz, conversacion_id, adjunto.id, adjunto.mime, adjunto.cat);
     } catch (e) {
       console.error("No se pudo guardar el adjunto:", e);
     }
@@ -379,7 +414,7 @@ async function procesarMensaje(msj: any) {
   // nuevo del mismo cliente, este se retira: el más nuevo va a leer todo
   // el historial (incluido este mensaje) y contesta por los dos.
   await new Promise((r) => setTimeout(r, 2500));
-  const { data: masReciente } = await admin.from("nexa_mensajes")
+  const { data: masReciente } = await paz.from("nexa_mensajes")
     .select("creado_en").eq("conversacion_id", conversacion_id).eq("rol", "user")
     .order("creado_en", { ascending: false }).limit(1).maybeSingle();
   if (masReciente && insertado &&
@@ -387,6 +422,8 @@ async function procesarMensaje(msj: any) {
     return;
   }
 
+  // El prompt tiene precios y reglas comerciales: se sigue leyendo con
+  // la llave maestra, no se amplió esa tabla a un rol más.
   const { data: cfg } = await admin.from("nexa_config")
     .select("prompt,prompt_ficha,modelo,activa,responde_whatsapp").eq("id", 1).single();
   if (!cfg?.activa) return;
@@ -398,7 +435,7 @@ async function procesarMensaje(msj: any) {
   // terminar desdiciéndolo frente al cliente — pasó de verdad: el dueño
   // confirmó una hora y un precio por modo asistido, y el siguiente
   // mensaje automático de PAZ lo puso en duda otra vez.
-  const { data: previos } = await admin.from("nexa_mensajes")
+  const { data: previos } = await paz.from("nexa_mensajes")
     .select("rol,contenido,respuesta_asistida_id,paz_respuestas_asistidas(nombre_creador,rol_creador,creado_en)")
     .eq("conversacion_id", conversacion_id).order("creado_en");
   const historial = (previos ?? []).map((m: any) => {
@@ -414,14 +451,14 @@ async function procesarMensaje(msj: any) {
 
   // Los aprendizajes se leen en cada respuesta: así una corrección que
   // hace el dueño vale desde el mensaje siguiente, sin desplegar nada.
-  const { data: apr } = await admin.from("paz_aprendizajes")
+  const { data: apr } = await paz.from("paz_aprendizajes")
     .select("titulo,contenido").eq("activo", true).order("id");
   const aprendizajes = apr?.length
     ? "CRITERIOS DEL TALLER (mandan sobre cualquier costumbre tuya):\n" +
-      apr.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n")
+      apr.map((a: any) => `- ${a.titulo}: ${a.contenido}`).join("\n")
     : "";
 
-  const contexto = await contextoDelSistema(telefono, historial, conversacion_id);
+  const contexto = await contextoDelSistema(paz, telefono, historial, conversacion_id);
 
   if (cfg.responde_whatsapp) {
     const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, contexto]
@@ -430,8 +467,10 @@ async function procesarMensaje(msj: any) {
     const limpio = texto.replaceAll("**", "").replaceAll("*", "");
     if (limpio) {
       await responderWhatsApp(telefono, limpio);
-      await admin.from("nexa_mensajes")
-        .insert({ conversacion_id, rol: "assistant", contenido: limpio });
+      await paz.rpc("paz_guardar_mensaje", {
+        p_conversacion_id: conversacion_id, p_rol: "assistant", p_contenido: limpio,
+        p_wa_id: null, p_humano_asistido: false,
+      });
       historial.push({ role: "assistant", content: limpio });
     }
   }
@@ -443,7 +482,7 @@ async function procesarMensaje(msj: any) {
     const limpio = crudo.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
     const { casos } = JSON.parse(limpio);
     if (Array.isArray(casos) && casos.length) {
-      await sincronizarCasos(conversacion_id, telefono, casos);
+      await sincronizarCasos(paz, conversacion_id, telefono, casos);
     }
   } catch (e) {
     console.error("No se pudieron armar los casos:", e);
@@ -454,103 +493,60 @@ async function procesarMensaje(msj: any) {
 // en el orden en que aparecieron; ese orden es la llave. Así, cuando el
 // cliente dice "tengo otro camión", nace un caso nuevo en vez de pisar el
 // anterior — que es exactamente lo que pasaba antes.
-async function sincronizarCasos(conversacion_id: number, telefono: string, casos: any[]) {
-  const { data: existentes } = await admin.from("casos")
-    .select("id,orden_en_conversacion,estado_caso,requiere_respuesta_humana,orden_id,motivo_alerta")
-    .eq("conversacion_id", conversacion_id);
-  const porOrden = new Map((existentes ?? []).map((c) => [c.orden_en_conversacion, c]));
-
+//
+// Insertar, actualizar, la alerta que se levanta sola pero no se baja
+// sola, y el filtro de "motivo distinto" (un caso con OT no vuelve a
+// alertar por lo mismo, pero sí por algo nuevo, como pedir cancelar una
+// visita ya agendada) viven ahora DENTRO de paz_sincronizar_caso: una
+// sola llamada por caso, en vez de armar el insert/update acá.
+async function sincronizarCasos(paz: any, conversacion_id: number, telefono: string, casos: any[]) {
   let ultimoId: number | null = null;
 
   for (let i = 0; i < casos.length; i++) {
     const c = casos[i] ?? {};
-    const orden = i + 1;
-    const previo: any = porOrden.get(orden);
-    // Un caso con OT ya pasó por una persona. Si sigue conversándose
-    // (el cliente pregunta algo más sobre el mismo camión), PAZ actualiza
-    // los datos pero no reabre la alerta ni retrocede el estado — eso
-    // pasó de verdad: una OT ya creada volvía a aparecer como "te espera".
-    const yaConvertido = !!previo?.orden_id;
-
-    const campos: Record<string, unknown> = {
-      telefono_whatsapp: telefono,
-      cliente_nombre:    c.cliente ?? null,
-      patente:           c.patente ? String(c.patente).toUpperCase() : null,
-      vehiculo_modelo:   c.vehiculo ?? null,
-      vehiculo_anio:     c.anio ? String(c.anio) : null,
-      ubicacion_texto:   c.ubicacion ?? null,
-      atencion:          ["terreno", "envio"].includes(c.atencion) ? c.atencion : null,
-      falla_reportada:   c.sintoma ?? null,
-      codigos_reportados: c.codigo ?? null,
-      sistema:           c.sistema ?? null,
-      modulo:            c.modulo ?? null,
-      se_desplaza:       typeof c.se_desplaza === "boolean" ? c.se_desplaza : null,
-      trabajos_previos:  c.trabajos_previos ?? null,
-      resumen_tecnico:   c.resumen ?? null,
-      faltantes:         Array.isArray(c.faltantes) ? c.faltantes : [],
-      conflictos:        Array.isArray(c.conflictos) ? c.conflictos : [],
-    };
-
-    // La alerta se levanta sola, pero NO se baja sola: si una persona
-    // ya la atendió, que la IA cambie de opinión no debe hacerla
-    // reaparecer. La baja quien responde, desde la app.
-    //
-    // Pero "ya tiene OT" no puede bloquear TODA alerta futura: pasó de
-    // verdad que un cliente pidió cancelar una visita ya agendada y la
-    // alerta no saltó, porque el caso ya estaba convertido. La diferencia
-    // está en si el motivo es el mismo de siempre o uno nuevo: si el
-    // texto que trae esta lectura no es el que ya se avisó, es una
-    // necesidad distinta y sí tiene que avisar, aunque el caso ya tenga OT.
-    const motivoNuevo = (c.motivo_alerta ?? "").trim();
-    const motivoYaAvisado = (previo?.motivo_alerta ?? "").trim();
-    const esMotivoDistinto = motivoNuevo && motivoNuevo !== motivoYaAvisado;
-
-    if (c.requiere_humano && !previo?.requiere_respuesta_humana && (!yaConvertido || esMotivoDistinto)) {
-      campos.requiere_respuesta_humana = true;
-      campos.motivo_alerta = motivoNuevo || "El cliente espera una respuesta del equipo.";
-      campos.alerta_creada_en = new Date().toISOString();
-    }
-
-    // Un caso con lo mínimo ya sirve para que alguien lo mire.
-    const listo = c.sintoma && (c.patente || c.vehiculo) && c.ubicacion;
-    if (listo && previo?.estado_caso === "recopilando_datos" && !yaConvertido) {
-      campos.estado_caso = "listo_para_revision";
-    }
-
-    if (previo) {
-      await admin.from("casos").update(campos).eq("id", previo.id);
-      ultimoId = previo.id;
-    } else {
-      const { data: nuevo } = await admin.from("casos")
-        .insert({ conversacion_id, orden_en_conversacion: orden, ...campos })
-        .select("id").single();
-      ultimoId = nuevo?.id ?? ultimoId;
-    }
+    const { data: id, error } = await paz.rpc("paz_sincronizar_caso", {
+      p_conversacion_id: conversacion_id,
+      p_orden_en_conversacion: i + 1,
+      p_telefono: telefono,
+      p_cliente_nombre: c.cliente ?? null,
+      p_patente: c.patente ? String(c.patente).toUpperCase() : null,
+      p_vehiculo_modelo: c.vehiculo ?? null,
+      p_vehiculo_anio: c.anio ? String(c.anio) : null,
+      p_ubicacion_texto: c.ubicacion ?? null,
+      p_atencion: ["terreno", "envio"].includes(c.atencion) ? c.atencion : null,
+      p_modulo: c.modulo ?? null,
+      p_sistema: c.sistema ?? null,
+      p_codigos_reportados: c.codigo ?? null,
+      p_falla_reportada: c.sintoma ?? null,
+      p_se_desplaza: typeof c.se_desplaza === "boolean" ? c.se_desplaza : null,
+      p_trabajos_previos: c.trabajos_previos ?? null,
+      p_resumen_tecnico: c.resumen ?? null,
+      p_faltantes: Array.isArray(c.faltantes) ? c.faltantes : [],
+      p_conflictos: Array.isArray(c.conflictos) ? c.conflictos : [],
+      p_requiere_humano: !!c.requiere_humano,
+      p_motivo_alerta: c.motivo_alerta ?? null,
+    });
+    if (error) { console.error(`No se pudo sincronizar el caso ${i + 1}:`, error); continue; }
+    if (id) ultimoId = id as number;
   }
 
   // Lo que llegó sin caso todavía (fotos, ubicación) se cuelga del último,
   // que es el que se está conversando.
   if (ultimoId) {
-    await admin.from("nexa_archivos")
-      .update({ caso_id: ultimoId })
-      .eq("conversacion_id", conversacion_id).is("caso_id", null);
-
-    const { data: conv } = await admin.from("nexa_conversaciones")
-      .select("ubicacion_gps").eq("id", conversacion_id).single();
-    if (conv?.ubicacion_gps) {
-      await admin.from("casos").update({ ubicacion_gps: conv.ubicacion_gps }).eq("id", ultimoId);
-    }
-    const { count } = await admin.from("nexa_archivos")
-      .select("id", { count: "exact", head: true }).eq("caso_id", ultimoId);
-    if (count) await admin.from("casos").update({ tiene_fotos: true }).eq("id", ultimoId);
+    const { error } = await paz.rpc("paz_finalizar_sincronizacion", {
+      p_conversacion_id: conversacion_id, p_caso_id: ultimoId,
+    });
+    if (error) console.error("No se pudo finalizar la sincronización:", error);
   }
 
   // La ficha del primer caso se sigue guardando en la conversación
   // mientras la pantalla vieja de la app la use. Se saca cuando la
   // bandeja de casos la reemplace del todo.
-  await admin.from("nexa_conversaciones")
-    .update({ ficha: casos[0] ?? {}, titulo: casos[0]?.cliente ?? null })
-    .eq("id", conversacion_id);
+  await paz.rpc("paz_actualizar_ficha_conversacion", {
+    p_conversacion_id: conversacion_id,
+    p_ficha: casos[0] ?? {},
+    p_titulo: casos[0]?.cliente ?? null,
+  });
 }
 
 Deno.serve(async (req) => {
@@ -616,8 +612,20 @@ Deno.serve(async (req) => {
   // Meta reintenta si no le respondemos rápido, y la IA se demora varios
   // segundos. Se le contesta al tiro y el trabajo sigue por detrás.
   const trabajo = (async () => {
+    if (!mensajes.length) return;
+    let paz;
+    try {
+      paz = await iniciarSesionPaz();
+    } catch (e) {
+      console.error("PAZ no pudo autenticarse:", e);
+      await admin.from("wa_log").insert({
+        metodo: "SESION", firma_ok: true,
+        nota: `PAZ no pudo iniciar sesión: ${e instanceof Error ? e.message : e}`, cuerpo: "",
+      });
+      return;
+    }
     for (const m of mensajes) {
-      try { await procesarMensaje(m); } catch (e) { console.error("Error procesando:", e); }
+      try { await procesarMensaje(paz, m); } catch (e) { console.error("Error procesando:", e); }
     }
   })();
   // @ts-ignore: lo provee el runtime de Supabase
