@@ -916,15 +916,15 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div class="campo">
           <span class="rotulo">Subir conversaciones reales de WhatsApp (día a día, humano a humano)</span>
           <label class="btn claro" for="entArchivo" style="display:block;text-align:center;font-size:16px">
-            Elegir archivo(s) .txt
+            Elegir archivo(s) .txt o .zip
           </label>
-          <input type="file" id="entArchivo" accept=".txt" multiple style="position:absolute;width:1px;height:1px;opacity:0">
+          <input type="file" id="entArchivo" accept=".txt,.zip" multiple style="position:absolute;width:1px;height:1px;opacity:0">
           <div class="pista" id="entArchivoNombre"></div>
           <div class="pista">
             Abre la conversación en WhatsApp → nombre del contacto → Más →
-            <b>Exportar chat</b> → <b>Sin archivos multimedia</b>. Eso genera
-            un .txt con la conversación completa. Puedes elegir varios de
-            una vez — se van agregando, uno tras otro.
+            <b>Exportar chat</b>. En Android sale comprimido en un .zip — no
+            hace falta descomprimirlo a mano, se puede subir tal cual. Puedes
+            elegir varios de una vez — se van agregando, uno tras otro.
           </div>
         </div>
 
@@ -3430,26 +3430,45 @@ $("btnEntrenar").onclick = () => {
 
 // Conversaciones reales del día a día (humano a humano, del número real,
 // nunca pasaron por PAZ) no están en la base — solo existen en el celular.
-// WhatsApp exporta el chat completo a un .txt ("Exportar chat"), que es la
-// única forma confiable de sacar una conversación larga del teléfono: el
-// copiar-pegar mensaje por mensaje no alcanza para esto.
+// WhatsApp exporta el chat completo con "Exportar chat", que es la única
+// forma confiable de sacar una conversación larga del teléfono: el
+// copiar-pegar mensaje por mensaje no alcanza para esto. En Android sale
+// comprimido en un .zip (con el .txt adentro, a veces junto con fotos si
+// no se eligió "sin multimedia") — se descomprime acá mismo, en el
+// navegador, para no obligar a nadie a andar descomprimiendo a mano.
+async function textoDeArchivo(f) {
+  if (!f.name.toLowerCase().endsWith(".zip")) return [{ nombre: f.name, texto: await f.text() }];
+
+  const { unzipSync, strFromU8 } = await import("https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm");
+  const buf = new Uint8Array(await f.arrayBuffer());
+  const entradas = unzipSync(buf, { filter: (e) => e.name.toLowerCase().endsWith(".txt") });
+  const nombres = Object.keys(entradas);
+  if (!nombres.length) throw new Error(`"${f.name}" no trae ningún .txt adentro.`);
+  return nombres.map((n) => ({ nombre: `${f.name} → ${n}`, texto: strFromU8(entradas[n]) }));
+}
+
 $("entArchivo").onchange = async () => {
   msg("entError", "");
   const archivos = [...$("entArchivo").files];
   if (!archivos.length) return;
+  const agregados = [];
   try {
     for (const f of archivos) {
-      const texto = await f.text();
-      if (!texto.trim()) continue;
-      const previo = $("entTexto").value.trim();
-      const bloque = `--- ${f.name} ---\n${texto.trim()}`;
-      $("entTexto").value = previo ? `${previo}\n\n${bloque}` : bloque;
+      const partes = await textoDeArchivo(f);
+      for (const { nombre, texto } of partes) {
+        if (!texto.trim()) continue;
+        const previo = $("entTexto").value.trim();
+        const bloque = `--- ${nombre} ---\n${texto.trim()}`;
+        $("entTexto").value = previo ? `${previo}\n\n${bloque}` : bloque;
+        agregados.push(nombre);
+      }
     }
     pintarContadorEnt();
-    $("entArchivoNombre").textContent =
-      `Agregado: ${archivos.map(f => f.name).join(", ")} — revisa el cuadro de abajo.`;
+    $("entArchivoNombre").textContent = agregados.length
+      ? `Agregado: ${agregados.join(", ")} — revisa el cuadro de abajo.`
+      : "";
   } catch (e) {
-    msg("entError", "No se pudo leer el archivo. ¿Es un .txt exportado de WhatsApp?");
+    msg("entError", e.message || "No se pudo leer el archivo. ¿Es un .txt o .zip exportado de WhatsApp?");
   } finally {
     $("entArchivo").value = "";
   }
