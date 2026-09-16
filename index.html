@@ -838,9 +838,13 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div class="seccion">
         <div class="campo">
           <label for="entTexto">Pega una conversación, o escribe una corrección</label>
-          <textarea id="entTexto" style="min-height:150px"
+          <textarea id="entTexto" style="min-height:220px"
             placeholder="Pega acá una conversación de WhatsApp que haya salido bien, o escribe derecho lo que PAZ debería hacer distinto."></textarea>
-          <div class="pista">PAZ saca los criterios de ahí. Tú decides cuáles se quedan.</div>
+          <div class="pista">
+            PAZ saca los criterios de ahí. Tú decides cuáles se quedan.
+            Puedes pegar varias veces seguidas: se va agregando, no se reemplaza.
+          </div>
+          <div class="pista" id="entContador"></div>
         </div>
         <button class="btn" id="btnSacarCriterios">Sacar criterios</button>
       </div>
@@ -3133,6 +3137,8 @@ $("btnCasoOT").onclick = () => {
 $("btnEntrenar").onclick = () => {
   msg("entError", "");
   $("entPropuestas").innerHTML = "";
+  $("entTexto").value = "";
+  pintarContadorEnt();
   ver("vEntrenar");
   cargarAprendizajes();
 };
@@ -3179,6 +3185,16 @@ async function cargarAprendizajes() {
     $("entLista").appendChild(div);
   });
 }
+
+// Contador de caracteres y líneas: para que se vea de un vistazo si un
+// pegado grande realmente entró completo, en vez de confiar a ciegas.
+function pintarContadorEnt() {
+  const v = $("entTexto").value;
+  const lineas = v ? v.split("\n").length : 0;
+  $("entContador").textContent = v ? `${v.length} caracteres · ${lineas} líneas` : "";
+}
+$("entTexto").addEventListener("input", pintarContadorEnt);
+$("entTexto").addEventListener("paste", () => setTimeout(pintarContadorEnt, 0));
 
 $("btnSacarCriterios").onclick = async () => {
   msg("entError", "");
