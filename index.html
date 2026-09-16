@@ -2633,17 +2633,30 @@ async function cargarCasosNexa() {
 // Las conversaciones que nacen dentro de la app todavía no generan casos:
 // eso viene cuando la pantalla de chat se cuelgue de la bandeja. Mientras
 // tanto se listan aparte para que no queden invisibles.
+//
+// Una conversación sin ningún mensaje no tiene nada que mostrar -- alguien
+// entró y salió sin escribir, o quedó de una versión vieja de la pantalla
+// que sí las creaba de entrada. En vez de perseguir cada forma en que
+// pueda aparecer una de éstas, simplemente no se lista ninguna sin
+// mensajes: da lo mismo por qué quedó vacía.
 async function cargarConversacionesApp() {
   const { data } = await db.from("nexa_conversaciones")
     .select("id,titulo,ficha,orden_id,actualizado_en")
     .eq("canal", "app").order("actualizado_en", { ascending: false }).limit(15);
   const caja = $("nexaConvApp");
-  if (!data?.length) {
+  const ids = (data ?? []).map(c => c.id);
+  const { data: mensajes } = ids.length
+    ? await db.from("nexa_mensajes").select("conversacion_id").in("conversacion_id", ids)
+    : { data: [] };
+  const idsConMensajes = new Set((mensajes ?? []).map(m => m.conversacion_id));
+  const conversaciones = (data ?? []).filter(c => idsConMensajes.has(c.id));
+
+  if (!conversaciones.length) {
     caja.innerHTML = '<div class="vacio" style="padding:20px"><p>Ninguna todavía.</p></div>';
     return;
   }
   caja.innerHTML = "";
-  data.forEach(c => {
+  conversaciones.forEach(c => {
     const f = c.ficha || {};
     const div = document.createElement("div");
     div.className = "ot";
