@@ -74,11 +74,12 @@ sw.js                   service worker
 19d-rol-agente-rpc-extra.sql tres RPC más para los remates de sincronizarCasos
 20-modo-aprendizaje.sql      casos.modo, evaluación positivo/negativo, descartar
 20b-fix-mi-rol-null.sql      corrige NULL en mi_rol() que se saltaba el guardia de dueño
+21-tecnico-crea-ot.sql       el técnico puede crear OT (recepcionar módulos), no solo actualizar las suyas
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 ```
 
-**De la 01 a la 20b están todas aplicadas en la base real** (verificado el
+**De la 01 a la 21 están todas aplicadas en la base real** (verificado el
 16-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
 en este documento: preguntarle a la base.
 
@@ -166,7 +167,21 @@ ninguno). Si se pierde, la facturación no cuadra.
 
 `dueno` (Jonatan), `coordinador`, `tecnico`. RLS activo en todas las tablas.
 Todos leen todo lo operativo; dueño y coordinador escriben lo operativo; el
-técnico solo actualiza las órdenes asignadas a él.
+técnico actualiza las órdenes asignadas a él, y **puede crear OT nuevas**
+(`21-tecnico-crea-ot.sql`, 16-09-2026) — recepcionar un módulo en el
+laboratorio es trabajo suyo de todos los días, no una excepción.
+
+**Qué puede y qué no puede el técnico al crear una OT:** inserta cliente,
+vehículo y la orden (cliente, patente, tipo de módulo/sistema, síntoma,
+foto). **No puede** fijar montos ni campos de agenda ni al crear ni
+después — el trigger `proteger_campos_tecnico` los fuerza a `null` en el
+INSERT (antes solo actuaba en el UPDATE, comparando contra `OLD`, que no
+existe en un INSERT — sin este cambio un técnico habría podido escribir
+cualquier monto o agenda en la fila que crea, sin filtro). La OT que crea
+queda **asignada a él mismo** automáticamente, para que después la pueda
+seguir moviendo de estado con la política de update que ya existía.
+Encontrado en vivo: Diego Toledo (técnico) no podía ni guardar el cliente
+al intentar ingresar un módulo — RLS lo cortaba en el primer insert.
 
 **Importante:** el esquema de roles no distingue "mecánico de terreno" de
 "técnico de laboratorio" — ambos son `rol = 'tecnico'`. Si algún día hace
