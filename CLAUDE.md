@@ -589,6 +589,50 @@ Jonatan haciendo de cliente, en el número de prueba. Vale la pena repetir
 una conversación larga con varios casos antes de conectar el número real,
 para confirmar que estos dos arreglos sostienen bajo uso de verdad.
 
+### Trazabilidad dura, reglas comerciales y la agenda (16-09-2026)
+
+Jonatan revisó esos dos errores a fondo y encontró tres cosas más, todas
+reales:
+
+**1. La trazabilidad era una convención, no una estructura.** Antes, que un
+mensaje llevara la etiqueta "confirmado por el equipo" dependía de que dos
+inserts separados en el mismo código se hicieran bien — nada lo ataba de
+verdad. Ahora `nexa_mensajes.respuesta_asistida_id` es una llave foránea real
+hacia `paz_respuestas_asistidas`. La etiqueta que ve la IA sale de un **join**,
+no de un booleano suelto: estructuralmente no puede existir sin un registro
+de auditoría real detrás, con `nombre_creador`, `rol_creador` y `creado_en`.
+Se agregó `nombre_creador` porque antes solo quedaba el rol, no quién
+específicamente.
+
+**2. El modo asistido se saltaba reglas comerciales obligatorias.** El dueño
+dio la instrucción "el jueves a las 10, valor 150mil", y PAZ mandó
+"$150.000" sin IVA — porque yo mismo le había puesto una regla demasiado
+literal ("no agregues nada que la instrucción no haya dicho"), que pisaba la
+convención de todo el sistema: **todo monto es neto**. Corregido:
+`redactar_respuesta` ahora tiene reglas comerciales que valen aunque la
+instrucción no las mencione — monto sin decir "IVA incluido"/"total" se
+comunica con "+ IVA"; fuera de la Región del Maule no se cierra un valor si
+la instrucción no lo autorizó explícitamente. Y de paso: **esa acción no leía
+`paz_aprendizajes`** — los criterios solo aplicaban a la conversación en
+vivo, no al modo asistido. Ya se corrigió; los dos caminos por los que PAZ le
+habla a un cliente comparten las mismas reglas.
+
+**3. Confirmado con el cliente, invisible para el equipo.** Si el modo
+asistido confirma una hora, esa fecha vivía solo en el texto del chat —
+nunca llegaba a `ordenes.fecha_agendada`, así que no aparecía en la Agenda
+del coordinador. Se agregó un toggle opcional en "Responder como PAZ": si la
+respuesta fija una fecha y el caso **ya tiene una OT vinculada**, al enviar
+se actualiza `fecha_agendada`/`franja` de esa OT en el mismo paso. Si el caso
+**no tiene OT todavía**, se avisa explícito ("la fecha no va a aparecer en la
+Agenda hasta que la crees") en vez de perder el dato en silencio. Esto
+**nunca crea una OT** — solo actualiza una que una persona ya vinculó al
+caso con el botón de siempre.
+
+**Nueva sección en el detalle del caso: "Quién confirmó qué"** — el
+historial completo de `paz_respuestas_asistidas` para ese caso: instrucción,
+mensaje enviado, quién y cuándo, visible directamente en la app sin tener
+que consultar la base.
+
 **Qué faltó a propósito**, siguiendo el mismo criterio de no sobre-construir:
 plantillas para fuera de la ventana de 24 horas, push notifications reales, y
 un job programado para avisar cuando un caso lleva mucho tiempo sin que nadie
