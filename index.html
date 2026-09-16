@@ -907,9 +907,22 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div style="height:14px"></div>
 
         <div class="campo">
-          <label for="entTexto">O pega texto a mano (una corrección escrita, una conversación de otro medio)</label>
+          <label for="entArchivo">Subir conversaciones reales de WhatsApp (día a día, humano a humano)</label>
+          <input type="file" id="entArchivo" accept=".txt" multiple>
+          <div class="pista">
+            Abre la conversación en WhatsApp → nombre del contacto → Más →
+            <b>Exportar chat</b> → <b>Sin archivos multimedia</b>. Eso genera
+            un .txt con la conversación completa. Puedes elegir varios de
+            una vez — se van agregando, uno tras otro.
+          </div>
+        </div>
+
+        <div style="height:14px"></div>
+
+        <div class="campo">
+          <label for="entTexto">O pega texto a mano (una corrección escrita, una conversación corta)</label>
           <textarea id="entTexto" style="min-height:220px"
-            placeholder="Escribe derecho lo que PAZ debería hacer distinto, o pega texto que no venga de un caso ya guardado."></textarea>
+            placeholder="Escribe derecho lo que PAZ debería hacer distinto, o pega un mensaje suelto."></textarea>
           <div class="pista" id="entContador"></div>
         </div>
         <button class="btn" id="btnSacarCriterios">Sacar criterios</button>
@@ -3363,10 +3376,36 @@ $("btnEntrenar").onclick = () => {
   msg("entError", "");
   $("entPropuestas").innerHTML = "";
   $("entTexto").value = "";
+  $("entArchivo").value = "";
   pintarContadorEnt();
   ver("vEntrenar");
   cargarAprendizajes();
   cargarCasosParaEntrenar();
+};
+
+// Conversaciones reales del día a día (humano a humano, del número real,
+// nunca pasaron por PAZ) no están en la base — solo existen en el celular.
+// WhatsApp exporta el chat completo a un .txt ("Exportar chat"), que es la
+// única forma confiable de sacar una conversación larga del teléfono: el
+// copiar-pegar mensaje por mensaje no alcanza para esto.
+$("entArchivo").onchange = async () => {
+  msg("entError", "");
+  const archivos = [...$("entArchivo").files];
+  if (!archivos.length) return;
+  try {
+    for (const f of archivos) {
+      const texto = await f.text();
+      if (!texto.trim()) continue;
+      const previo = $("entTexto").value.trim();
+      const bloque = `--- ${f.name} ---\n${texto.trim()}`;
+      $("entTexto").value = previo ? `${previo}\n\n${bloque}` : bloque;
+    }
+    pintarContadorEnt();
+  } catch (e) {
+    msg("entError", "No se pudo leer el archivo. ¿Es un .txt exportado de WhatsApp?");
+  } finally {
+    $("entArchivo").value = "";
+  }
 };
 
 // El WhatsApp del celular solo deja copiar un mensaje a la vez desde el
