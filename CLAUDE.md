@@ -75,11 +75,12 @@ sw.js                   service worker
 20-modo-aprendizaje.sql      casos.modo, evaluación positivo/negativo, descartar
 20b-fix-mi-rol-null.sql      corrige NULL en mi_rol() que se saltaba el guardia de dueño
 21-tecnico-crea-ot.sql       el técnico puede crear OT (recepcionar módulos), no solo actualizar las suyas
+22-nexa-app-entrenamiento.sql RPC paz_en_entrenamiento(): bloquea crear OT desde el chat interno en modo aprendizaje
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 ```
 
-**De la 01 a la 21 están todas aplicadas en la base real** (verificado el
+**De la 01 a la 22 están todas aplicadas en la base real** (verificado el
 16-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
 en este documento: preguntarle a la base.
 
@@ -1106,6 +1107,19 @@ criterios, luego aprobados" que describía el plan no se implementó como tal
 — hoy todos los aprendizajes activos se leen juntos, sin distinguir tipo al
 armar el bloque para la IA. Es una mejora posible, no crítica: el efecto
 práctico (la IA los ve todos) es el mismo.
+
+**El chat interno también quedó cubierto (16-09-2026).** La pantalla
+"Atender un caso nuevo" (canal `app`) es de antes del modelo de casos: su
+ficha y su "Crear la OT desde este caso" no pasan por `casos.modo` en
+absoluto, así que una conversación de prueba ahí sí podía terminar
+llenando el formulario de una OT real. Como `nexa_config` tiene el prompt
+comercial completo y su RLS es "solo dueño" (el coordinador también usa
+esta pantalla y no puede leer esa tabla), se agregó
+`paz_en_entrenamiento()` — una función que solo expone el booleano que
+hace falta, sin abrir el resto. Mientras esté en `true`, el botón de crear
+OT se esconde y además se bloquea si igual se llega a apretar. Por defecto
+el front asume `true` (falla cerrado) hasta que la función confirme lo
+contrario.
 
 ## Contexto de negocio que importa
 

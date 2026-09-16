@@ -737,6 +737,9 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
             <div id="nexaFicha"></div>
             <div style="height:12px"></div>
             <button class="btn claro" id="btnNexaCrearOT">Crear la OT desde este caso</button>
+            <div class="pista mal oculto" id="nexaOTBloqueada" style="margin-top:6px">
+              PAZ está en modo aprendizaje: esta conversación no puede crear una OT real.
+            </div>
           </div>
         </div>
 
@@ -2502,9 +2505,17 @@ const FICHA_EXCLUYENTES = ["modulo", "sistema"];
 const ETIQUETA_ATENCION = { terreno:"Visita a terreno", envio:"Envía el módulo" };
 const textoFicha = (k, v) => k === "atencion" ? (ETIQUETA_ATENCION[v] || v) : v;
 
-$("btnNexa").onclick = () => {
+// Mientras el taller esté en modo aprendizaje, esta pantalla (la de
+// antes de que existiera el modelo de casos) tampoco puede terminar en
+// una OT real -- por defecto asume que sí está en entrenamiento (falla
+// cerrado) hasta que la RPC confirme lo contrario.
+let pazEnEntrenamiento = true;
+
+$("btnNexa").onclick = async () => {
   msg("nexaError", "");
   ver("vNexa");
+  const { data } = await db.rpc("paz_en_entrenamiento");
+  if (data !== null && data !== undefined) pazEnEntrenamiento = data;
   if (nexaConvId) mostrarConversacionNexa();
   else mostrarInicioNexa();
 };
@@ -2523,6 +2534,8 @@ function mostrarConversacionNexa() {
   $("nexaConv").classList.remove("oculto");
   $("nexaFichaCuerpo").classList.add("oculto");
   $("btnNexaFicha").setAttribute("aria-expanded", "false");
+  $("btnNexaCrearOT").classList.toggle("oculto", pazEnEntrenamiento);
+  $("nexaOTBloqueada").classList.toggle("oculto", !pazEnEntrenamiento);
   pintarChatNexa();
   pintarFichaNexa();
 }
@@ -2975,6 +2988,9 @@ function llenarFormularioDesdeFicha(f, conv) {
 }
 
 $("btnNexaCrearOT").onclick = () => {
+  if (pazEnEntrenamiento) {
+    return msg("nexaError", "PAZ está en modo aprendizaje: esta conversación no puede crear una OT real.");
+  }
   const f = nexaFicha || {};
   if (!f.cliente && !f.patente && !f.sintoma) {
     return msg("nexaError", "La ficha todavía no tiene datos. Conversa un poco más con el cliente.");
