@@ -232,6 +232,11 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 }
 .chat-barra .btn{flex:0 0 auto;width:auto;padding:15px 20px}
 .ficha-falta{color:var(--humo);font-weight:400}
+.badge{
+  position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;
+  padding:0 4px;border-radius:9px;background:var(--marca);color:#14181C;
+  font-size:11px;font-weight:700;line-height:18px;text-align:center
+}
 /* Un caso que espera respuesta se ve distinto sin gritar */
 .ot.urgente{border-color:var(--marca);box-shadow:inset 3px 0 0 var(--marca)}
 .ot .marcas{
@@ -307,7 +312,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   <header>
     <div class="marca">PAZ SERVICES<span id="quien"></span></div>
     <div style="display:flex;gap:8px">
-      <button id="btnNexa" class="oculto">PAZ</button>
+      <button id="btnNexa" class="oculto" style="position:relative">PAZ<span id="badgeCasos" class="badge oculto"></span></button>
       <button id="btnSalir">Salir</button>
     </div>
   </header>
@@ -760,7 +765,33 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div class="miniaturas" id="casoFotos"></div>
       </div>
 
+      <!-- Modo asistido: la persona le dicta a PAZ qué decirle al
+           cliente, PAZ redacta, la persona revisa y recién ahí se manda. -->
+      <div class="seccion">
+        <span class="rotulo">Responder como PAZ</span>
+        <div class="pista" id="casoVentana" style="margin-bottom:12px"></div>
+
+        <div class="campo">
+          <label for="casoInstruccion">Qué le tienes que decir al cliente</label>
+          <textarea id="casoInstruccion" placeholder="Ej: dile que el jueves en la mañana tenemos disponibilidad, que confirme ubicación."></textarea>
+        </div>
+        <button class="btn claro" id="btnGenerarRespuesta">Generar respuesta</button>
+
+        <div class="oculto" id="casoPreviewCaja" style="margin-top:16px">
+          <div class="campo">
+            <label for="casoPreview">Vista previa — revísala antes de enviar</label>
+            <textarea id="casoPreview" style="min-height:96px"></textarea>
+          </div>
+          <div class="reordenar">
+            <button type="button" id="btnCancelarRespuesta">Cancelar</button>
+            <button type="button" id="btnEnviarRespuesta">Enviar por WhatsApp</button>
+          </div>
+        </div>
+      </div>
+
       <button class="btn" id="btnCasoOT">Crear la OT desde este caso</button>
+      <div style="height:10px"></div>
+      <button class="btn claro oculto" id="btnCasoAtendido">Marcar atendido sin responder</button>
       <div style="height:10px"></div>
       <button class="btn claro" id="btnCasoArchivar">Archivar</button>
       <div style="height:10px"></div>
@@ -900,6 +931,10 @@ async function iniciar() {
   $("main").classList.add("con-navinf");
   $("btnNexa").classList.toggle("oculto", !["dueno","coordinador"].includes(perfil.rol));
   $("btnEntrenar").classList.toggle("oculto", perfil.rol !== "dueno");
+  if (["dueno","coordinador"].includes(perfil.rol)) {
+    actualizarBadgeCasos();
+    suscribirAlertasCasos();
+  }
   seccionActiva = perfil.rol === "coordinador" ? "agenda" : "terreno";
   ver("vTablero");
   cambiarSeccion(seccionActiva);
@@ -1298,6 +1333,7 @@ $("btnGuardar").onclick = async () => {
         .update({ orden_id: orden.id, estado_caso: "convertido_a_ot", requiere_respuesta_humana: false })
         .eq("id", casoParaOT);
       casoParaOT = null;
+      actualizarBadgeCasos();
     }
 
     limpiarForm();
@@ -2565,6 +2601,69 @@ function pintarFichaNexa() {
   }</div>`;
 }
 
+// ---------- Alertas de PAZ en vivo ----------
+// Un caso pasa a "te espera" y la app avisa sola, sin refrescar: un
+// timbre corto (Web Audio, sin archivo que cargar) más vibración si el
+// celular la soporta, y un número en el botón PAZ del encabezado.
+let casosQueEsperan = 0;
+const yaAvisados = new Set();   // no repetir el timbre por el mismo caso
+
+function pintarBadgeCasos() {
+  const b = $("badgeCasos");
+  b.textContent = casosQueEsperan > 9 ? "9+" : String(casosQueEsperan);
+  b.classList.toggle("oculto", casosQueEsperan === 0);
+}
+
+async function actualizarBadgeCasos() {
+  const { count } = await db.from("casos")
+    .select("id", { count: "exact", head: true })
+    .eq("archivado", false).eq("requiere_respuesta_humana", true);
+  casosQueEsperan = count ?? 0;
+  pintarBadgeCasos();
+}
+
+function timbreAlerta() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const vol = ctx.createGain();
+    osc.connect(vol); vol.connect(ctx.destination);
+    osc.frequency.value = 880;
+    vol.gain.setValueAtTime(0.15, ctx.currentTime);
+    vol.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    osc.start(); osc.stop(ctx.currentTime + 0.35);
+  } catch { /* el navegador puede bloquear audio sin interacción previa */ }
+  if (navigator.vibrate) navigator.vibrate(200);
+}
+
+function suscribirAlertasCasos() {
+  db.channel("casos-alertas")
+    .on("postgres_changes",
+      { event: "UPDATE", schema: "public", table: "casos", filter: "requiere_respuesta_humana=eq.true" },
+      p => {
+        // El filtro solo mira el valor NUEVO. Sin comparar contra el
+        // anterior, cada mensaje del cliente haría sonar el timbre de
+        // nuevo aunque el caso ya estuviera esperando desde antes.
+        if (p.old?.requiere_respuesta_humana === true) return;
+        avisarCasoNuevo(p.new);
+      })
+    .on("postgres_changes",
+      { event: "INSERT", schema: "public", table: "casos", filter: "requiere_respuesta_humana=eq.true" },
+      p => avisarCasoNuevo(p.new))
+    .subscribe();
+}
+
+function avisarCasoNuevo(caso) {
+  if (yaAvisados.has(caso.id)) return;
+  yaAvisados.add(caso.id);
+  timbreAlerta();
+  actualizarBadgeCasos();
+  // Si la bandeja está abierta mirando "Te esperan", que se refresque sola.
+  if (!$("vNexa").classList.contains("oculto") && !$("nexaInicio").classList.contains("oculto")) {
+    cargarCasosNexa();
+  }
+}
+
 // Llama a la Edge Function. La sesión va en el encabezado: la
 // función verifica quién eres y que seas dueño o coordinador.
 async function llamarNexa(accion) {
@@ -2585,6 +2684,26 @@ async function llamarNexa(accion) {
   const cuerpo = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(cuerpo.error || `PAZ respondió con error ${r.status}.`);
   return cuerpo;
+}
+
+// Mismo puente, pero para acciones que no dependen del chat que se está
+// conversando (modo asistido, marcar atendido): el cuerpo lo arma quien
+// llama, no se arrastra el historial de nexaMensajes.
+async function llamarNexaAccion(cuerpo) {
+  const { data:{ session } } = await db.auth.getSession();
+  if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/nexa`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON,
+      Authorization: `Bearer ${session.access_token}`
+    },
+    body: JSON.stringify(cuerpo)
+  });
+  const respuesta = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(respuesta.error || `PAZ respondió con error ${r.status}.`);
+  return respuesta;
 }
 
 async function enviarNexa() {
@@ -2774,7 +2893,109 @@ async function pintarCaso() {
 
   $("btnCasoOT").classList.toggle("oculto", !!c.orden_id);
   $("btnCasoArchivar").textContent = c.archivado ? "Desarchivar" : "Archivar";
+  $("btnCasoAtendido").classList.toggle("oculto", !c.requiere_respuesta_humana);
+
+  // Deja el formulario de responder limpio cada vez que se abre el caso,
+  // para no arrastrar el borrador de un caso al siguiente.
+  $("casoInstruccion").value = "";
+  $("casoPreviewCaja").classList.add("oculto");
+  msg("casoError", "");
+  await pintarVentanaCaso();
 }
+
+// La ventana de 24 horas: cuánto queda para poder responderle texto
+// libre y gratis al cliente. Se calcula acá mismo, mirando el último
+// mensaje suyo — no hace falta llamar a la función para saberlo.
+async function pintarVentanaCaso() {
+  const c = casoActual;
+  const { data } = await db.from("nexa_mensajes")
+    .select("creado_en").eq("conversacion_id", c.conversacion_id).eq("rol", "user")
+    .order("creado_en", { ascending: false }).limit(1).maybeSingle();
+
+  const cont = $("casoVentana");
+  if (!data) {
+    cont.textContent = "Todavía no hay mensajes del cliente en esta conversación.";
+    ventanaCasoAbierta = false;
+    return;
+  }
+  const restanteMs = 24 * 3600_000 - (Date.now() - new Date(data.creado_en).getTime());
+  ventanaCasoAbierta = restanteMs > 0;
+  if (ventanaCasoAbierta) {
+    const h = Math.floor(restanteMs / 3600_000), m = Math.floor((restanteMs % 3600_000) / 60_000);
+    cont.textContent = `Puedes responderle libre por WhatsApp — quedan ${h} h ${m} min de la ventana de 24 horas.`;
+    cont.className = "pista";
+  } else {
+    cont.textContent = "Pasaron más de 24 horas desde el último mensaje del cliente. " +
+      "No se puede mandar texto libre; hace falta una plantilla aprobada (todavía no disponible).";
+    cont.className = "pista mal";
+  }
+}
+let ventanaCasoAbierta = false;
+
+$("btnGenerarRespuesta").onclick = async () => {
+  msg("casoError", "");
+  const instruccion = $("casoInstruccion").value.trim();
+  if (!instruccion) return msg("casoError", "Escribe primero qué le tienes que decir al cliente.");
+
+  $("btnGenerarRespuesta").disabled = true;
+  $("btnGenerarRespuesta").textContent = "Redactando…";
+  try {
+    const { mensaje } = await llamarNexaAccion({
+      accion: "redactar_respuesta", caso_id: casoActual.id, instruccion,
+    });
+    $("casoPreview").value = mensaje;
+    $("casoPreviewCaja").classList.remove("oculto");
+  } catch (e) {
+    msg("casoError", e.message || "No se pudo redactar la respuesta.");
+  } finally {
+    $("btnGenerarRespuesta").disabled = false;
+    $("btnGenerarRespuesta").textContent = "Generar respuesta";
+  }
+};
+
+$("btnCancelarRespuesta").onclick = () => {
+  $("casoPreviewCaja").classList.add("oculto");
+};
+
+$("btnEnviarRespuesta").onclick = async () => {
+  msg("casoError", "");
+  const mensaje = $("casoPreview").value.trim();
+  if (!mensaje) return msg("casoError", "El mensaje quedó vacío.");
+  if (!ventanaCasoAbierta) {
+    return msg("casoError", "Se cerró la ventana de 24 horas mientras revisabas. No se puede enviar texto libre ahora.");
+  }
+
+  $("btnEnviarRespuesta").disabled = true;
+  $("btnEnviarRespuesta").textContent = "Enviando…";
+  try {
+    await llamarNexaAccion({
+      accion: "enviar_respuesta", caso_id: casoActual.id,
+      instruccion: $("casoInstruccion").value.trim(), mensaje,
+    });
+    // El texto solo se limpia si el envío salió bien: si falla, se queda
+    // ahí para reintentar sin volver a escribirlo.
+    $("casoInstruccion").value = "";
+    $("casoPreviewCaja").classList.add("oculto");
+    await abrirCaso(casoActual.id);
+    actualizarBadgeCasos();
+  } catch (e) {
+    msg("casoError", e.message || "No se pudo enviar. El texto sigue arriba, puedes reintentar.");
+  } finally {
+    $("btnEnviarRespuesta").disabled = false;
+    $("btnEnviarRespuesta").textContent = "Enviar por WhatsApp";
+  }
+};
+
+$("btnCasoAtendido").onclick = async () => {
+  if (!confirm("¿Marcar este caso como atendido sin mandar respuesta?")) return;
+  try {
+    await llamarNexaAccion({ accion: "marcar_atendido", caso_id: casoActual.id });
+    await abrirCaso(casoActual.id);
+    actualizarBadgeCasos();
+  } catch (e) {
+    msg("casoError", e.message || "No se pudo marcar como atendido.");
+  }
+};
 
 $("btnCasoVolver").onclick = () => { ver("vNexa"); mostrarInicioNexa(); };
 
@@ -2791,6 +3012,7 @@ $("btnCasoArchivar").onclick = async () => {
   }).eq("id", c.id);
   ver("vNexa");
   mostrarInicioNexa();
+  actualizarBadgeCasos();
 };
 
 // PAZ propone, la persona confirma. Igual que desde el chat: esto solo

@@ -25,6 +25,8 @@ const json = (cuerpo: unknown, status = 200) =>
 const URL_SUPABASE = Deno.env.get("SUPABASE_URL")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const GRAPH = "https://graph.facebook.com/v21.0";
+const VENTANA_MS = 24 * 3600_000;
 
 // El prompt de PAZ está escrito pensando en el cliente por WhatsApp. Cuando
 // la llaman desde la app, quien escribe es alguien del equipo pasando lo que
@@ -55,6 +57,24 @@ function extraerTexto(data: any): string {
   if (partes.length) return partes.join("\n").trim();
   const viejo = data?.choices?.[0]?.message?.content;
   return typeof viejo === "string" ? viejo.trim() : "";
+}
+
+// El mismo cálculo de "Enviar mensaje" de la función de WhatsApp, acá
+// también: los secretos WHATSAPP_* son del proyecto, no de una función
+// en particular, así que están disponibles igual.
+async function responderWhatsApp(telefono: string, texto: string) {
+  const r = await fetch(`${GRAPH}/${Deno.env.get("WHATSAPP_PHONE_ID")}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${Deno.env.get("WHATSAPP_TOKEN")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp", to: telefono, type: "text", text: { body: texto },
+    }),
+  });
+  const cuerpo = await r.text();
+  return { ok: r.ok, status: r.status, cuerpo };
 }
 
 async function llamarIA(apiKey: string, modelo: string, instrucciones: string, entrada: unknown) {
@@ -107,7 +127,10 @@ Deno.serve(async (req) => {
       }, 503);
     }
 
-    const { accion = "responder", historial = [], texto = "" } = await req.json();
+    const {
+      accion = "responder", historial = [], texto = "",
+      caso_id, instruccion, mensaje,
+    } = await req.json();
 
     // Enseñarle a PAZ: se le pega una conversación real o una corrección
     // y ella destila los criterios. No los guarda: los propone, y el
@@ -149,6 +172,122 @@ Deno.serve(async (req) => {
       } catch {
         return json({ error: "No se entendió lo que devolvió la IA.", crudo: limpio }, 502);
       }
+    }
+
+    // ── Modo asistido: dueño/coordinador le dictan a PAZ qué decirle
+    // al cliente, en vez de escribirle ellos mismos por WhatsApp. ──
+    //
+    // "instrucción interna" es para PAZ, nunca se manda tal cual al
+    // cliente: PAZ la redacta en un mensaje claro y corto, y una persona
+    // la revisa antes de que salga.
+    if (accion === "redactar_respuesta" || accion === "enviar_respuesta") {
+      if (!caso_id) return json({ error: "Falta el caso." }, 400);
+      const admin = createClient(URL_SUPABASE, SERVICE);
+      const { data: caso } = await admin.from("casos")
+        .select("id,conversacion_id,cliente_nombre,patente,vehiculo_modelo,falla_reportada,resumen_tecnico,atencion,ubicacion_texto")
+        .eq("id", caso_id).single();
+      if (!caso) return json({ error: "No se encontró el caso." }, 404);
+
+      const { data: conv } = await admin.from("nexa_conversaciones")
+        .select("telefono").eq("id", caso.conversacion_id).single();
+      if (!conv?.telefono) return json({ error: "El caso no tiene un teléfono asociado." }, 400);
+
+      // La ventana de 24 horas: si el cliente escribió último hace menos
+      // de 24 horas, se le puede responder texto libre y gratis. Si no,
+      // WhatsApp solo deja plantillas aprobadas — no construidas todavía.
+      const { data: ultimo } = await admin.from("nexa_mensajes")
+        .select("creado_en").eq("conversacion_id", caso.conversacion_id).eq("rol", "user")
+        .order("creado_en", { ascending: false }).limit(1).maybeSingle();
+      const msRestantes = ultimo
+        ? VENTANA_MS - (Date.now() - new Date(ultimo.creado_en).getTime())
+        : -1;
+      const ventanaAbierta = msRestantes > 0;
+
+      if (accion === "redactar_respuesta") {
+        if (!instruccion?.trim()) return json({ error: "Escribe primero qué le tienes que decir al cliente." }, 400);
+
+        const contexto = [
+          `Cliente: ${caso.cliente_nombre ?? "sin nombre"}.`,
+          caso.patente ? `Patente: ${caso.patente}.` : "",
+          caso.vehiculo_modelo ? `Vehículo: ${caso.vehiculo_modelo}.` : "",
+          (caso.resumen_tecnico || caso.falla_reportada) ? `Caso: ${caso.resumen_tecnico ?? caso.falla_reportada}.` : "",
+        ].filter(Boolean).join(" ");
+
+        const instrucciones = [
+          cfg.prompt,
+          "",
+          "AHORA NO ESTÁS CONVERSANDO CON EL CLIENTE. Alguien del equipo te está",
+          "dando una instrucción interna sobre qué decirle. Redacta el mensaje",
+          "que se le va a mandar al cliente por WhatsApp, listo para enviar.",
+          "",
+          `Contexto del caso: ${contexto}`,
+          "",
+          "Reglas:",
+          "- Corto, claro, como se escribe por WhatsApp. Nada de firma ni encabezados.",
+          "- Di exactamente lo que la instrucción pide, ni más ni menos: no agregues",
+          "  compromisos, precios ni plazos que la instrucción no haya dicho.",
+          "- No inventes datos del caso que no estén en el contexto de arriba.",
+          "- Sin nombres de personas del equipo ni jerga interna.",
+          "- Devuelve SOLO el mensaje, sin comillas ni explicación.",
+        ].join("\n");
+
+        const texto = await llamarIA(apiKey, cfg.modelo, instrucciones, [
+          { role: "user", content: instruccion },
+        ]);
+        if (!texto) return json({ error: "La IA no devolvió nada. Reintenta." }, 502);
+
+        return json({
+          mensaje: texto.replaceAll("**", "").replaceAll("*", ""),
+          ventana_abierta: ventanaAbierta,
+          ventana_horas_restantes: ventanaAbierta ? Math.floor(msRestantes / 3600_000) : 0,
+          ventana_minutos_restantes: ventanaAbierta ? Math.floor((msRestantes % 3600_000) / 60_000) : 0,
+        });
+      }
+
+      // accion === "enviar_respuesta"
+      if (!mensaje?.trim()) return json({ error: "El mensaje está vacío." }, 400);
+      if (!ventanaAbierta) {
+        return json({
+          error: "Pasaron más de 24 horas desde el último mensaje del cliente. " +
+                 "WhatsApp ya no deja texto libre; hace falta una plantilla aprobada, que todavía no está lista.",
+        }, 409);
+      }
+
+      const envio = await responderWhatsApp(conv.telefono, mensaje);
+      // Se guarda el intento haya salido bien o mal: si falló, queda el
+      // rastro y el texto no se pierde.
+      await admin.from("paz_respuestas_asistidas").insert({
+        caso_id: caso.id, conversacion_id: caso.conversacion_id,
+        instruccion_interna: instruccion ?? "", mensaje_generado: mensaje,
+        mensaje_enviado: envio.ok ? mensaje : null, enviado: envio.ok,
+        error: envio.ok ? null : envio.cuerpo.slice(0, 500),
+        creado_por: user.id, rol_creador: perfil.rol,
+        enviado_en: envio.ok ? new Date().toISOString() : null,
+      });
+
+      if (!envio.ok) {
+        return json({ error: "WhatsApp no aceptó el envío. El texto no se perdió, puedes reintentar." }, 502);
+      }
+
+      await admin.from("nexa_mensajes").insert({
+        conversacion_id: caso.conversacion_id, rol: "assistant", contenido: mensaje,
+        humano_asistido: true, escrito_por: user.id,
+      });
+      await admin.from("casos").update({
+        requiere_respuesta_humana: false, atendida_por: user.id, atendida_en: new Date().toISOString(),
+      }).eq("id", caso.id);
+
+      return json({ ok: true });
+    }
+
+    if (accion === "marcar_atendido") {
+      if (!caso_id) return json({ error: "Falta el caso." }, 400);
+      const admin = createClient(URL_SUPABASE, SERVICE);
+      const { error } = await admin.from("casos").update({
+        requiere_respuesta_humana: false, atendida_por: user.id, atendida_en: new Date().toISOString(),
+      }).eq("id", caso_id);
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true });
     }
 
     if (!Array.isArray(historial) || !historial.length) {
