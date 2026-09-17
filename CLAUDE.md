@@ -78,11 +78,15 @@ sw.js                   service worker
 22-nexa-app-entrenamiento.sql RPC paz_en_entrenamiento(): bloquea crear OT desde el chat interno en modo aprendizaje
 23-audio-whatsapp.sql        nexa_archivos admite categoria 'audio_cliente'
 24-entregado-en.sql          ordenes.entregado_en: hecho aparte para saber si el módulo salió de verdad
+25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
+26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
+27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
+28-proteger-pago-tecnico.sql pagado_en/comercial/numero_factura protegidos igual que monto_final
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 ```
 
-**De la 01 a la 24 están todas aplicadas en la base real** (verificado el
+**De la 01 a la 27 están todas aplicadas en la base real** (verificado el
 17-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
 en este documento: preguntarle a la base.
 
@@ -165,6 +169,128 @@ No se agregaron estados nuevos para `servicio`: reutiliza los que ya existían.
 El estado `resuelto_en_terreno` importa en los dos flujos de terreno: es
 trabajo que se factura sin que exista módulo (o sin que se haya retirado
 ninguno). Si se pierde, la facturación no cuadra.
+
+**Todo lo de arriba (`estado`, `FLUJO`) es el modelo viejo.** Sigue
+existiendo en la base y se sigue escribiendo, pero desde el 17-09-2026
+**ya no es lo que lee la app** -- ver "Los cuatro ejes" justo abajo.
+
+### Los cuatro ejes reemplazan a `estado` (17-09-2026)
+
+Propuesta de Jonatan, dicha así: *"Estado físico del módulo, estado de
+la reparación y estado del pago los mezclas, y ahí se forma el enredo y
+se ensucia la app con botones que no son necesarios."* Tenía razón:
+`estado` era una sola lista de 16 valores contestando cuatro preguntas
+distintas a la vez, y **cada bug real de ese mismo día** (Garantía
+apareciendo en una OT recién agendada, la sección Agenda sobrando en un
+módulo que nació de una visita, "Pagada" mostrando el flujo completo
+hacia atrás, "facturado" escondiendo una OT sin entregar) salió de esa
+mezcla.
+
+Ahora son cuatro columnas independientes en `ordenes`
+(`25-cuatro-ejes-estado.sql`), cada una contestando una sola pregunta:
+
+- **`ubicacion`** (`con_cliente` → `en_transito` → `en_taller` →
+  `entregado`) -- ¿dónde está el objeto? **`null` en terreno+servicio**:
+  no hay módulo que mover, no aplica.
+- **`reparacion`** (`por_diagnosticar` → `en_diagnostico` →
+  `diagnosticado` → `en_reparacion` → `en_pruebas` → `listo`, más
+  `irreparable` como salida) -- ¿qué se le ha hecho técnicamente?
+- **`comercial`** (`sin_cotizar` → `cotizado` → `aprobado` / `rechazado`)
+  -- ¿qué dijo el cliente sobre el precio? La maneja la pantalla
+  Cotizar (guardar una cotización avanza a `cotizado`) y el botón
+  "Cliente aprobó la cotización" (`aprobado`). Nunca se preguntó
+  "¿qué dijo el cliente" mezclado con "¿qué se le hizo" -- son
+  preguntas distintas, y `aprobado_cliente`/`fecha_aprobacion` (de
+  antes) ya apuntaban en esta dirección, solo que sueltas.
+- **`pagado_en`** (timestamp o null) -- ¿cuándo entró la plata? La
+  maneja la pantalla Facturar. Reemplaza a `estado = 'facturado'`.
+
+**`estado` se sigue escribiendo, como espejo derivado** (`estadoLegado(o)`
+en `index.html`), **solo** para que `resumen_rentabilidad`,
+`rentabilidad_ot` (`11-gastos.sql`) y el historial de
+`movimientos_estado` (`01-schema.sql`) sigan funcionando sin tocarlos --
+no se rehicieron hoy, a propósito, para no agrandar más un cambio ya
+grande. **Nada nuevo debería leer `estado` directo**; es compatibilidad,
+no la fuente de verdad.
+
+**Qué contesta cada función clave ahora** (todas en `index.html`):
+
+- `estaCerrada(o)` -- ¿se esconde del tablero? `comercial === 'rechazado'`,
+  o `pagado_en` puesto **y** (`ubicacion === 'entregado'` o `ubicacion`
+  es `null`, es decir terreno+servicio).
+- `noSeEdita(o)` -- ¿ya no se puede seguir tocando? `pagado_en` puesto,
+  o `comercial === 'rechazado'`. Sigue siendo una pregunta distinta de
+  `estaCerrada`: "Pagada · módulo aún en el taller" no está cerrada
+  (sigue en el tablero) pero tampoco se edita.
+- `etiquetaEstado(o)` / `tonoEstado(o)` -- arman el texto y el color del
+  chip combinando los cuatro ejes. Un caso con matiz: `reparacion ===
+  'listo'` es ambiguo por sí solo -- para un módulo que sigue en el
+  taller es "Listo para entrega" (positivo, nada pendiente de
+  nuestro lado); para un servicio (que se resuelve donde mismo, sin
+  fase de "listo para retirar") o un módulo ya `entregado`, es
+  "falta cobrar" (con el mismo matiz que tenían antes `entregado`/
+  `instalado`/`resuelto_en_terreno`).
+- `seccionDe(o)` -- sigue igual, por `tipo_trabajo` puro (no tocado hoy).
+- `seccionAgendaDe(o)` -- ahora es una línea: la visita sigue activa
+  mientras `ubicacion` sea `con_cliente` o `en_transito`; en cuanto
+  llega a `en_taller` la visita ya terminó.
+
+**Garantía ya no es un valor de `estado` que se le pisa a la misma
+fila** -- era el mismo hueco de siempre (una fila reescrita pierde el
+rastro de por dónde había pasado). Ahora `iniciarGarantia()` reingresa
+como **una OT nueva**, vinculada a la anterior con `orden_padre_id`
+(mismo patrón que "+ Se retiró un módulo en esta visita", con
+`garantiaDesdeOrden` como variable global paralela a
+`moduloDesdeOrden`), con los cuatro ejes arrancando de cero -- es un
+trabajo nuevo de verdad, aunque sea sobre el mismo módulo. Efecto
+secundario a propósito: "Garantía" solo se ofrece cuando `estaCerrada(o)`
+es verdadero -- no puede haber garantía de algo que nunca se entregó.
+
+**Botones de "Cambiar a" en el detalle**: antes era una sola lista
+lineal (`pintarEstados`). Ahora son **dos grupos independientes**
+(`grupoSecuencia()`), uno para ubicación (solo si `tipo_trabajo ===
+'modulo'`) y otro para reparación -- cada uno con su propio "siguiente
+paso" al frente y el resto detrás de "Cambiar manualmente ▾".
+"Irreparable" solo aparece una vez que el módulo ya está en el taller
+(`ubicacion` en `en_taller`/`entregado`) -- no se puede diagnosticar
+algo que sigue con el técnico o con el cliente.
+
+**Backfill de las OT reales que ya existían** (`26-backfill-cuatro-ejes.sql`,
+22 filas al momento de migrar, ninguna en un estado de excepción
+todavía): mapeo directo desde `estado`/`entregado_en`, con un ajuste
+encontrado al mirar los datos de verdad -- `aprobado_cliente` estaba en
+`false` en las 3 OT ya facturadas (Naranjo, Jar Spa, y una tercera),
+porque el estado se había avanzado con "Cambiar estado manualmente" en
+vez de pasar por el botón "Cliente aprobó la cotización". El backfill
+no confió en ese booleano: si el trabajo ya había avanzado más allá de
+"cotizado" (entró a reparación, pruebas, quedó listo, o se facturó),
+eso ya prueba que hubo aprobación, la haya registrado el botón o no.
+`pagado_en` de OT ya facturadas antes de esta migración es aproximado
+(`fecha_cierre` o `actualizado_en`, lo más cercano que había registrado)
+-- de acá en adelante Facturar guarda el momento real.
+
+**Respaldo manual antes de aplicar nada de esto**: como no hay Docker
+en este entorno para `supabase db dump` (necesita el `db_url` +
+contenedor), el respaldo se hizo con `select json_agg(t) from tabla`
+por consulta, guardado en `respaldos/` (`ordenes`, `clientes`,
+`vehiculos`, `movimientos_estado`, `cotizaciones`, con fecha en el
+nombre). No reemplaza un dump real, pero alcanza para reconstruir a
+mano si algo sale mal. El proyecto ya está en Supabase Pro (con
+PITR real) desde este mismo día -- ese es el respaldo de fondo.
+
+**`proteger_campos_tecnico` sí se actualizó** (`28-proteger-pago-tecnico.sql`):
+`pagado_en`, `comercial` y `numero_factura` quedaron protegidos igual
+que `monto_final` -- un técnico no debería poder marcar una OT como
+pagada escribiendo directo por API, aunque el front no le ofrezca el
+botón. `ubicacion`/`reparacion` se dejaron **sin proteger**, a propósito:
+son equivalentes a mover `estado`, que el técnico siempre pudo cambiar
+-- es su trabajo del día a día, no un dato financiero.
+
+**Qué no se tocó hoy, a propósito** (para no agrandar más un cambio ya
+grande en una sola sesión): `resumen_rentabilidad`, `rentabilidad_ot`
+(siguen leyendo `estado`, vía el espejo `estadoLegado`), y el trigger
+`registrar_cambio_estado`/`movimientos_estado` (sigue registrando
+`estado`, no los cuatro ejes por separado).
 
 ## Roles y permisos
 
