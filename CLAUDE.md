@@ -573,6 +573,32 @@ trabajo. `cargarOrdenes()` y `cargarAgendaSemana()` (la pestaña
 Terreno/Laboratorio de la Agenda, que tenía el mismo problema) usan
 `seccionDe` en vez de comparar `origen` directo.
 
+**Cuatro ajustes más finos, misma sesión (17-09-2026), a pedido de
+Jonatan de revisar con más precisión antes de tocar código:**
+
+- **La Agenda necesita su propio criterio, distinto al del tablero.**
+  `seccionDe` (tablero) contesta "de quién es el trabajo" — correcto que
+  sea por `tipo_trabajo`. Pero la Agenda contesta "¿a dónde hay que ir?",
+  y un módulo agendado para retiro que todavía no se retira **es una
+  visita real** (alguien maneja hasta allá), aunque el trabajo en sí
+  termine siendo de laboratorio. Se agregó `seccionAgendaDe(o)`, que usa
+  el estado (¿la visita ya pasó o no?) en vez del tipo de trabajo, solo
+  para la pestaña Terreno/Laboratorio dentro de la Agenda. **Ojo:** por
+  esto mismo, "+ Agendar esta orden" al elegir "Llegó al laboratorio" **sí
+  es correcto y no se tocó** — es la fecha estimada en que el cliente
+  avisa que manda o trae el módulo (ver "Caso laboratorio" más abajo), no
+  una visita.
+- **El atajo "+ Se retiró un módulo" nace en "Retirado", no en
+  "Agendado", y no ofrece agendar.** La visita ya está pasando cuando se
+  usa ese botón — agendarla de nuevo no tiene sentido, y "Agendado" habría
+  sugerido que todavía falta ir a buscarlo.
+- **Ese mismo botón desaparece una vez que el módulo ya avanzó** (pasó
+  `recepcionado` en el laboratorio) — mostrarlo ahí sugeriría que la
+  visita sigue activa cuando ya terminó hace días.
+- **"Tomar foto de recepción" ahora dice solo "Tomar foto" en un
+  servicio** — nada se "recibe" al reparar algo directo en el camión, esa
+  frase es lenguaje de módulo.
+
 **"Módulos por recepcionar" en la Agenda (17-09-2026).** Pedido directo
 de Jonatan: cuando un módulo retirado en terreno pasa a ser
 responsabilidad del laboratorio, alguien tiene que acordarse de pedirlo

@@ -447,7 +447,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div class="miniaturas" id="previaFoto"></div>
       </div>
 
-      <div class="seccion">
+      <div class="seccion" id="seccionAgendarNueva">
         <button type="button" class="btn claro" id="btnToggleAgendar">+ Agendar esta orden</button>
         <div id="camposAgenda" class="oculto" style="margin-top:14px">
           <div class="campo">
@@ -473,6 +473,9 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
             </select>
           </div>
         </div>
+      </div>
+      <div class="pista oculto" id="pistaSinAgendar" style="margin:-4px 0 14px">
+        Esta visita ya está en curso — no hace falta agendarla de nuevo.
       </div>
 
       <button class="btn" id="btnGuardar">Guardar orden</button>
@@ -1066,6 +1069,23 @@ function seccionDe(o) {
   return o.tipo_trabajo === "modulo" ? "laboratorio" : "terreno";
 }
 
+// La Agenda no contesta "de quién es el trabajo" (eso es seccionDe, para
+// el tablero) -- contesta "¿a dónde hay que ir?". Un módulo agendado
+// para retiro y que todavía no se retira es una visita real: alguien
+// tiene que manejar hasta allá, así que tiene que verse en Terreno
+// aunque el trabajo en sí termine siendo de laboratorio. Una vez
+// "Retirado" la visita ya pasó, y desde ahí se ve donde seccionDe lo
+// pondría igual. Mismos estados que PASOS_FISICOS más "en_terreno" y
+// "agendado", porque acá lo que importa es si la visita sigue pendiente,
+// no si ya hubo un paso físico de término.
+const TERRENO_MODULO_VISITA_PENDIENTE = ["agendado", "en_terreno", "resuelto_en_terreno", "retirado"];
+function seccionAgendaDe(o) {
+  if (o.origen === "terreno" && o.tipo_trabajo === "modulo" && !TERRENO_MODULO_VISITA_PENDIENTE.includes(o.estado)) {
+    return "laboratorio";
+  }
+  return o.origen;
+}
+
 // "Irreparable" es un resultado de diagnóstico -- solo tiene sentido en un
 // flujo que de verdad pasa por diagnóstico (laboratorio, o terreno+módulo
 // porque el módulo retirado también se diagnostica allá). En terreno+
@@ -1375,15 +1395,15 @@ async function cargarAgendaSemana() {
     return;
   }
 
-  // Misma regla que el tablero (seccionDe): un módulo es de laboratorio
-  // aunque haya nacido de una visita a terreno -- las dos pestañas no
-  // pueden mostrar el mismo módulo a la vez.
+  // Acá NO va seccionDe (esa es "de quién es el trabajo", para el
+  // tablero) -- va seccionAgendaDe ("¿a dónde hay que ir?"). Un módulo
+  // agendado para retiro que todavía no se retira es una visita real.
   const cuenta = { terreno: 0, laboratorio: 0 };
-  data.forEach(o => { const s = seccionDe(o); if (cuenta[s] !== undefined) cuenta[s]++; });
+  data.forEach(o => { const s = seccionAgendaDe(o); if (cuenta[s] !== undefined) cuenta[s]++; });
   $("selAgendaOrigen").querySelector('[data-v="terreno"]').textContent = `Terreno (${cuenta.terreno})`;
   $("selAgendaOrigen").querySelector('[data-v="laboratorio"]').textContent = `Laboratorio (${cuenta.laboratorio})`;
 
-  const dePestana = data.filter(o => seccionDe(o) === agendaOrigenActiva);
+  const dePestana = data.filter(o => seccionAgendaDe(o) === agendaOrigenActiva);
   if (!dePestana.length) {
     const otra = agendaOrigenActiva === "terreno" ? "laboratorio" : "terreno";
     const pista = cuenta[otra]
@@ -1491,6 +1511,9 @@ $("selTipoTrabajo").querySelectorAll("button").forEach(b => {
     $("campoOrigen").classList.toggle("oculto", esServicio);
     $("campoModulo").classList.toggle("oculto", esServicio);
     $("campoSistema").classList.toggle("oculto", !esServicio);
+    // "De recepción" es lenguaje de módulo -- en un servicio no se
+    // recibe nada, se arregla directo en el camión.
+    $("lblFoto").textContent = esServicio ? "Tomar foto" : "Tomar foto de recepción";
   });
 });
 
@@ -1595,7 +1618,10 @@ $("btnGuardar").onclick = async () => {
     const { data: orden, error } = await db.from("ordenes").insert({
       origen,
       tipo_trabajo,
-      estado: origen === "terreno" ? "agendado" : "recepcionado",
+      // Si nace de "+ Se retiró un módulo en esta visita", la visita ya
+      // está pasando ahora mismo -- no es "Agendado" (como si faltara ir),
+      // es "Retirado, en tránsito" directo, porque el técnico ya lo tiene.
+      estado: moduloDesdeOrden ? "retirado" : (origen === "terreno" ? "agendado" : "recepcionado"),
       cliente_id, vehiculo_id,
       tipo_modulo: esServicio ? null : tipo,
       sistema: esServicio ? sistema : null,
@@ -1657,6 +1683,8 @@ function limpiarForm() {
   $("fTecnicoAgendado").value = "";
   $("camposAgenda").classList.add("oculto");
   $("btnToggleAgendar").textContent = "+ Agendar esta orden";
+  $("seccionAgendarNueva").classList.remove("oculto");
+  $("pistaSinAgendar").classList.add("oculto");
 }
 
 async function clienteConRut(nombre, rut) {
@@ -1764,7 +1792,12 @@ async function abrirDetalle(o) {
 
   pintarEstados(o);
   pintarVinculos(o);
-  $("btnRetiroModulo").classList.toggle("oculto", o.origen !== "terreno");
+  // Solo mientras la visita sigue pendiente/en curso -- una vez que un
+  // módulo ya se retiró y avanzó (recepcionado en el laboratorio y más
+  // allá), esta visita terminó y el botón no corresponde: mostrarlo ahí
+  // sugiere que se puede seguir "retirando" desde algo que ya se cerró.
+  $("btnRetiroModulo").classList.toggle("oculto", o.origen !== "terreno" ||
+    (o.tipo_trabajo === "modulo" && !TERRENO_MODULO_VISITA_PENDIENTE.includes(o.estado)));
 
   $("btnCotizar").classList.toggle("oculto", perfil?.rol === "tecnico");
   $("btnAprobar").classList.toggle("oculto",
@@ -1822,6 +1855,11 @@ $("btnRetiroModulo").onclick = () => {
   $("fPatente").value = ordenActual.vehiculos?.patente ?? "";
   $("selTipoTrabajo").querySelector('[data-v="modulo"]').click();
   $("selOrigen").querySelector('[data-v="terreno"]').click();
+  // La visita ya está pasando ahora mismo -- no hay nada que agendar,
+  // y el módulo nace directo "Retirado" (btnGuardar lo decide mirando
+  // moduloDesdeOrden), no "Agendado" como si faltara ir a buscarlo.
+  $("seccionAgendarNueva").classList.add("oculto");
+  $("pistaSinAgendar").classList.remove("oculto");
   ver("vNueva");
 };
 
