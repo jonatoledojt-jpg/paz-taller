@@ -1002,14 +1002,14 @@ const ETIQUETA = {
   agendado:"Agendado", en_terreno:"En terreno", resuelto_en_terreno:"Resuelto en terreno",
   retirado:"Retirado, en tránsito", recepcionado:"Recepcionado", en_diagnostico:"En diagnóstico",
   cotizado:"Cotizado, esperando al cliente", en_reparacion:"En reparación", en_pruebas:"En pruebas",
-  listo_entrega:"Listo para entrega", instalado:"Instalado", entregado:"Entregado",
+  listo_entrega:"Listo para entrega", instalado:"Instalado", entregado:"Entregado · falta cobrar",
   facturado:"Facturado", irreparable:"Irreparable", rechazado:"Cotización rechazada", garantia:"Garantía"
 };
 const TONO = {
   agendado:"terreno", en_terreno:"terreno", retirado:"terreno",
   en_diagnostico:"trabajo", en_reparacion:"trabajo", en_pruebas:"trabajo",
-  cotizado:"espera", garantia:"espera",
-  listo_entrega:"listo", instalado:"listo", entregado:"listo",
+  cotizado:"espera", garantia:"espera", entregado:"espera",
+  listo_entrega:"listo", instalado:"listo",
   resuelto_en_terreno:"listo", facturado:"listo"
 };
 const FLUJO = {
@@ -1021,7 +1021,13 @@ const FLUJO = {
 };
 const flujoDe = o => FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || FLUJO.laboratorio_modulo;
 const EXCEPCIONES = ["irreparable","rechazado","garantia"];
-const CERRADOS = ["facturado","entregado","instalado","resuelto_en_terreno","rechazado"];
+// "entregado" NO es un cierre real en el flujo de laboratorio: el módulo
+// salió, pero falta cobrar (el siguiente paso del flujo es "facturado").
+// Estaba en esta lista por error y sacaba la OT del tablero antes de
+// cobrar -- encontrado en vivo el 17-09-2026 con dos OT reales (Siria,
+// Rio Negro) que desaparecieron entregadas y sin pago. "facturado" ya
+// cubre el cierre real de ese flujo; no hace falta un estado nuevo.
+const CERRADOS = ["facturado","instalado","resuelto_en_terreno","rechazado"];
 
 const ETIQUETA_FRANJA = { manana:"Mañana", tarde:"Tarde", todo_el_dia:"Todo el día" };
 const DIAS_SEMANA = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];

@@ -343,6 +343,23 @@ Al guardar bien, el formulario se limpia solo (un ítem vacío, validez 15) y
 avisa en verde con el número nuevo. Si falla, **no se limpia nada** para no
 perder lo escrito.
 
+**Bug real: "entregado" sacaba la OT del tablero antes de cobrar
+(17-09-2026).** `CERRADOS` (la lista de estados que se filtran del tablero
+principal) tenía `entregado` junto con los estados que sí son cierre real.
+Pero en el flujo de laboratorio, `entregado` va **antes** de `facturado` —
+el módulo salió, pero falta cobrar. Encontrado en producción con dos OT
+reales (`OT-2026-0009` "Siria", `OT-2026-0010` "Rio Negro") que
+desaparecieron del tablero entregadas y sin pago. Se sacó `entregado` de
+`CERRADOS`; ahora sigue visible con la etiqueta "Entregado · falta cobrar"
+(tono de espera, no de listo) hasta que se factura de verdad. Las dos OT
+afectadas no necesitaron cambiar de estado — ya estaban bien en
+`entregado`, solo tenían un `fecha_cierre` puesto de más (se limpió).
+**No se agregó un estado "Cerrado" nuevo ni columnas de pago separadas**
+(se propuso una lista más grande de cambios — modal al entregar, tabla de
+pagos, `pagado`/`medio_pago`/etc. — pero `facturado` ya cumple ese rol de
+cierre real para este flujo, y agregar un estado que no encaja en los
+otros dos flujos de `FLUJO` era más riesgo del que pedía el bug real).
+
 **Facturar: con o sin factura (17-09-2026).** Al entregar un módulo se cobra
 ahí mismo, casi siempre en efectivo y sin factura — el monto que se escribe
 ya es neto. A veces sí se emite factura, y ahí lo que se cobra incluye IVA.
