@@ -545,6 +545,36 @@ siempre). No es una tabla nueva ni una política de base aparte: la
 pantalla simplemente no existe para nadie más, mismo criterio que
 "Enseñarle a PAZ".
 
+**Un módulo retirado en terreno se quedaba atrapado en la pestaña
+Terreno para siempre (17-09-2026).** Jonatan lo anticipó antes de que
+pasara de verdad, revisando el caso de Germán Morales / módulo VRDU: el
+tablero separaba Terreno y Laboratorio solo por `origen`, y un módulo
+retirado nace con `origen = terreno` — así que nunca iba a aparecer en la
+cola del laboratorio, aunque pase ahí casi toda su vida (diagnóstico,
+reparación, pruebas). El riesgo real que describió: si al técnico se le
+olvida bajar el módulo de la camioneta, nadie en el laboratorio lo iba a
+notar, porque ni siquiera aparecía en su pantalla.
+
+Se evaluó volver a creación 100% manual (que el laboratorio genere la OT
+recién cuando el módulo llega físicamente), pero eso reabre el mismo
+riesgo al revés: si no queda ningún registro hasta que alguien lo crea a
+mano, y el técnico nunca lo entrega, **no hay ningún rastro de que algo
+se esperaba** — no hay nada que echar de menos.
+
+Se resolvió con `seccionDe(o)`: la pestaña que corresponde depende de
+**dónde está físicamente ahora**, no de dónde nació. Un módulo retirado en
+terreno (`origen=terreno`, `tipo_trabajo=modulo`) se ve en **Terreno**
+mientras el estado sea `agendado`/`en_terreno`/`resuelto_en_terreno`/
+`retirado` — ahí es donde hay que acordarse de bajarlo de la camioneta.
+Desde `recepcionado` en adelante (alguien del laboratorio confirmó que
+llegó de verdad) pasa a verse en **Laboratorio**. Esa confirmación
+explícita —alguien tiene que marcar "Recepcionado"— es lo que evita que
+algo se dé por recibido sin haber llegado de verdad; y mientras nadie la
+marque, sigue visible en Terreno como pendiente, no invisible en ninguna
+parte. `cargarOrdenes()` ya no filtra por `origen` en el servidor (trae
+las dos y separa con `seccionDe` en el cliente, mismo criterio que
+`estaCerrada`).
+
 **"+ Se retiró un módulo en esta visita" (17-09-2026).** Salió de un caso
 real: una visita a terreno donde se repara algo directo en el camión
 (servicio) Y aparte se retira un módulo para el laboratorio — dos

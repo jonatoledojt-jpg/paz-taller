@@ -1047,6 +1047,27 @@ const FLUJO = {
 };
 const flujoDe = o => FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || FLUJO.laboratorio_modulo;
 
+// Un módulo retirado en terreno (origen=terreno, tipo_trabajo=modulo)
+// pasa la mayor parte de su vida físicamente en el laboratorio -- pero
+// el tablero separaba las pestañas solo por `origen`, así que se
+// quedaba atrapado en "Terreno" para siempre y el laboratorio nunca lo
+// veía en su cola. Encontrado en vivo el 17-09-2026 (Germán Morales,
+// módulo VRDU) antes de que llegara a pasar. La pestaña que corresponde
+// depende de dónde está físicamente AHORA, no de dónde nació: mientras
+// el técnico todavía lo tiene (agendado/en_terreno/resuelto en
+// terreno/retirado) se ve en Terreno -- ahí es donde hay que acordarse
+// de bajarlo de la camioneta. Desde "recepcionado" en adelante (alguien
+// en el laboratorio confirmó que llegó) se ve en Laboratorio. Esa misma
+// confirmación explícita es la que evita que algo se dé por recibido
+// sin que de verdad haya llegado.
+const TERRENO_MODULO_EN_TERRENO = ["agendado", "en_terreno", "resuelto_en_terreno", "retirado"];
+function seccionDe(o) {
+  if (o.origen === "terreno" && o.tipo_trabajo === "modulo" && !TERRENO_MODULO_EN_TERRENO.includes(o.estado)) {
+    return "laboratorio";
+  }
+  return o.origen;
+}
+
 // "Irreparable" es un resultado de diagnóstico -- solo tiene sentido en un
 // flujo que de verdad pasa por diagnóstico (laboratorio, o terreno+módulo
 // porque el módulo retirado también se diagnostica allá). En terreno+
@@ -1241,12 +1262,13 @@ function tarjetaOT(o, opts = {}) {
 
 async function cargarOrdenes() {
   $("listaOT").innerHTML = '<div class="cargando">Cargando órdenes…</div>';
-  // El filtro de "cerrada" mira más de una columna (estaCerrada), así que
-  // acá solo se descartan en el servidor los cierres sin ambigüedad
-  // (CERRADOS); "entregado"/"facturado" se filtran en el cliente.
+  // Ya no se filtra por "origen" en el servidor: un módulo retirado en
+  // terreno tiene que poder aparecer en Laboratorio una vez recepcionado
+  // (ver seccionDe). El filtro de "cerrada" también mira más de una
+  // columna (estaCerrada), así que acá solo se descartan en el servidor
+  // los cierres sin ambigüedad (CERRADOS); el resto se filtra en el cliente.
   const { data, error } = await db.from("ordenes")
     .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,clientes(nombre,rut),vehiculos(patente)")
-    .eq("origen", seccionActiva)
     .not("estado", "in", `(${CERRADOS.join(",")})`)
     .order("fecha_ingreso", { ascending: false });
 
@@ -1254,7 +1276,7 @@ async function cargarOrdenes() {
     $("listaOT").innerHTML = '<div class="aviso">No se pudieron cargar las órdenes. Revisa tu conexión.</div>';
     return;
   }
-  const abiertas = data.filter(o => !estaCerrada(o));
+  const abiertas = data.filter(o => !estaCerrada(o) && seccionDe(o) === seccionActiva);
   if (!abiertas.length) {
     $("listaOT").innerHTML = '<div class="vacio"><p>No hay órdenes abiertas en esta sección.</p></div>';
     return;
