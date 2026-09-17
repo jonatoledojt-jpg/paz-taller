@@ -1722,6 +1722,31 @@ function pintarEstados(o) {
     <span class="chip ${tonoEstado(o)}" style="margin-top:0">${etiquetaEstado(o)}</span>`;
   cont.appendChild(actual);
 
+  // Una OT cerrada no debería invitar a seguir cambiándole el estado como
+  // si el trabajo siguiera abierto -- "Cambiar estado manualmente" ahí
+  // ofrecía recepcionado/en_diagnostico/etc. sobre algo ya facturado y
+  // entregado. La única puerta real que se deja abierta es Garantía: un
+  // cliente puede volver por un trabajo ya cerrado, y eso sí necesita
+  // reabrir la OT.
+  if (estaCerrada(o)) {
+    const aviso = document.createElement("div");
+    aviso.className = "pista";
+    aviso.style.marginTop = "10px";
+    aviso.textContent = "Esta OT ya está cerrada.";
+    cont.appendChild(aviso);
+    if (o.estado !== "garantia") {
+      const rot = document.createElement("span");
+      rot.className = "rotulo sep";
+      rot.textContent = "Cambiar a";
+      cont.appendChild(rot);
+      const b = document.createElement("button");
+      b.textContent = "Garantía (reingresa la OT)";
+      b.onclick = () => cambiarEstado("garantia");
+      cont.appendChild(b);
+    }
+    return;
+  }
+
   const flujo = flujoDe(o);
   const idxActual = flujo.indexOf(o.estado);
   const siguiente = idxActual >= 0 && idxActual < flujo.length - 1 ? flujo[idxActual + 1] : null;
@@ -1796,12 +1821,18 @@ async function abrirDetalle(o) {
   // módulo ya se retiró y avanzó (recepcionado en el laboratorio y más
   // allá), esta visita terminó y el botón no corresponde: mostrarlo ahí
   // sugiere que se puede seguir "retirando" desde algo que ya se cerró.
-  $("btnRetiroModulo").classList.toggle("oculto", o.origen !== "terreno" ||
+  $("btnRetiroModulo").classList.toggle("oculto", estaCerrada(o) || o.origen !== "terreno" ||
     (o.tipo_trabajo === "modulo" && !TERRENO_MODULO_VISITA_PENDIENTE.includes(o.estado)));
 
-  $("btnCotizar").classList.toggle("oculto", perfil?.rol === "tecnico");
+  // Cotizar y aprobar tampoco corresponden en una OT cerrada -- el
+  // trabajo ya se cobró (o se rechazó), no hay nada que volver a cotizar.
+  $("btnCotizar").classList.toggle("oculto", estaCerrada(o) || perfil?.rol === "tecnico");
   $("btnAprobar").classList.toggle("oculto",
-    perfil?.rol === "tecnico" || o.aprobado_cliente === true);
+    estaCerrada(o) || perfil?.rol === "tecnico" || o.aprobado_cliente === true);
+  // "Informe técnico" también escribe monto_final y observaciones al
+  // generarlo -- en una OT cerrada eso puede pisar sin querer el monto
+  // que ya se facturó de verdad.
+  $("btnCierre").classList.toggle("oculto", estaCerrada(o));
 
   pintarAgendaDet(o);
   pintarMargenOT(o);
@@ -1864,7 +1895,9 @@ $("btnRetiroModulo").onclick = () => {
 };
 
 function pintarAgendaDet(o) {
-  const puedeEditar = ["dueno","coordinador"].includes(perfil?.rol);
+  // Editar la agenda de una OT cerrada no corresponde -- el trabajo ya
+  // terminó, reprogramarlo no tiene sentido.
+  const puedeEditar = ["dueno","coordinador"].includes(perfil?.rol) && !estaCerrada(o);
   $("detAgendaEdit").classList.add("oculto");
   $("btnEditarAgendaDet").classList.toggle("oculto", !puedeEditar);
 
@@ -1876,8 +1909,8 @@ function pintarAgendaDet(o) {
       <div class="dato"><span>Técnico agendado</span><span>${escapar(tecnicos.find(t => t.id === o.tecnico_agendado)?.nombre ?? "Sin asignar")}</span></div>
       <div class="enlaces">${link
         ? `<a href="${link}" target="_blank" rel="noopener">Abrir en Maps</a>`
-        : `<a href="#" id="linkAgregarGps">+ Agregar ubicación GPS</a>`}</div>`;
-    if (!link) $("linkAgregarGps").onclick = e => { e.preventDefault(); abrirEdicionAgenda(o); };
+        : (puedeEditar ? `<a href="#" id="linkAgregarGps">+ Agregar ubicación GPS</a>` : "")}</div>`;
+    if (!link && puedeEditar) $("linkAgregarGps").onclick = e => { e.preventDefault(); abrirEdicionAgenda(o); };
   } else {
     $("detAgendaInfo").innerHTML = '<p style="font-size:14px;color:var(--humo);margin:0">Sin agendar.</p>';
   }

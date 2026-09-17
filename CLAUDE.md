@@ -573,6 +573,24 @@ trabajo. `cargarOrdenes()` y `cargarAgendaSemana()` (la pestaña
 Terreno/Laboratorio de la Agenda, que tenía el mismo problema) usan
 `seccionDe` en vez de comparar `origen` directo.
 
+**Una OT cerrada seguía invitando a editarla como si estuviera abierta
+(17-09-2026).** Jonatan: *"fíjate en las OT que fueron cerradas y ve todo
+lo que no debería verse"*. El detalle no distinguía cerrada de abierta —
+ofrecía "Cambiar estado manualmente" (recepcionado, en_diagnostico, etc.
+sobre algo ya facturado), "Cotizar", "Aprobar cotización", "+ Se retiró
+un módulo", "Editar agenda" e "Informe técnico" (que además **escribe**
+`monto_final` y `observaciones` al generarlo — podía pisar sin querer el
+monto ya facturado de verdad). Ahora, si `estaCerrada(o)`:
+- `pintarEstados` muestra solo un aviso ("Esta OT ya está cerrada") y,
+  si no está ya en garantía, el único botón que deja es **"Garantía
+  (reingresa la OT)"** — la única puerta real que tiene sentido dejar
+  abierta: un cliente puede volver por un trabajo ya cerrado.
+- Cotizar, Aprobar, "+ Se retiró un módulo" e "Informe técnico" se
+  esconden.
+- "Editar agenda" también se esconde (reprogramar algo que ya terminó no
+  tiene sentido); la info de agenda que ya tenía sigue visible, solo de
+  lectura.
+
 **Cuatro ajustes más finos, misma sesión (17-09-2026), a pedido de
 Jonatan de revisar con más precisión antes de tocar código:**
 
