@@ -546,34 +546,32 @@ pantalla simplemente no existe para nadie más, mismo criterio que
 "Enseñarle a PAZ".
 
 **Un módulo retirado en terreno se quedaba atrapado en la pestaña
-Terreno para siempre (17-09-2026).** Jonatan lo anticipó antes de que
-pasara de verdad, revisando el caso de Germán Morales / módulo VRDU: el
-tablero separaba Terreno y Laboratorio solo por `origen`, y un módulo
-retirado nace con `origen = terreno` — así que nunca iba a aparecer en la
-cola del laboratorio, aunque pase ahí casi toda su vida (diagnóstico,
-reparación, pruebas). El riesgo real que describió: si al técnico se le
-olvida bajar el módulo de la camioneta, nadie en el laboratorio lo iba a
-notar, porque ni siquiera aparecía en su pantalla.
+Terreno para siempre (17-09-2026, corregido dos veces la misma tarde).**
+Jonatan lo anticipó antes de que pasara de verdad, revisando el caso de
+Germán Morales / módulo VRDU: el tablero separaba Terreno y Laboratorio
+solo por `origen`, y un módulo retirado nace con `origen = terreno` — así
+que nunca iba a aparecer en la cola del laboratorio, aunque pase ahí casi
+toda su vida (diagnóstico, reparación, pruebas). El riesgo real que
+describió: si al técnico se le olvida bajar el módulo de la camioneta,
+nadie en el laboratorio lo iba a notar, porque ni siquiera aparecía en su
+pantalla.
 
-Se evaluó volver a creación 100% manual (que el laboratorio genere la OT
-recién cuando el módulo llega físicamente), pero eso reabre el mismo
-riesgo al revés: si no queda ningún registro hasta que alguien lo crea a
-mano, y el técnico nunca lo entrega, **no hay ningún rastro de que algo
-se esperaba** — no hay nada que echar de menos.
+**Primer intento** (`seccionDe` basado en el estado): mientras el módulo
+estuviera en tránsito (`agendado`/`en_terreno`/`resuelto_en_terreno`/
+`retirado`) se veía en Terreno; desde `recepcionado` pasaba solo a
+Laboratorio. Jonatan lo corrigió altiro al ver las dos OT de la misma
+visita (servicio + módulo) juntas en Terreno: **"no pueden quedar las 2
+en terreno si el módulo es de laboratorio, está mal diseñado"** — la
+pestaña la decide QUÉ ES el trabajo, no en qué tránsito está.
 
-Se resolvió con `seccionDe(o)`: la pestaña que corresponde depende de
-**dónde está físicamente ahora**, no de dónde nació. Un módulo retirado en
-terreno (`origen=terreno`, `tipo_trabajo=modulo`) se ve en **Terreno**
-mientras el estado sea `agendado`/`en_terreno`/`resuelto_en_terreno`/
-`retirado` — ahí es donde hay que acordarse de bajarlo de la camioneta.
-Desde `recepcionado` en adelante (alguien del laboratorio confirmó que
-llegó de verdad) pasa a verse en **Laboratorio**. Esa confirmación
-explícita —alguien tiene que marcar "Recepcionado"— es lo que evita que
-algo se dé por recibido sin haber llegado de verdad; y mientras nadie la
-marque, sigue visible en Terreno como pendiente, no invisible en ninguna
-parte. `cargarOrdenes()` ya no filtra por `origen` en el servidor (trae
-las dos y separa con `seccionDe` en el cliente, mismo criterio que
-`estaCerrada`).
+**Arreglo final, mucho más simple:** `seccionDe(o)` mira solo
+`tipo_trabajo` — módulo siempre Laboratorio, servicio siempre Terreno, sin
+importar `origen` ni `estado`. El riesgo de que el técnico se olvide de
+entregarlo ya lo cubre **"Módulos por recepcionar"** en la Agenda (ver
+abajo) — no hacía falta que el tablero principal hiciera ese mismo
+trabajo. `cargarOrdenes()` y `cargarAgendaSemana()` (la pestaña
+Terreno/Laboratorio de la Agenda, que tenía el mismo problema) usan
+`seccionDe` en vez de comparar `origen` directo.
 
 **"Módulos por recepcionar" en la Agenda (17-09-2026).** Pedido directo
 de Jonatan: cuando un módulo retirado en terreno pasa a ser

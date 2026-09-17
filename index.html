@@ -1052,25 +1052,18 @@ const FLUJO = {
 };
 const flujoDe = o => FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || FLUJO.laboratorio_modulo;
 
-// Un módulo retirado en terreno (origen=terreno, tipo_trabajo=modulo)
-// pasa la mayor parte de su vida físicamente en el laboratorio -- pero
-// el tablero separaba las pestañas solo por `origen`, así que se
-// quedaba atrapado en "Terreno" para siempre y el laboratorio nunca lo
-// veía en su cola. Encontrado en vivo el 17-09-2026 (Germán Morales,
-// módulo VRDU) antes de que llegara a pasar. La pestaña que corresponde
-// depende de dónde está físicamente AHORA, no de dónde nació: mientras
-// el técnico todavía lo tiene (agendado/en_terreno/resuelto en
-// terreno/retirado) se ve en Terreno -- ahí es donde hay que acordarse
-// de bajarlo de la camioneta. Desde "recepcionado" en adelante (alguien
-// en el laboratorio confirmó que llegó) se ve en Laboratorio. Esa misma
-// confirmación explícita es la que evita que algo se dé por recibido
-// sin que de verdad haya llegado.
-const TERRENO_MODULO_EN_TERRENO = ["agendado", "en_terreno", "resuelto_en_terreno", "retirado"];
+// La pestaña la decide QUÉ ES el trabajo, no de dónde nació ni en qué
+// tránsito está: un módulo es de laboratorio siempre, aunque el técnico
+// todavía lo tenga en la camioneta -- un primer intento (17-09-2026) lo
+// dejaba en Terreno mientras estuviera "en tránsito" y recién saltaba a
+// Laboratorio al recepcionarlo; Jonatan lo corrigió: las dos pestañas no
+// pueden mostrar el mismo módulo a la vez, y si es de laboratorio, es de
+// laboratorio desde que existe. Que no se pierda en el camino (al
+// técnico se le puede olvidar bajarlo) ya lo cubre el aviso aparte
+// "Módulos por recepcionar" en la Agenda -- para eso está, no hace
+// falta que el tablero principal haga el mismo trabajo dos veces.
 function seccionDe(o) {
-  if (o.origen === "terreno" && o.tipo_trabajo === "modulo" && !TERRENO_MODULO_EN_TERRENO.includes(o.estado)) {
-    return "laboratorio";
-  }
-  return o.origen;
+  return o.tipo_trabajo === "modulo" ? "laboratorio" : "terreno";
 }
 
 // "Irreparable" es un resultado de diagnóstico -- solo tiene sentido en un
@@ -1382,12 +1375,15 @@ async function cargarAgendaSemana() {
     return;
   }
 
+  // Misma regla que el tablero (seccionDe): un módulo es de laboratorio
+  // aunque haya nacido de una visita a terreno -- las dos pestañas no
+  // pueden mostrar el mismo módulo a la vez.
   const cuenta = { terreno: 0, laboratorio: 0 };
-  data.forEach(o => { if (cuenta[o.origen] !== undefined) cuenta[o.origen]++; });
+  data.forEach(o => { const s = seccionDe(o); if (cuenta[s] !== undefined) cuenta[s]++; });
   $("selAgendaOrigen").querySelector('[data-v="terreno"]').textContent = `Terreno (${cuenta.terreno})`;
   $("selAgendaOrigen").querySelector('[data-v="laboratorio"]').textContent = `Laboratorio (${cuenta.laboratorio})`;
 
-  const dePestana = data.filter(o => o.origen === agendaOrigenActiva);
+  const dePestana = data.filter(o => seccionDe(o) === agendaOrigenActiva);
   if (!dePestana.length) {
     const otra = agendaOrigenActiva === "terreno" ? "laboratorio" : "terreno";
     const pista = cuenta[otra]
