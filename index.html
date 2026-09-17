@@ -1757,6 +1757,34 @@ function pintarEstados(o) {
     return;
   }
 
+  // "Pagada, módulo aún en el taller" (facturado, sin entregado_en) es
+  // el mismo caso que una OT cerrada -- ya se cobró, no tiene sentido
+  // ofrecer volver a recepcionado/en_diagnostico/etc. Lo único que
+  // corresponde es confirmar el paso físico que falta (entregar,
+  // instalar, o resolver en terreno, según el flujo) o Garantía.
+  if (o.estado === "facturado" && !estaCerrada(o)) {
+    const aviso = document.createElement("div");
+    aviso.className = "pista";
+    aviso.style.marginTop = "10px";
+    aviso.textContent = "Ya está pagada. Falta confirmar que el módulo salió.";
+    cont.appendChild(aviso);
+    const rot = document.createElement("span");
+    rot.className = "rotulo sep";
+    rot.textContent = "Cambiar a";
+    cont.appendChild(rot);
+    flujoDe(o).filter(e => PASOS_FISICOS.includes(e)).forEach(e => {
+      const b = document.createElement("button");
+      b.textContent = ETIQUETA[e] || e;
+      b.onclick = () => cambiarEstado(e);
+      cont.appendChild(b);
+    });
+    const b = document.createElement("button");
+    b.textContent = "Garantía (reingresa la OT)";
+    b.onclick = () => cambiarEstado("garantia");
+    cont.appendChild(b);
+    return;
+  }
+
   const flujo = flujoDe(o);
   const idxActual = flujo.indexOf(o.estado);
   const siguiente = idxActual >= 0 && idxActual < flujo.length - 1 ? flujo[idxActual + 1] : null;

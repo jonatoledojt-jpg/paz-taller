@@ -573,6 +573,20 @@ trabajo. `cargarOrdenes()` y `cargarAgendaSemana()` (la pestaña
 Terreno/Laboratorio de la Agenda, que tenía el mismo problema) usan
 `seccionDe` en vez de comparar `origen` directo.
 
+**"Pagada" también necesitaba la lista de botones restringida
+(17-09-2026).** El arreglo de "una OT cerrada no invita a seguir
+editándola" solo miraba `estaCerrada(o)` — pero "Pagada · módulo aún en
+el taller" (facturado, sin `entregado_en`) **no** es `estaCerrada` (sigue
+visible en el tablero, a propósito), así que seguía cayendo en la lógica
+normal y ofreciendo el flujo completo hacia atrás (recepcionado,
+en_diagnostico, etc.) como si nada se hubiera cobrado. Encontrado por
+Jonatan mirando la misma OT de Naranjo: *"solo debería salir garantía y
+entrega"*. Se agregó un segundo caso especial en `pintarEstados` para
+`facturado && !estaCerrada`: mismo aviso restringido que una OT cerrada,
+pero ofreciendo además el paso físico pendiente de este flujo
+(`PASOS_FISICOS` que aplican — para Naranjo, "Entregado") junto con
+"Garantía". Nada de volver atrás en el flujo una vez que ya se cobró.
+
 **"Facturado · falta entregar" pasó a decir "Pagada · módulo aún en el
 taller" (17-09-2026).** Jonatan, revisando otra vez la OT de Naranjo
 (que él mismo había regresado de "Facturado" a "Listo para entrega"
