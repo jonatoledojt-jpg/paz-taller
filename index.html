@@ -1062,8 +1062,14 @@ const ETIQUETA_REPARACION = {
   por_diagnosticar:"Por diagnosticar", en_diagnostico:"En diagnóstico", diagnosticado:"Diagnosticado",
   en_reparacion:"En reparación", en_pruebas:"En pruebas", listo:"Listo", irreparable:"Irreparable"
 };
+// Nombres que se entiendan solos, sin tener que explicarlos -- pedido
+// de Jonatan (17-09-2026) después de que "Con el cliente" y "En el
+// taller" necesitaran una explicación en el chat para quedar claros.
+// Misma secuencia que él mismo había propuesto originalmente
+// (recibido / en tránsito / entregado), con el cuarto valor que faltaba
+// para el punto de partida (antes de que lo tengamos nosotros).
 const ETIQUETA_UBICACION = {
-  con_cliente:"Con el cliente", en_transito:"En tránsito", en_taller:"En el taller", entregado:"Entregado"
+  con_cliente:"Aún no llega", en_transito:"En tránsito", en_taller:"Recibido", entregado:"Entregado"
 };
 
 // La pestaña la decide QUÉ ES el trabajo, no de dónde nació ni en qué
@@ -1121,8 +1127,7 @@ function etiquetaEstado(o) {
   }
   if (o.comercial === "cotizado") return "Cotizado · esperando al cliente";
   if (o.reparacion && o.reparacion !== "por_diagnosticar") return ETIQUETA_REPARACION[o.reparacion];
-  if (o.ubicacion === "con_cliente") return "Agendado";
-  if (o.ubicacion === "en_transito") return "Retirado, en tránsito";
+  if (o.ubicacion === "con_cliente" || o.ubicacion === "en_transito") return ETIQUETA_UBICACION[o.ubicacion];
   return "Por diagnosticar";
 }
 function tonoEstado(o) {
