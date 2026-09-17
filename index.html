@@ -96,6 +96,10 @@ main.con-navinf{padding-bottom:96px}
   padding:14px;cursor:pointer;text-align:left;width:100%;display:block
 }
 .ot:active{border-color:var(--humo)}
+/* Se destaca sin repetir el chip -- que ya dice "falta cobrar" en
+   rojo -- con un borde a la izquierda, para que se note sin leer cada
+   tarjeta una por una (pedido de Jonatan, 17-09-2026). */
+.ot.falta-cobrar{border-left:4px solid var(--alerta);background:#FFFBFA}
 .ot .fila1{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .ot .fila1-der{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
 .ot .fila1-der .chip{margin-top:0}
@@ -377,6 +381,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <button class="btn claro oculto" id="btnVerCerradas" style="max-width:120px">Cerradas</button>
         <button class="btn claro" id="btnRecargar" style="max-width:110px">Recargar</button>
       </div>
+      <div id="porCobrarAviso" class="oculto"></div>
       <div id="listaOT" class="lista"></div>
     </section>
 
@@ -1095,46 +1100,74 @@ function seccionAgendaDe(o) {
   return o.origen;
 }
 
-// Cerrada = ya no hay nada más que hacer: el cliente rechazó la
-// cotización, o ya se cobró Y el objeto ya no está en el taller (para
-// terreno+servicio, que no tiene módulo que mover, con estar pagado
-// basta). Distinto de "noSeEdita": una OT pagada pero con el módulo
-// todavía en el taller ("Pagada · módulo aún en el taller") ya no se
-// edita, pero sigue visible en el tablero a propósito -- todavía hay
-// algo pendiente (que lo vengan a buscar).
+// Cerrada = alguien confirmó explícitamente que ya no hay nada más que
+// hacer (17-09-2026, pedido de Jonatan: la interfaz de carriles debía
+// mostrar "Cierre" como su propio dato, y para eso tenía que dejar de
+// ser una derivación automática de pago+ubicación). Solo "rechazado"
+// sigue cerrando solo -- ahí de verdad no queda ninguna decisión
+// pendiente. Todo lo demás pasa por el botón "Cerrar OT" o "Cerrar sin
+// cobro" (ver cerrarOT/cerrarSinCobro), que escriben fecha_cierre --
+// columna que ya existía en el esquema, no se agregó nada nuevo.
 function estaCerrada(o) {
-  if (o.comercial === "rechazado") return true;
-  if (!o.pagado_en) return false;
-  return o.ubicacion === "entregado" || o.ubicacion === null;
+  return o.comercial === "rechazado" || !!o.fecha_cierre;
 }
+// noSeEdita: ya no hay nada TÉCNICO ni COMERCIAL que decidir -- cerrada
+// de verdad, o ya se cobró y solo falta el trámite de cerrar.
 function noSeEdita(o) {
-  return !!o.pagado_en || o.comercial === "rechazado";
+  return estaCerrada(o) || !!o.pagado_en;
 }
+
+// ---- Carril Económico: ¿falta cobrar, facturar, o ya está pagado? ----
+const ETIQUETA_ECONOMICO = { sin_cotizar:"Sin monto", cotizado:"Cotizado", aprobado:"Falta cobrar", rechazado:"Rechazado" };
+function economicoEstado(o) {
+  if (o.pagado_en) return "Pagado";
+  if (estaCerrada(o)) return "Sin cobro";  // se cerró sin cobrar (Cerrar sin cobro)
+  return ETIQUETA_ECONOMICO[o.comercial] || "Sin monto";
+}
+
+// El objeto ya volvió al cliente. Para terreno+servicio (que no tiene
+// módulo que mover) el trabajo se resuelve donde mismo -- cuenta como
+// entregado apenas la reparación queda lista, no hay un paso aparte.
+function fisicoEntregado(o) {
+  return o.tipo_trabajo === "servicio" || o.ubicacion === "entregado";
+}
+
+// Falta cobrar de verdad: el trabajo ya terminó (listo o irreparable),
+// ya se entregó, y todavía no entra la plata. Esto es lo que el
+// tablero destaca -- "hace perder dinero si no se cobra".
+function faltaCobrar(o) {
+  return !estaCerrada(o) && (o.reparacion === "listo" || o.reparacion === "irreparable") &&
+    fisicoEntregado(o) && !o.pagado_en;
+}
+
+// ---- Estado general: un resumen para el tablero y el chip de arriba
+// del detalle -- NO reemplaza los cuatro carriles, solo destaca lo más
+// importante para no tener que leerlos todos para saber qué pasa. ----
 function etiquetaEstado(o) {
-  if (o.comercial === "rechazado") return "Cotización rechazada";
-  if (o.reparacion === "irreparable") return "Irreparable";
-  if (estaCerrada(o)) return "Facturado";
-  if (o.pagado_en) return "Pagada · módulo aún en el taller";
-  // "listo" es ambiguo por sí solo: para un módulo que sigue en el
-  // taller es "recién terminado, falta que lo pasen a buscar" (positivo);
-  // para un servicio (que se resuelve donde mismo, sin fase de "listo
-  // para retirar") o un módulo que YA se entregó, es "ya se hizo todo,
-  // solo falta cobrar" -- mismo caso que PASOS_FISICOS antes de hoy.
-  if (o.reparacion === "listo") {
-    if (o.tipo_trabajo === "servicio") return "Resuelto en terreno · falta cobrar";
-    if (o.ubicacion === "entregado") return "Entregado · falta cobrar";
-    return "Listo para entrega";
+  if (estaCerrada(o)) return "Cerrada";
+  if (o.reparacion === "listo" || o.reparacion === "irreparable") {
+    if (!fisicoEntregado(o)) {
+      // Que ya se haya cobrado sin haberse entregado todavía es un dato
+      // real que no se puede perder en el resumen (caso de Naranjo,
+      // 17-09-2026: "debería quedar con un aviso que diga pagada y aún
+      // en el taller") -- se revisa antes que el genérico "lista para
+      // entregar"/"falta entregar".
+      if (o.pagado_en) return "Abierta · pagada, falta entregar";
+      return o.reparacion === "irreparable" ? "Abierta · falta entregar" : "Abierta · lista para entregar";
+    }
+    if (!o.pagado_en) return "Abierta · falta cobrar";
+    return "Abierta · lista para cerrar";
   }
-  if (o.comercial === "cotizado") return "Cotizado · esperando al cliente";
-  if (o.reparacion && o.reparacion !== "por_diagnosticar") return ETIQUETA_REPARACION[o.reparacion];
-  if (o.ubicacion === "con_cliente" || o.ubicacion === "en_transito") return ETIQUETA_UBICACION[o.ubicacion];
-  return "Por diagnosticar";
+  if (o.comercial === "cotizado") return "Abierta · cotizado, esperando cliente";
+  if (o.reparacion === "en_reparacion" || o.reparacion === "en_pruebas") return "Abierta · en reparación";
+  if (o.reparacion === "en_diagnostico" || o.reparacion === "diagnosticado") return "Abierta · en diagnóstico";
+  return "Abierta";
 }
 function tonoEstado(o) {
-  if (o.comercial === "rechazado" || o.reparacion === "irreparable") return "";
   if (estaCerrada(o)) return "listo";
-  if (o.pagado_en) return "espera";
-  if (o.reparacion === "listo") return (o.tipo_trabajo === "servicio" || o.ubicacion === "entregado") ? "espera" : "listo";
+  if (o.pagado_en) return "espera";  // pagada, falta entregar o cerrar
+  if (o.reparacion === "irreparable") return fisicoEntregado(o) ? "espera" : "";
+  if (o.reparacion === "listo") return fisicoEntregado(o) ? "espera" : "listo";
   if (o.comercial === "cotizado") return "espera";
   if (o.ubicacion === "con_cliente" || o.ubicacion === "en_transito") return "terreno";
   return "trabajo";
@@ -1240,6 +1273,7 @@ function cambiarSeccion(seccion) {
   $("btnNuevoGasto").classList.toggle("oculto", seccion !== "gastos");
   $("agendaControles").classList.toggle("oculto", seccion !== "agenda");
   $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
+  $("porCobrarAviso").classList.add("oculto");
   $("selGastoVista").classList.toggle("oculto", !(seccion === "gastos" && esDueno));
   if (seccion === "gastos" && !esDueno) gastoVista = "mio";
   cargarSeccion();
@@ -1264,6 +1298,7 @@ function tarjetaOT(o, opts = {}) {
     ? `${ETIQUETA_FRANJA[o.franja] || "sin franja"} · ${tecnicos.find(t => t.id === o.tecnico_agendado)?.nombre ?? "sin técnico"}`
     : (o.sintoma_cliente ?? "");
   const numTxt = opts.agenda ? (o.fecha_agendada ? fechaCL(o.fecha_agendada) : "sin fecha") : (dias === 0 ? "hoy" : dias + " días");
+  if (faltaCobrar(o)) div.classList.add("falta-cobrar");
   div.innerHTML = `
     <div class="fila1">
       <span class="num">${o.numero_ot ?? ""}</span>
@@ -1285,13 +1320,14 @@ function tarjetaOT(o, opts = {}) {
 
 async function cargarOrdenes() {
   $("listaOT").innerHTML = '<div class="cargando">Cargando órdenes…</div>';
+  $("porCobrarAviso").classList.add("oculto");
   // Ya no se filtra por "origen" en el servidor: un módulo retirado en
   // terreno tiene que poder aparecer en Laboratorio una vez recepcionado
   // (ver seccionDe). El filtro de "cerrada" también mira más de una
   // columna (estaCerrada), así que acá solo se descarta en el servidor
   // el cierre sin ambigüedad (rechazado); el resto se filtra en el cliente.
   const { data, error } = await db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,clientes(nombre,rut),vehiculos(patente)")
     .neq("comercial", "rechazado")
     .order("fecha_ingreso", { ascending: false });
 
@@ -1300,6 +1336,13 @@ async function cargarOrdenes() {
     return;
   }
   const abiertas = data.filter(o => !estaCerrada(o) && seccionDe(o) === seccionActiva);
+  // Contador de "por cobrar" arriba del tablero -- para que no haga
+  // falta abrir cada OT una por una para saber si hace perder plata
+  // por no cobrarse (pedido de Jonatan, 17-09-2026).
+  const porCobrar = abiertas.filter(faltaCobrar).length;
+  $("porCobrarAviso").classList.toggle("oculto", !porCobrar);
+  if (porCobrar) $("porCobrarAviso").innerHTML =
+    `<div class="pista" style="color:var(--alerta);font-weight:600;margin-bottom:12px">${porCobrar} OT por cobrar</div>`;
   if (!abiertas.length) {
     $("listaOT").innerHTML = '<div class="vacio"><p>No hay órdenes abiertas en esta sección.</p></div>';
     return;
@@ -1322,8 +1365,8 @@ async function cargarCerradas() {
   $("cerBuscar").value = "";
   $("listaCerradas").innerHTML = '<div class="cargando">Cargando…</div>';
   const { data, error } = await db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,fecha_cierre,vehiculo_id,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,clientes(nombre,rut),vehiculos(patente)")
-    .or("comercial.eq.rechazado,pagado_en.not.is.null")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,clientes(nombre,rut),vehiculos(patente)")
+    .or("comercial.eq.rechazado,pagado_en.not.is.null,fecha_cierre.not.is.null")
     .order("fecha_cierre", { ascending: false }).limit(300);
   if (error) {
     $("listaCerradas").innerHTML = '<div class="aviso">No se pudieron cargar. Revisa tu conexión.</div>';
@@ -1377,6 +1420,7 @@ $("selAgendaOrigen").querySelectorAll("button").forEach(b => {
 
 async function cargarAgendaSemana() {
   $("listaOT").innerHTML = '<div class="cargando">Cargando agenda…</div>';
+  $("porCobrarAviso").classList.add("oculto");
   cargarCasosPorAgendar();       // sin await: no atrasa la semana
   cargarModulosPorRecepcionar(); // idem
   const lunes = lunesDeSemana(semanaOffset);
@@ -1389,7 +1433,7 @@ async function cargarAgendaSemana() {
   // lo agendado está en la otra pestaña.
   const { data:{ user } } = await db.auth.getUser();
   let query = db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,fecha_agendada,franja,tecnico_agendado,orden_ruta,fecha_ingreso,vehiculo_id,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,fecha_agendada,franja,tecnico_agendado,orden_ruta,fecha_ingreso,vehiculo_id,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,clientes(nombre,rut),vehiculos(patente)")
     .gte("fecha_agendada", isoFecha(lunes)).lte("fecha_agendada", isoFecha(sabado))
     .order("fecha_agendada").order("orden_ruta", { nullsFirst: false });
   if (perfil?.rol === "tecnico") query = query.eq("tecnico_agendado", user.id);
@@ -1730,142 +1774,178 @@ async function buscarOCrearVehiculo(patente, cliente_id) {
 const UBICACION_SEQ = ["con_cliente", "en_transito", "en_taller", "entregado"];
 const REPARACION_SEQ = ["por_diagnosticar", "en_diagnostico", "diagnosticado", "en_reparacion", "en_pruebas", "listo"];
 
-// Cada eje se pinta como su propio grupo de botones: "siguiente paso" al
-// frente, el resto detrás de "Cambiar manualmente" -- mismo patrón que el
-// flujo único de antes, pero ahora son dos secuencias independientes en
-// vez de una sola lista que mezclaba ubicación y reparación.
-function grupoSecuencia(cont, rotuloTxt, secuencia, actualVal, onCambiar, extraBotones = [], bloquearAlFinal = false) {
-  const idxActual = secuencia.indexOf(actualVal);
-  const siguiente = idxActual >= 0 && idxActual < secuencia.length - 1 ? secuencia[idxActual + 1] : null;
+// Etiquetas del `estado` legado -- solo para leer el historial
+// (movimientos_estado), que sigue guardando el espejo viejo, no los
+// cuatro ejes por separado.
+const ETIQUETA_LEGADO = {
+  agendado:"Agendado", en_terreno:"En terreno", resuelto_en_terreno:"Resuelto en terreno",
+  retirado:"Retirado, en tránsito", recepcionado:"Recepcionado", en_diagnostico:"En diagnóstico",
+  cotizado:"Cotizado", en_reparacion:"En reparación", en_pruebas:"En pruebas",
+  listo_entrega:"Listo para entrega", instalado:"Instalado", entregado:"Entregado",
+  facturado:"Facturado", irreparable:"Irreparable", rechazado:"Cotización rechazada", garantia:"Garantía"
+};
 
-  const rot = document.createElement("span");
-  rot.className = "rotulo sep";
-  rot.textContent = rotuloTxt;
-  cont.appendChild(rot);
+const ETAPAS_CON_DIAGNOSTICO = ["por_diagnosticar", "en_diagnostico", "diagnosticado"];
 
-  const boton = (valor, texto, principal) => {
-    const b = document.createElement("button");
-    b.textContent = texto;
-    if (principal) b.className = "actual";
-    b.onclick = () => onCambiar(valor);
-    cont.appendChild(b);
-  };
+// Irreparable solo tiene sentido mientras todavía se está diagnosticando.
+// Una vez que entra a "En reparación" ya se aprobó la cotización: se
+// asume que es reparable, así que declararlo irreparable a esa altura
+// (o después) es contradictorio. También exige módulo ya en el taller --
+// no se puede diagnosticar algo que sigue con el técnico o el cliente,
+// y terreno+servicio nunca pasa por diagnóstico de laboratorio.
+function puedeSerIrreparable(o) {
+  return o.tipo_trabajo === "modulo" && ETAPAS_CON_DIAGNOSTICO.includes(o.reparacion) &&
+    (o.ubicacion === "en_taller" || o.ubicacion === "entregado");
+}
 
-  // El paso siguiente (el avance normal) se destaca en negro -- las
-  // excepciones (Irreparable, Garantía) quedan en blanco, con el mismo
-  // peso visual que "Cambiar manualmente", para que no se vean como si
-  // fueran la continuación natural del trabajo. Encontrado por Jonatan
-  // (17-09-2026): "En pruebas" e "Irreparable" se veían exactamente
-  // iguales, uno debajo del otro, sin forma de distinguir cuál era el
-  // avance esperado y cuál la excepción.
-  if (siguiente) boton(siguiente, ETIQUETA_UBICACION[siguiente] || ETIQUETA_REPARACION[siguiente], true);
-  extraBotones.forEach(([valor, texto]) => boton(valor, texto, false));
-
-  // Una vez que llega al final de la secuencia, no se puede retroceder
-  // -- confirmado por Jonatan (17-09-2026) para Reparación: si ya avanzó
-  // a "Listo", el trabajo se dio por terminado, y volver atrás manual
-  // no corresponde (un error real se corrige por Garantía, no
-  // revirtiendo el estado).
-  if (bloquearAlFinal && !siguiente) return;
-
-  const resto = secuencia.filter(v => v !== actualVal && v !== siguiente);
-  if (!resto.length) return;
-
-  const link = document.createElement("button");
-  link.type = "button";
-  link.style.cssText = "text-align:center;color:var(--humo)";
-  link.textContent = "Cambiar manualmente ▾";
-  link.setAttribute("aria-expanded", "false");
-  link.onclick = () => {
-    const abierto = link.getAttribute("aria-expanded") === "true";
-    link.setAttribute("aria-expanded", abierto ? "false" : "true");
-    link.textContent = abierto ? "Cambiar manualmente ▾" : "Ocultar ▴";
-    manual.classList.toggle("oculto", abierto);
-  };
-  cont.appendChild(link);
-
-  const manual = document.createElement("div");
-  manual.className = "estados oculto";
-  manual.style.marginTop = "4px";
-  resto.forEach(v => {
-    const b = document.createElement("button");
-    b.textContent = ETIQUETA_UBICACION[v] || ETIQUETA_REPARACION[v];
-    b.onclick = () => onCambiar(v);
-    manual.appendChild(b);
-  });
-  cont.appendChild(manual);
+// ------------------------------------------------------------
+// Rediseño visual de los cuatro carriles (17-09-2026), a pedido de
+// Jonatan: "mejorar interfaz de estados de OT sin cambiar el modelo de
+// datos". La pantalla anterior mostraba cada eje como su propio grupo
+// de botones grandes -- técnicamente correcto, pero eran demasiados
+// botones sueltos para leer de un vistazo. Ahora:
+//   - un estado general (una frase) arriba de todo, calculado de los
+//     cuatro ejes -- no reemplaza los carriles, solo resume.
+//   - los cuatro carriles como filas compactas (igual que los datos de
+//     arriba: Cliente, Patente, etc.), no como botones.
+//   - UNA sola acción principal (o dos, cuando hay una excepción real
+//     como Irreparable) -- la app dice cuál es el paso siguiente en vez
+//     de mostrar diez botones para elegir.
+//   - "Cambiar estados manualmente" una sola vez, no repetido debajo de
+//     cada carril.
+// ------------------------------------------------------------
+function accionesPrincipales(o) {
+  if (estaCerrada(o)) return [];
+  const terminal = o.reparacion === "listo" || o.reparacion === "irreparable";
+  if (terminal) {
+    if (!fisicoEntregado(o)) return [["Marcar entregado", () => cambiarUbicacion("entregado")]];
+    if (!o.pagado_en) return [["Registrar cobro", () => abrirFacturar()]];
+    return [["Cerrar OT", () => cerrarOT()]];
+  }
+  // Un módulo que todavía no llega al taller: el paso siguiente es de
+  // ubicación, no de reparación -- no se puede diagnosticar algo que
+  // sigue con el técnico o con el cliente.
+  if (o.tipo_trabajo === "modulo" && o.ubicacion !== "en_taller" && o.ubicacion !== "entregado") {
+    const idxU = UBICACION_SEQ.indexOf(o.ubicacion);
+    const siguienteU = idxU >= 0 && idxU < UBICACION_SEQ.length - 1 ? UBICACION_SEQ[idxU + 1] : null;
+    return siguienteU ? [[`Marcar ${ETIQUETA_UBICACION[siguienteU].toLowerCase()}`, () => cambiarUbicacion(siguienteU)]] : [];
+  }
+  const idxR = REPARACION_SEQ.indexOf(o.reparacion);
+  const siguienteR = idxR >= 0 && idxR < REPARACION_SEQ.length - 1 ? REPARACION_SEQ[idxR + 1] : null;
+  const acciones = [];
+  if (siguienteR) acciones.push([`Marcar ${ETIQUETA_REPARACION[siguienteR].toLowerCase()}`, () => cambiarReparacion(siguienteR)]);
+  if (puedeSerIrreparable(o)) acciones.push(["Irreparable", () => cambiarReparacion("irreparable")]);
+  return acciones;
 }
 
 function pintarEstados(o) {
   const cont = $("detEstados");
   cont.innerHTML = "";
+  const esDuenoCoord = ["dueno", "coordinador"].includes(perfil?.rol);
 
-  const actual = document.createElement("div");
-  actual.innerHTML = `<span class="rotulo">Estado actual</span>
+  const general = document.createElement("div");
+  general.innerHTML = `<span class="rotulo">Estado general</span>
     <span class="chip ${tonoEstado(o)}" style="margin-top:0">${etiquetaEstado(o)}</span>`;
-  cont.appendChild(actual);
+  cont.appendChild(general);
 
-  // Una OT cerrada, o pagada con el módulo aún en el taller, no debería
-  // invitar a seguir tocando ubicación ni reparación -- ya no hay nada
-  // técnico ni comercial que cambiar. Garantía es la única puerta que
-  // sigue abierta, y solo cuando ya hubo una entrega real: un cliente
-  // vuelve por un trabajo que ya recibió, no por uno que nunca salió.
-  if (noSeEdita(o)) {
-    const aviso = document.createElement("div");
-    aviso.className = "pista";
-    aviso.style.marginTop = "10px";
-    aviso.textContent = estaCerrada(o) ? "Esta OT ya está cerrada." : "Ya está pagada. Falta que retiren el módulo.";
-    cont.appendChild(aviso);
-    if (estaCerrada(o)) {
-      const rot = document.createElement("span");
-      rot.className = "rotulo sep";
-      rot.textContent = "Garantía";
-      cont.appendChild(rot);
-      const b = document.createElement("button");
-      b.textContent = "Reingresa como OT nueva";
-      b.onclick = () => iniciarGarantia();
-      cont.appendChild(b);
-    } else if (o.tipo_trabajo === "modulo") {
-      // Pagada, pero el módulo sigue en el taller -- falta el único
-      // paso que queda: confirmar que se lo llevaron. Esto es lo que
-      // faltaba (encontrado por Jonatan, 17-09-2026): al separar
-      // "cerrada" de "pagada" quedó el botón de Garantía pero se perdió
-      // el de "Entregado" para este caso, y no había cómo cerrar la OT.
-      const rot = document.createElement("span");
-      rot.className = "rotulo sep";
-      rot.textContent = "Cambiar a";
-      cont.appendChild(rot);
-      const b = document.createElement("button");
-      b.textContent = "Entregado";
-      b.style.cssText = "font-weight:700;text-align:center";
-      b.onclick = () => cambiarUbicacion("entregado");
-      cont.appendChild(b);
-    }
-    return;
-  }
-
-  // Ubicación: solo aplica a módulos -- terreno+servicio no tiene un
-  // objeto físico que mover de un lado a otro.
+  const carriles = document.createElement("div");
+  carriles.style.marginTop = "14px";
+  let filas = "";
   if (o.tipo_trabajo === "modulo") {
-    grupoSecuencia(cont, "Ubicación", UBICACION_SEQ, o.ubicacion, cambiarUbicacion);
+    filas += `<div class="dato"><span>Físico</span><span>${ETIQUETA_UBICACION[o.ubicacion] ?? "—"}</span></div>`;
+  }
+  filas += `<div class="dato"><span>Reparación</span><span>${ETIQUETA_REPARACION[o.reparacion] ?? "—"}</span></div>`;
+  filas += `<div class="dato"><span>Económico</span><span>${economicoEstado(o)}</span></div>`;
+  filas += `<div class="dato"><span>Cierre</span><span>${estaCerrada(o) ? "Cerrada" : "Abierta"}</span></div>`;
+  carriles.innerHTML = filas;
+  cont.appendChild(carriles);
+
+  // Una sola acción principal (o dos si hay una excepción real, como
+  // Irreparable durante el diagnóstico) -- la primera se destaca en
+  // negro, la segunda queda plana, mismo criterio que ya se usaba en el
+  // grupo de Reparación antes de este rediseño.
+  const acciones = accionesPrincipales(o);
+  if (acciones.length) {
+    const rot = document.createElement("span");
+    rot.className = "rotulo sep";
+    rot.textContent = "Acciones";
+    cont.appendChild(rot);
+    acciones.forEach(([texto, fn], i) => {
+      const b = document.createElement("button");
+      b.textContent = texto;
+      if (i === 0) b.className = "actual";
+      b.onclick = fn;
+      cont.appendChild(b);
+    });
   }
 
-  // Reparación: "Irreparable" solo tiene sentido mientras todavía se está
-  // diagnosticando -- por_diagnosticar, en_diagnostico, diagnosticado.
-  // Una vez que entra a "En reparación" ya se aprobó la cotización y se
-  // está reparando de verdad: se asume que es reparable, así que
-  // declararlo irreparable a esa altura (o después, en pruebas, o con la
-  // reparación ya "Lista") es contradictorio. Confirmado por Jonatan
-  // (17-09-2026) después de encontrar el mismo problema con "Listo".
-  // También exige módulo ya en el taller -- no se puede diagnosticar
-  // algo que sigue con el técnico o con el cliente, y terreno+servicio
-  // nunca pasa por diagnóstico de laboratorio.
-  const ETAPAS_CON_DIAGNOSTICO = ["por_diagnosticar", "en_diagnostico", "diagnosticado"];
-  const puedeSerIrreparable = o.tipo_trabajo === "modulo" &&
-    ETAPAS_CON_DIAGNOSTICO.includes(o.reparacion) &&
-    (o.ubicacion === "en_taller" || o.ubicacion === "entregado");
-  grupoSecuencia(cont, "Reparación", REPARACION_SEQ, o.reparacion, cambiarReparacion,
-    puedeSerIrreparable ? [["irreparable", "Irreparable"]] : [], true);
+  // Opciones secundarias: nunca la acción principal, siempre detrás de
+  // un enlace aparte. "Cerrar sin cobro" y "Cambiar estados
+  // manualmente" son solo de dueño/coordinador -- mismo criterio que ya
+  // regía el cambio manual antes de hoy.
+  const sec = document.createElement("div");
+  sec.style.cssText = "margin-top:16px;display:flex;flex-direction:column;gap:10px";
+  const enlace = (texto, fn) => {
+    const a = document.createElement("button");
+    a.type = "button";
+    a.style.cssText = "text-align:center;color:var(--humo);background:none;border:none;padding:4px;font-size:14px;cursor:pointer";
+    a.textContent = texto;
+    a.onclick = fn;
+    sec.appendChild(a);
+  };
+  if (esDuenoCoord && !estaCerrada(o) && faltaCobrar(o)) enlace("Cerrar sin cobro", cerrarSinCobro);
+  if (estaCerrada(o)) enlace("Garantía (reingresa como OT nueva)", iniciarGarantia);
+  enlace("Agregar observación", agregarObservacion);
+  enlace("Ver historial", verHistorial);
+  if (esDuenoCoord) enlace("Cambiar estados manualmente ▾", () => $("detManual").classList.toggle("oculto"));
+  cont.appendChild(sec);
+
+  if (o.notas_internas) {
+    const notas = document.createElement("div");
+    notas.className = "pista";
+    notas.style.marginTop = "10px";
+    notas.style.whiteSpace = "pre-line";
+    notas.textContent = o.notas_internas;
+    cont.appendChild(notas);
+  }
+
+  const historial = document.createElement("div");
+  historial.id = "detHistorial";
+  historial.className = "oculto";
+  historial.style.marginTop = "10px";
+  cont.appendChild(historial);
+
+  if (esDuenoCoord) {
+    const manual = document.createElement("div");
+    manual.id = "detManual";
+    manual.className = "estados oculto";
+    manual.style.marginTop = "10px";
+    const grupoManual = (titulo, valores, etiquetas, actual, fn) => {
+      const rot = document.createElement("span");
+      rot.className = "rotulo sep";
+      rot.textContent = titulo;
+      manual.appendChild(rot);
+      valores.forEach(v => {
+        const b = document.createElement("button");
+        b.textContent = etiquetas[v];
+        if (v === actual) b.className = "actual";
+        b.onclick = () => fn(v);
+        manual.appendChild(b);
+      });
+    };
+    if (o.tipo_trabajo === "modulo") grupoManual("Físico", UBICACION_SEQ, ETIQUETA_UBICACION, o.ubicacion, cambiarUbicacion);
+    grupoManual("Reparación", REPARACION_SEQ, ETIQUETA_REPARACION, o.reparacion, cambiarReparacion);
+    grupoManual("Económico", ["sin_cotizar", "cotizado", "aprobado", "rechazado"], ETIQUETA_ECONOMICO, o.comercial, cambiarComercial);
+    const rotC = document.createElement("span");
+    rotC.className = "rotulo sep";
+    rotC.textContent = "Cierre";
+    manual.appendChild(rotC);
+    const bC = document.createElement("button");
+    bC.textContent = estaCerrada(o) ? "Reabrir" : "Cerrar ahora";
+    bC.onclick = () => alternarCierre();
+    manual.appendChild(bC);
+    cont.appendChild(manual);
+  }
 }
 
 // Espejo hacia el `estado` de siempre -- lo siguen leyendo
@@ -1893,18 +1973,20 @@ function estadoLegado(o) {
   return "recepcionado";
 }
 
+// Ninguno de estos cierra la OT solo -- desde el rediseño de carriles
+// (17-09-2026), cerrar es siempre un clic explícito (cerrarOT /
+// cerrarSinCobro / alternarCierre), nunca una consecuencia automática
+// de juntar pago + entrega. fecha_cierre (columna que ya existía) es
+// la única fuente de verdad del carril Cierre.
 async function cambiarUbicacion(nueva) {
   const payload = { ubicacion: nueva };
   // entregado_en se mantiene en paralelo -- lo siguen mirando
   // pintarAgendaDet, cargarFotos y "Cerradas" (ordena por fecha_cierre).
   if (nueva === "entregado" && !ordenActual.entregado_en) payload.entregado_en = new Date().toISOString();
   payload.estado = estadoLegado({ ...ordenActual, ...payload });
-  const cierra = estaCerrada({ ...ordenActual, ...payload });
-  if (cierra) payload.fecha_cierre = new Date().toISOString();
   const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
-  if (error) return msg("detError", "No se pudo cambiar la ubicación: " + error.message);
+  if (error) return msg("detError", "No se pudo cambiar el estado físico: " + error.message);
   Object.assign(ordenActual, payload);
-  if (cierra) { ver("vTablero"); cargarSeccion(); return; }
   abrirDetalle(ordenActual);
 }
 
@@ -1915,6 +1997,79 @@ async function cambiarReparacion(nueva) {
   if (error) return msg("detError", "No se pudo cambiar el estado de reparación: " + error.message);
   Object.assign(ordenActual, payload);
   abrirDetalle(ordenActual);
+}
+
+async function cambiarComercial(nuevo) {
+  const payload = { comercial: nuevo };
+  payload.estado = estadoLegado({ ...ordenActual, ...payload });
+  const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
+  if (error) return msg("detError", "No se pudo cambiar el estado económico: " + error.message);
+  Object.assign(ordenActual, payload);
+  abrirDetalle(ordenActual);
+}
+
+// El único lugar que de verdad cierra una OT -- un clic explícito,
+// nunca automático. fecha_cierre ya existía en el esquema desde
+// 01-schema.sql; esto solo cambia cuándo se escribe.
+async function cerrarOT() {
+  const payload = { fecha_cierre: new Date().toISOString() };
+  const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
+  if (error) return msg("detError", "No se pudo cerrar la OT: " + error.message);
+  Object.assign(ordenActual, payload);
+  ver("vTablero"); cargarSeccion();
+}
+
+// Casos reales donde una OT termina sin cobro: garantía, diagnóstico
+// sin cargo, decisión comercial del dueño, irreparable sin cobro. Pide
+// motivo obligatorio y lo deja anotado en notas_internas (columna que
+// ya existía, sin migración nueva) -- no hay un valor "sin_cobro" en
+// el enum de comercial, así que el rastro de "por qué se cerró sin
+// cobrar" vive en la nota, no en el carril económico.
+async function cerrarSinCobro() {
+  const motivo = prompt("¿Por qué se cierra sin cobro? (garantía, diagnóstico sin cargo, decisión del dueño, etc.)");
+  if (!motivo || !motivo.trim()) return;
+  const nota = `[Cerrado sin cobro · ${fechaCL(new Date().toISOString())} · ${perfil?.nombre ?? "—"}] ${motivo.trim()}`;
+  const notas_internas = ordenActual.notas_internas ? `${ordenActual.notas_internas}\n${nota}` : nota;
+  const payload = { notas_internas, fecha_cierre: new Date().toISOString() };
+  const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
+  if (error) return msg("detError", "No se pudo cerrar: " + error.message);
+  Object.assign(ordenActual, payload);
+  ver("vTablero"); cargarSeccion();
+}
+
+// Manual, dueño/coordinador: reabrir una OT cerrada por error, o
+// cerrarla directo sin pasar por Cerrar OT/Cerrar sin cobro.
+async function alternarCierre() {
+  const payload = { fecha_cierre: ordenActual.fecha_cierre ? null : new Date().toISOString() };
+  const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
+  if (error) return msg("detError", "No se pudo cambiar el cierre: " + error.message);
+  Object.assign(ordenActual, payload);
+  if (payload.fecha_cierre) { ver("vTablero"); cargarSeccion(); } else { abrirDetalle(ordenActual); }
+}
+
+async function agregarObservacion() {
+  const texto = prompt("Observación para esta OT:");
+  if (!texto || !texto.trim()) return;
+  const nota = `[${fechaCL(new Date().toISOString())} · ${perfil?.nombre ?? "—"}] ${texto.trim()}`;
+  const notas_internas = ordenActual.notas_internas ? `${ordenActual.notas_internas}\n${nota}` : nota;
+  const { error } = await db.from("ordenes").update({ notas_internas }).eq("id", ordenActual.id);
+  if (error) return msg("detError", "No se pudo guardar la observación: " + error.message);
+  ordenActual.notas_internas = notas_internas;
+  abrirDetalle(ordenActual);
+}
+
+async function verHistorial() {
+  const cont = $("detHistorial");
+  if (!cont.classList.contains("oculto")) { cont.classList.add("oculto"); return; }
+  cont.classList.remove("oculto");
+  cont.innerHTML = '<div class="cargando">Cargando…</div>';
+  const { data, error } = await db.from("movimientos_estado")
+    .select("estado_previo,estado_nuevo,ocurrido_en")
+    .eq("orden_id", ordenActual.id).order("ocurrido_en");
+  if (error || !data?.length) { cont.innerHTML = '<p class="pista">Sin historial todavía.</p>'; return; }
+  cont.innerHTML = data.map(m =>
+    `<div class="dato"><span>${ETIQUETA_LEGADO[m.estado_previo] ?? "—"} → ${ETIQUETA_LEGADO[m.estado_nuevo] ?? m.estado_nuevo}</span><span>${fechaCL(m.ocurrido_en)}</span></div>`
+  ).join("");
 }
 
 // Garantía ya no es un valor de estado que se le pisa a la misma fila --
@@ -2027,7 +2182,7 @@ async function pintarVinculos(o) {
   caja.querySelectorAll("a").forEach(a => a.onclick = async e => {
     e.preventDefault();
     const { data: destino } = await db.from("ordenes")
-      .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
+      .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
       .eq("id", a.dataset.id).single();
     if (destino) abrirDetalle(destino);
   });
@@ -2242,27 +2397,21 @@ $("btnConfirmarFacturar").onclick = async () => {
   };
   // Si ya estaba entregado/instalado/resuelto en terreno, ese hecho ya
   // está guardado (la cajita ni se muestra). Si no, esta es la respuesta
-  // a "¿ya quedó listo?" -- "sí" cierra la OT ahora mismo (ubicación pasa
-  // a entregado, reparación a listo); "no" la deja con "falta entregar"
-  // hasta que se confirme aparte.
+  // a "¿ya quedó listo?" -- "sí" pasa ubicación a entregado y reparación
+  // a listo; "no" deja "falta entregar" hasta que se confirme aparte.
+  // Facturar ya NO cierra la OT sola -- desde el rediseño de carriles
+  // (17-09-2026), cerrar es un clic explícito aparte ("Cerrar OT").
   if (!ordenActual.entregado_en && elegido("selFactEntregado") === "1") {
     payload.entregado_en = new Date().toISOString();
     if (ordenActual.tipo_trabajo === "modulo") payload.ubicacion = "entregado";
     payload.reparacion = "listo";
   }
   payload.estado = estadoLegado({ ...ordenActual, ...payload });
-  // Igual que al cambiar cualquier otro eje: fecha_cierre solo si la OT
-  // queda de verdad cerrada. Si falta entregar, no se marca -- y la
-  // pantalla vuelve al detalle en vez del tablero, para que quede claro
-  // que todavía hay un paso pendiente.
-  const cierra = estaCerrada({ ...ordenActual, ...payload });
-  if (cierra) payload.fecha_cierre = new Date().toISOString();
   const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
   $("btnConfirmarFacturar").disabled = false;
   $("btnConfirmarFacturar").textContent = "Marcar como facturado";
   if (error) return msg("factError", "No se pudo facturar: " + error.message + " — no se perdió lo que escribiste.");
   Object.assign(ordenActual, payload);
-  if (cierra) { ver("vTablero"); cargarSeccion(); return; }
   abrirDetalle(ordenActual);
 };
 
@@ -4361,7 +4510,7 @@ async function cargarModulosPorRecepcionar() {
     div.querySelector(".mod").textContent = o.tipo_modulo ?? "módulo";
     div.onclick = async () => {
       const { data: completa } = await db.from("ordenes")
-        .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
+        .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
         .eq("id", o.id).single();
       if (completa) { ver("vTablero"); abrirDetalle(completa); }
     };

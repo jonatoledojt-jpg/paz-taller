@@ -1655,6 +1655,87 @@ OT se esconde y además se bloquea si igual se llega a apretar. Por defecto
 el front asume `true` (falla cerrado) hasta que la función confirme lo
 contrario.
 
+### Rediseño visual de los cuatro carriles + cierre explícito (17-09-2026)
+
+Después de un día armando y probando los cuatro ejes, Jonatan pidió
+puntualmente: *"mejorar interfaz de estados de OT sin cambiar el
+modelo de datos"* -- los botones grandes por eje ya eran correctos por
+debajo, pero seguían siendo confusos de leer. Esto es una capa
+**visual y de usabilidad** sobre `ubicacion`/`reparacion`/`comercial`/
+`pagado_en` -- ninguna columna nueva, ningún estado nuevo.
+
+**Un solo cambio real de comportamiento: cerrar dejó de ser automático.**
+Antes, `estaCerrada(o)` se derivaba sola de `pagado_en` + `ubicacion`
+(pagado y entregado = cerrada, sin que nadie lo confirmara). Ahora
+`estaCerrada(o)` es `comercial === 'rechazado' || !!o.fecha_cierre` --
+`fecha_cierre` (columna que ya existía desde `01-schema.sql`, antes se
+escribía sola) pasa a ser la fuente de verdad, y **solo se escribe con
+un clic explícito**: `cerrarOT()` o `cerrarSinCobro()`. Una OT pagada Y
+entregada se queda "Abierta · lista para cerrar" hasta que alguien
+aprieta "Cerrar OT" -- ya no desaparece sola del tablero. `rechazado`
+sigue cerrando solo, ahí de verdad no queda ninguna decisión pendiente.
+
+**Los cuatro carriles, como filas compactas** (`dato`, igual que
+Cliente/Patente en los datos de arriba), no como botones:
+- **Físico** (antes "Ubicación" -- Jonatan: *"no se entiende, hay que
+  explicarlo"*): `ETIQUETA_UBICACION` — Aún no llega / En tránsito /
+  Recibido / Entregado. Solo para módulos.
+- **Reparación**: por diagnosticar → en diagnóstico → diagnosticado →
+  en reparación → en pruebas → listo (+ irreparable).
+- **Económico** (`economicoEstado(o)`, nuevo): Sin monto / Cotizado /
+  Falta cobrar / Pagado / Sin cobro (si se cerró con `cerrarSinCobro`).
+- **Cierre**: Abierta / Cerrada, directo de `estaCerrada(o)`.
+
+**Estado general** (`etiquetaEstado(o)`/`tonoEstado(o)`, reutilizan los
+nombres de siempre): una frase arriba de los carriles que resume sin
+reemplazarlos -- "Abierta · en diagnóstico", "Abierta · falta cobrar",
+"Abierta · pagada, falta entregar" (el matiz de Naranjo: pagado pero
+sin entregar tiene que decirlo, no perderse detrás de un genérico
+"lista para entregar"), "Abierta · lista para cerrar", "Cerrada".
+
+**Una sola acción principal** (`accionesPrincipales(o)`), no una lista
+de botones: se destaca en negro (clase `.actual`, ya existía en el
+CSS), una segunda acción (como Irreparable) queda plana al lado.
+Prioridad: si la reparación ya terminó (listo/irreparable) → falta
+entregar → falta cobrar → falta cerrar, en ese orden; si sigue en
+proceso → el paso siguiente de reparación (+ Irreparable si aplica
+según `puedeSerIrreparable`); si el módulo ni siquiera llegó al taller
+→ el paso siguiente de **ubicación**, no de reparación (no se puede
+diagnosticar algo que sigue con el técnico o el cliente).
+
+**Opciones secundarias**, todas detrás de enlaces de texto, nunca
+botones grandes: *Agregar observación* (usa `ordenes.notas_internas`,
+columna que ya existía y no se usaba -- se le va agregando texto con
+fecha y quién, no se pisa), *Ver historial* (lee `movimientos_estado`
+directo, sin tabla nueva), *Cambiar estados manualmente* (los cuatro
+ejes editables en un solo panel, uno debajo del otro -- ya no un
+"Cambiar manualmente" repetido por carril), *Cerrar sin cobro* (solo
+cuando de verdad falta cobrar), *Garantía* (solo cuando ya está
+cerrada). **Cambiar estados manualmente y Cerrar sin cobro son solo de
+dueño/coordinador** -- mismo criterio de permisos que ya regía el
+cambio manual antes de este rediseño, no se abrió nada nuevo al técnico.
+
+**Cerrar sin cobro**: pide motivo obligatorio (`prompt`), lo anota en
+`notas_internas` con fecha y quién, y cierra con `fecha_cierre`. No hay
+un valor "sin_cobro" en el enum de `comercial` -- no hacía falta un
+estado nuevo, el rastro de *por qué* se cerró sin cobrar vive en la
+nota, no en el carril. `economicoEstado()` igual lo refleja ("Sin
+cobro") mirando `estaCerrada(o) && !pagado_en`.
+
+**Tablero**: la tarjeta ahora muestra el estado general (la frase, no
+el nombre técnico de un solo eje) y un contador **"N OT por cobrar"**
+arriba de la lista (`faltaCobrar(o)`: reparación terminada + entregada
++ sin pagar). Las OT por cobrar se destacan con un borde rojo a la
+izquierda de la tarjeta (`.ot.falta-cobrar`) -- sin repetir el chip,
+que ya lo dice en rojo. **Nunca se esconden** por estar pendientes de
+cobro: solo salen del tablero cuando `estaCerrada(o)` es de verdad
+cierto (cerrada o rechazada).
+
+**Qué no se tocó**: `resumen_rentabilidad`/`rentabilidad_ot` (siguen
+leyendo `estado`, vía `estadoLegado`, sin cambios); ningún flujo de
+terreno ni de laboratorio; los permisos existentes; Cotización, Agenda,
+Fotos siguen siendo secciones aparte, no se mezclaron con los estados.
+
 ## Contexto de negocio que importa
 
 Jonatan es el cuello de botella técnico: el mecánico escanea en terreno y le
