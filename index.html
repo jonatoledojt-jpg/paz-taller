@@ -725,6 +725,11 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           </div>
         </div>
       </div>
+      <div class="seccion oculto" id="factHermanos">
+        <span class="rotulo">Otros trabajos de esta visita</span>
+        <p class="pista" style="margin-top:0">Si el cliente pagó todo junto, marca cuáles van en este mismo cobro.</p>
+        <div id="factHermanosLista"></div>
+      </div>
       <button class="btn" id="btnConfirmarFacturar">Marcar como facturado</button>
       <div style="height:10px"></div>
       <button class="btn claro" id="btnFactCancelar">Cancelar</button>
@@ -2336,6 +2341,16 @@ $("btnAprobar").onclick = async () => {
 // el monto que dicen es con IVA incluido — hay que descontarlo antes de
 // guardar, porque ordenes.monto_final siempre es neto (mismo criterio que
 // gastos.monto_neto). El toggle decide cuál de los dos casos es.
+// Una visita puede destapar más de un trabajo (servicio + módulo
+// retirado, o una garantía sobre otra OT) -- cada uno nace como su
+// propia OT, pero el cliente muchas veces paga todo junto en un solo
+// momento. Facturar ahora deja incluir a los "hermanos" (misma raíz
+// por orden_padre_id) sin cobrar todavía, cada uno con su propio
+// monto_final -- así el margen de cada trabajo sigue siendo el suyo,
+// pero quedan pagados en el mismo instante y con el mismo número de
+// factura (17-09-2026, pedido de Jonatan).
+let hermanosFacturar = [];
+
 async function abrirFacturar() {
   msg("factError", "");
   $("factTitulo").textContent = "Facturar " + (ordenActual.numero_ot ?? "");
@@ -2354,6 +2369,36 @@ async function abrirFacturar() {
   // realidad todavía falta terminar.
   $("factEntregaCaja").classList.toggle("oculto", !!ordenActual.entregado_en);
   if (!ordenActual.entregado_en) $("selFactEntregado").querySelector('[data-v="1"]').click();
+
+  const raizId = ordenActual.orden_padre_id ?? ordenActual.id;
+  const { data: familia } = await db.from("ordenes")
+    .select("id,numero_ot,origen,tipo_trabajo,tipo_modulo,sistema,ubicacion,reparacion,comercial,pagado_en")
+    .or(`id.eq.${raizId},orden_padre_id.eq.${raizId}`);
+  hermanosFacturar = (familia || []).filter(h =>
+    h.id !== ordenActual.id && !h.pagado_en && h.comercial !== "rechazado");
+
+  const caja = $("factHermanos");
+  caja.classList.toggle("oculto", !hermanosFacturar.length);
+  if (hermanosFacturar.length) {
+    const lista = $("factHermanosLista");
+    lista.innerHTML = "";
+    for (const h of hermanosFacturar) {
+      const { data: mh } = await db.rpc("ordenes_montos", { p_orden_id: h.id });
+      h._sugerido = mh?.[0]?.monto_final ?? mh?.[0]?.monto_cotizado ?? null;
+      const tipoTexto = h.tipo_trabajo === "servicio" ? (h.sistema ?? "sistema") : (h.tipo_modulo ?? "módulo");
+      const fila = document.createElement("label");
+      fila.style.cssText = "display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--linea)";
+      fila.innerHTML = `
+        <input type="checkbox" data-id="${h.id}" style="width:18px;height:18px;flex:0 0 auto">
+        <span style="flex:1">${h.numero_ot} · ${tipoTexto}</span>
+        <input type="text" inputmode="numeric" class="fHermanoMonto" data-id="${h.id}"
+          style="width:100px;text-align:right" placeholder="${h._sugerido ? miles(h._sugerido) : "monto"}">`;
+      lista.appendChild(fila);
+    }
+    lista.querySelectorAll(".fHermanoMonto").forEach(inp => {
+      inp.oninput = e => { e.target.value = e.target.value.replace(/\D/g, ""); };
+    });
+  }
   ver("vFacturar");
 }
 
@@ -2388,12 +2433,28 @@ $("btnConfirmarFacturar").onclick = async () => {
   const neto = netoFacturar();
   if (!neto) return msg("factError", "Falta el monto cobrado.");
 
+  // Hermanos marcados: cada uno con su propio monto (el que se haya
+  // escrito, o el sugerido si se dejó el placeholder), convertido a
+  // neto con el mismo criterio con/sin factura que el resto del cobro.
+  const conFactura = elegido("selFactTiene") === "1";
+  const marcados = [];
+  for (const h of hermanosFacturar) {
+    const chk = $("factHermanosLista").querySelector(`input[type=checkbox][data-id="${h.id}"]`);
+    if (!chk?.checked) continue;
+    const escrito = $("factHermanosLista").querySelector(`.fHermanoMonto[data-id="${h.id}"]`).value;
+    const bruto = escrito ? parseInt(escrito, 10) : h._sugerido;
+    if (!bruto) return msg("factError", `Falta el monto de ${h.numero_ot}.`);
+    marcados.push({ ...h, neto: conFactura ? Math.round(bruto / 1.19) : bruto });
+  }
+
   $("btnConfirmarFacturar").disabled = true;
   $("btnConfirmarFacturar").textContent = "Guardando…";
+  const numFactura = $("fNumFactura").value.trim() || null;
+  const pagadoEn = new Date().toISOString();
   const payload = {
     monto_final: neto,
-    numero_factura: $("fNumFactura").value.trim() || null,
-    pagado_en: new Date().toISOString(),
+    numero_factura: numFactura,
+    pagado_en: pagadoEn,
   };
   // Si ya estaba entregado/instalado/resuelto en terreno, ese hecho ya
   // está guardado (la cajita ni se muestra). Si no, esta es la respuesta
@@ -2408,10 +2469,27 @@ $("btnConfirmarFacturar").onclick = async () => {
   }
   payload.estado = estadoLegado({ ...ordenActual, ...payload });
   const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
+  if (error) {
+    $("btnConfirmarFacturar").disabled = false;
+    $("btnConfirmarFacturar").textContent = "Marcar como facturado";
+    return msg("factError", "No se pudo facturar: " + error.message + " — no se perdió lo que escribiste.");
+  }
+  // Un cobro combinado con la visita: cada hermano marcado queda pagado
+  // en el mismo instante, con el mismo número de factura -- pero con SU
+  // propio monto, para que el margen de cada trabajo se calcule aparte.
+  const fallidos = [];
+  for (const h of marcados) {
+    const payloadH = { monto_final: h.neto, numero_factura: numFactura, pagado_en: pagadoEn };
+    payloadH.estado = estadoLegado({ ...h, ...payloadH });
+    const { error: eh } = await db.from("ordenes").update(payloadH).eq("id", h.id);
+    if (eh) fallidos.push(`${h.numero_ot}: ${eh.message}`);
+  }
   $("btnConfirmarFacturar").disabled = false;
   $("btnConfirmarFacturar").textContent = "Marcar como facturado";
-  if (error) return msg("factError", "No se pudo facturar: " + error.message + " — no se perdió lo que escribiste.");
   Object.assign(ordenActual, payload);
+  if (fallidos.length) {
+    return msg("factError", `${ordenActual.numero_ot} quedó facturada, pero falló: ${fallidos.join("; ")} — revísalos aparte.`);
+  }
   abrirDetalle(ordenActual);
 };
 
