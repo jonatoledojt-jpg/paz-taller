@@ -573,6 +573,19 @@ trabajo. `cargarOrdenes()` y `cargarAgendaSemana()` (la pestaña
 Terreno/Laboratorio de la Agenda, que tenía el mismo problema) usan
 `seccionDe` en vez de comparar `origen` directo.
 
+**La causa real de que "cerrar la app 3 veces" no actualizara nada:
+GitHub Pages sirve `index.html` con `Cache-Control: max-age=600`
+(17-09-2026).** El service worker ya pedía "red primero" (`fetch()` antes
+que caché), pero sin decirle explícitamente que ignorara la caché HTTP,
+un `fetch()` dentro de esa ventana de 10 minutos se resolvía con la copia
+guardada del navegador **sin tocar la red siquiera** — cerrar la app no
+limpia esa caché, así que no importaba cuántas veces se cerrara si caía
+dentro de esos 10 minutos. Se agregó `{ cache: "no-store" }` al `fetch()`
+del service worker (`sw.js`), que fuerza una vuelta real a la red cada
+vez, ignorando el `Cache-Control` del servidor. El SW script en sí
+(`sw.js`) no tenía este problema — los navegadores ya lo tratan aparte al
+revisar actualizaciones — era solo `index.html`.
+
 **"Sin agendar" y "Subir foto" seguían mostrándose en una OT cerrada
 (17-09-2026).** Jonatan marcó una captura: el punto anterior solo había
 sacado el *botón* de editar agenda, pero la sección "Agenda" seguía
@@ -581,7 +594,10 @@ nunca tuvo visita), y "Subir foto o captura del escáner" seguía
 ofreciéndose. Ahora: la sección Agenda entera se esconde si está cerrada
 **y** nunca tuvo `fecha_agendada` (si sí tuvo una agenda real, se deja
 como registro de solo lectura); "Subir foto" se esconde si está cerrada,
-pero las fotos que ya se subieron se quedan visibles.
+pero las fotos que ya se subieron se quedan visibles. **De paso** quedó
+un recuadro blanco vacío cuando una OT cerrada no tenía ni botón de subir
+ni fotos que mostrar (`cargarFotos` ahora esconde la tarjeta entera en
+ese caso, no solo el botón de subir).
 
 **Se puede registrar un gasto contra una OT cerrada (17-09-2026).**
 Pedido de Jonatan, justo después del punto anterior: un costo puede

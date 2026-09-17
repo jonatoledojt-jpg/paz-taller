@@ -528,7 +528,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <span class="rotulo">Margen de esta OT</span>
         <div id="detMargenInfo"></div>
       </div>
-      <div class="seccion">
+      <div class="seccion" id="seccionFotosDet">
         <div id="seccionSubirFotoDet">
           <label class="foto-btn" for="dFoto">Subir foto o captura del escáner</label>
           <input id="dFoto" type="file" accept="image/*" capture="environment">
@@ -2154,6 +2154,11 @@ async function cargarFotos(orden_id) {
     img.src = pub.publicUrl; img.alt = "Adjunto de la orden";
     $("detFotos").appendChild(img);
   });
+  // Si está cerrada y no hay ni foto que subir ni fotos que mostrar, no
+  // queda nada dentro de la tarjeta -- se esconde entera en vez de dejar
+  // un recuadro blanco vacío.
+  $("seccionFotosDet").classList.toggle("oculto",
+    estaCerrada(ordenActual) && !data?.length);
 }
 
 $("btnVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
