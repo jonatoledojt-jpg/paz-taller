@@ -82,11 +82,12 @@ sw.js                   service worker
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
 28-proteger-pago-tecnico.sql pagado_en/comercial/numero_factura protegidos igual que monto_final
+29-rentabilidad-usa-pagado-en.sql resumen_rentabilidad cuenta el mes por pagado_en, no fecha_cierre
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 ```
 
-**De la 01 a la 27 están todas aplicadas en la base real** (verificado el
+**De la 01 a la 29 están todas aplicadas en la base real** (verificado el
 17-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
 en este documento: preguntarle a la base.
 
