@@ -1929,12 +1929,13 @@ async function abrirDetalle(o) {
 
   pintarEstados(o);
   pintarVinculos(o);
-  // Solo mientras la visita sigue pendiente/en curso -- una vez que un
-  // módulo ya se retiró y avanzó (recepcionado en el laboratorio y más
-  // allá), esta visita terminó y el botón no corresponde: mostrarlo ahí
-  // sugiere que se puede seguir "retirando" desde algo que ya se cerró.
-  $("btnRetiroModulo").classList.toggle("oculto", noSeEdita(o) || o.origen !== "terreno" ||
-    (o.tipo_trabajo === "modulo" && o.ubicacion !== "con_cliente" && o.ubicacion !== "en_transito"));
+  // Un módulo nunca genera otro módulo en la misma visita -- ese botón
+  // es para la OT de la visita en sí (terreno+servicio: se está
+  // arreglando algo en el camión Y aparte se retira un módulo), no para
+  // una OT que YA ES un módulo (encontrado por Jonatan en la OT-2026-0022,
+  // 17-09-2026: "un módulo nunca generará módulos en terreno").
+  $("btnRetiroModulo").classList.toggle("oculto",
+    noSeEdita(o) || o.origen !== "terreno" || o.tipo_trabajo === "modulo");
 
   // Cotizar y aprobar tampoco corresponden si ya se cobró (o se
   // rechazó) -- no hay nada que volver a cotizar.
