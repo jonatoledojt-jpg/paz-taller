@@ -398,6 +398,21 @@ en vez de dejarlo pasar en silencio. `cambiarEstado` guarda `entregado_en`
 la primera vez que se marca "Entregado", sin importar si eso pasa antes o
 después de facturar.
 
+**Tercera vuelta, la misma tarde: "Entregado" pisaba "Facturado" si ya
+estaba facturado.** El primer intento de `cambiarEstado` seteaba
+`estado: "entregado"` siempre que se apretaba ese botón, sin mirar si la
+OT ya estaba más adelante en el flujo. Pasó en vivo con `OT-2026-0019`
+(Jar spa): estaba `facturado` (con `numero_factura` y `monto_final` ya
+guardados), Jonatan apretó "Entregado" para completar ese dato, y el
+estado retrocedió a `entregado` — la OT volvió a mostrarse como "falta
+cobrar" aunque ya estaba cobrada. **Nada se perdió** (`monto_final` y
+`numero_factura` son columnas aparte, no se tocan al cambiar `estado`),
+pero el estado quedó mintiendo. Corregido: si la OT ya está en
+`facturado`, marcar "Entregado" solo completa `entregado_en` y **no**
+retrocede el `estado` — el más avanzado se queda como está. Único caso
+real encontrado (revisado contra `movimientos_estado` completo); se
+corrigió a mano sin tocar montos ni factura.
+
 **Facturar: con o sin factura (17-09-2026).** Al entregar un módulo se cobra
 ahí mismo, casi siempre en efectivo y sin factura — el monto que se escribe
 ya es neto. A veces sí se emite factura, y ahí lo que se cobra incluye IVA.

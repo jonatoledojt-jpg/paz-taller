@@ -1762,8 +1762,20 @@ $("btnAprobar").onclick = async () => {
 async function cambiarEstado(nuevo) {
   if (nuevo === ordenActual.estado) return;
   if (nuevo === "facturado") return abrirFacturar();
-  const payload = { estado: nuevo };
-  if (nuevo === "entregado") payload.entregado_en = new Date().toISOString();
+  const payload = {};
+  if (nuevo === "entregado") {
+    payload.entregado_en = new Date().toISOString();
+    // Si ya estaba facturado, "Entregado" no es un paso hacia adelante --
+    // es completar un dato que faltaba de algo que ya pasó. Pisar el
+    // estado a "entregado" sería retroceder de verdad (el monto y el
+    // número de factura seguían guardados, pero la OT volvía a mostrarse
+    // como "falta cobrar" -- pasó en vivo con OT-2026-0019, 17-09-2026).
+    // El estado más avanzado se queda como está; solo se completa el
+    // hecho que faltaba.
+    if (ordenActual.estado !== "facturado") payload.estado = "entregado";
+  } else {
+    payload.estado = nuevo;
+  }
   const cierra = estaCerrada({ ...ordenActual, ...payload });
   if (cierra) payload.fecha_cierre = new Date().toISOString();
   const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
