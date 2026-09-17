@@ -367,9 +367,26 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <button class="btn" id="btnNueva">Nueva OT</button>
         <button class="btn oculto" id="btnAgendar">Agendar</button>
         <button class="btn oculto" id="btnNuevoGasto">+ Registrar gasto</button>
+        <button class="btn claro oculto" id="btnVerCerradas" style="max-width:120px">Cerradas</button>
         <button class="btn claro" id="btnRecargar" style="max-width:110px">Recargar</button>
       </div>
       <div id="listaOT" class="lista"></div>
+    </section>
+
+    <!-- Cerradas: solo dueño. Facturadas ya entregadas, y rechazadas --
+         quedan fuera del tablero a propósito (ver estaCerrada en el
+         script), pero siguen en la base y hay que poder encontrarlas. -->
+    <section id="vCerradas" class="oculto">
+      <div class="seccion-tit">
+        <h2>OT cerradas</h2>
+        <span>Solo tú</span>
+      </div>
+      <div class="campo">
+        <input id="cerBuscar" placeholder="Cliente, patente o número de OT…">
+      </div>
+      <div id="listaCerradas" class="lista"></div>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnCerradasVolver">Volver</button>
     </section>
 
     <!-- Nueva OT -->
@@ -995,7 +1012,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
-   "vGasto","vFacturar","vNexa","vEntrenar","vCaso"].forEach(v => $(v).classList.add("oculto"));
+   "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -1157,6 +1174,8 @@ function cambiarSeccion(seccion) {
   $("seccionTitulo").textContent = SECCION_TIT[seccion];
   $("seccionSub").textContent = SECCION_SUB[seccion];
   $("btnNueva").classList.toggle("oculto", seccion !== "terreno" && seccion !== "laboratorio");
+  $("btnVerCerradas").classList.toggle("oculto",
+    !esDueno || (seccion !== "terreno" && seccion !== "laboratorio"));
   $("btnAgendar").classList.toggle("oculto", !(seccion === "agenda" && ["dueno","coordinador"].includes(perfil?.rol)));
   $("btnNuevoGasto").classList.toggle("oculto", seccion !== "gastos");
   $("agendaControles").classList.toggle("oculto", seccion !== "agenda");
@@ -1225,6 +1244,46 @@ async function cargarOrdenes() {
   $("listaOT").innerHTML = "";
   abiertas.forEach(o => $("listaOT").appendChild(tarjetaOT(o)));
 }
+
+// ---------- Cerradas: solo dueño ----------
+// Se cierran del tablero, pero siguen en la base -- esto es la única
+// forma de volver a encontrarlas (una factura vieja, un cliente que
+// llama por un trabajo ya entregado). No hay política de base aparte:
+// esDueno ya se revisa antes de mostrar el botón, y la pantalla no
+// existe para nadie más -- misma idea que "Enseñarle a PAZ".
+let cerradasCache = [];
+$("btnVerCerradas").onclick = () => { ver("vCerradas"); cargarCerradas(); };
+$("btnCerradasVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
+
+async function cargarCerradas() {
+  $("cerBuscar").value = "";
+  $("listaCerradas").innerHTML = '<div class="cargando">Cargando…</div>';
+  const { data, error } = await db.from("ordenes")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,fecha_cierre,vehiculo_id,numero_factura,entregado_en,clientes(nombre,rut),vehiculos(patente)")
+    .in("estado", ["facturado", "rechazado"])
+    .order("fecha_cierre", { ascending: false }).limit(300);
+  if (error) {
+    $("listaCerradas").innerHTML = '<div class="aviso">No se pudieron cargar. Revisa tu conexión.</div>';
+    return;
+  }
+  cerradasCache = data.filter(estaCerrada);
+  pintarCerradas();
+}
+
+function pintarCerradas() {
+  const q = $("cerBuscar").value.trim().toLowerCase();
+  const filtradas = q
+    ? cerradasCache.filter(o => [o.numero_ot, o.clientes?.nombre, o.vehiculos?.patente]
+        .filter(Boolean).some(t => t.toLowerCase().includes(q)))
+    : cerradasCache;
+  if (!filtradas.length) {
+    $("listaCerradas").innerHTML = '<div class="vacio"><p>Nada por acá.</p></div>';
+    return;
+  }
+  $("listaCerradas").innerHTML = "";
+  filtradas.forEach(o => $("listaCerradas").appendChild(tarjetaOT(o)));
+}
+$("cerBuscar").addEventListener("input", pintarCerradas);
 
 // ---------- Agenda semanal — capa sobre ordenes, no una entidad aparte ----------
 const MES_CORTO = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];

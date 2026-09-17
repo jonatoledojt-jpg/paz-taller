@@ -521,6 +521,17 @@ rutas o cálculo de distancias, notificaciones/recordatorios,
 sincronización con Google Calendar, calendario gráfico mensual, historial
 múltiple de reprogramaciones, un módulo nuevo separado de `visitas`.
 
+**"Cerradas" — solo dueño (17-09-2026).** Salió de la pregunta obvia
+después de tanto tocar `estaCerrada()`: si una OT se esconde del
+tablero, ¿cómo se vuelve a encontrar? No había forma — quedaba en la
+base pero invisible desde la app. Botón "Cerradas" en Terreno/Laboratorio
+(`btnVerCerradas`), visible solo para dueño, abre una pantalla con buscador
+libre (cliente, patente o número de OT) sobre las OT `facturado` o
+`rechazado` que de verdad están cerradas (mismo `estaCerrada()` de
+siempre). No es una tabla nueva ni una política de base aparte: la
+pantalla simplemente no existe para nadie más, mismo criterio que
+"Enseñarle a PAZ".
+
 ## Estado actual — qué funciona
 
 - Login con correo y contraseña
