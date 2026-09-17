@@ -679,6 +679,13 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <label for="fNumFactura">Número de factura</label>
           <input id="fNumFactura" inputmode="numeric" placeholder="Opcional">
         </div>
+        <div class="campo oculto" id="factEntregaCaja">
+          <span class="rotulo">¿El trabajo ya quedó terminado y entregado/instalado?</span>
+          <div class="opciones" id="selFactEntregado">
+            <button type="button" data-v="1" aria-pressed="true">Sí, ya quedó listo</button>
+            <button type="button" data-v="0" aria-pressed="false">No, cobré antes de terminar</button>
+          </div>
+        </div>
       </div>
       <button class="btn" id="btnConfirmarFacturar">Marcar como facturado</button>
       <div style="height:10px"></div>
@@ -1021,31 +1028,39 @@ const FLUJO = {
 };
 const flujoDe = o => FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || FLUJO.laboratorio_modulo;
 const EXCEPCIONES = ["irreparable","rechazado","garantia"];
-// Cierres reales sin ambigüedad en cualquier flujo. "entregado" y
-// "facturado" NO están acá a propósito -- ver estaCerrada().
-const CERRADOS = ["instalado","resuelto_en_terreno","rechazado"];
 
-// "entregado" y "facturado" pueden pasar en cualquier orden (a veces se
-// cobra antes de que el cliente retire) -- esconder la OT no puede
-// depender solo del estado actual, porque el paso previo se puede saltar
-// por "Cambiar estado manualmente". Pasó en vivo dos veces el 17-09-2026:
-// OT-2026-0007 (Naranjo) y OT-2026-0019 (Jar spa) se facturaron saltando
-// "entregado", y desaparecieron con el módulo todavía en el taller.
-// entregado_en es el hecho aparte que faltaba: si el flujo tiene un paso
-// de "entregado" (solo laboratorio+módulo), la OT no se esconde hasta que
-// ese hecho exista de verdad, sin importar si ya se facturó.
+// Revisión completa del 17-09-2026, después de que "entregado" escondiera
+// una OT sin cobrar dos veces el mismo día: el mismo problema estaba
+// agazapado en otros dos estados, con el mismo patrón exacto --
+// "trabajo físico terminado" puesto en CERRADOS, sin mirar si ya se
+// facturó. Los tres son el mismo caso, en distinto disfraz según el
+// flujo:
+//   - laboratorio+módulo: "entregado"    (se le pasa el módulo al cliente)
+//   - terreno+módulo:     "instalado"    (se reinstala en el camión)
+//   - los dos de terreno: "resuelto_en_terreno" (se arregló ahí mismo,
+//     sin retirar nada -- puede pasar temprano en terreno+módulo o justo
+//     antes de facturar en terreno+servicio, según CLAUDE.md)
+// Ninguno de los tres implica por sí solo que ya se cobró. Por eso
+// ninguno cierra la OT solo -- todos usan el mismo hecho aparte
+// (entregado_en) que "facturado" necesita para cerrar de verdad.
+const PASOS_FISICOS = ["entregado","instalado","resuelto_en_terreno"];
+
+// El único cierre real sin ambigüedad: el cliente rechazó la cotización,
+// no hay nada más que hacer, ni siquiera cobrar.
+const CERRADOS = ["rechazado"];
+
 function estaCerrada(o) {
   if (CERRADOS.includes(o.estado)) return true;
   if (o.estado !== "facturado") return false;
-  return !flujoDe(o).includes("entregado") || !!o.entregado_en;
+  return !!o.entregado_en;
 }
 function etiquetaEstado(o) {
-  if (o.estado === "entregado") return "Entregado · falta cobrar";
+  if (PASOS_FISICOS.includes(o.estado)) return `${ETIQUETA[o.estado] || o.estado} · falta cobrar`;
   if (o.estado === "facturado" && !estaCerrada(o)) return "Facturado · falta entregar";
   return ETIQUETA[o.estado] || o.estado;
 }
 function tonoEstado(o) {
-  if (o.estado === "entregado") return "espera";
+  if (PASOS_FISICOS.includes(o.estado)) return "espera";
   if (o.estado === "facturado" && !estaCerrada(o)) return "espera";
   return TONO[o.estado] || "";
 }
@@ -1363,6 +1378,7 @@ function grupoOpciones(cont, multiple) {
 grupoOpciones("selOrigen");
 grupoOpciones("selTipoTrabajo");
 grupoOpciones("selFactTiene");
+grupoOpciones("selFactEntregado");
 grupoOpciones("selFranja");
 grupoOpciones("selFranjaDet");
 grupoOpciones("selFranjaCaso");
@@ -1763,16 +1779,17 @@ async function cambiarEstado(nuevo) {
   if (nuevo === ordenActual.estado) return;
   if (nuevo === "facturado") return abrirFacturar();
   const payload = {};
-  if (nuevo === "entregado") {
+  if (PASOS_FISICOS.includes(nuevo)) {
     payload.entregado_en = new Date().toISOString();
-    // Si ya estaba facturado, "Entregado" no es un paso hacia adelante --
-    // es completar un dato que faltaba de algo que ya pasó. Pisar el
-    // estado a "entregado" sería retroceder de verdad (el monto y el
-    // número de factura seguían guardados, pero la OT volvía a mostrarse
-    // como "falta cobrar" -- pasó en vivo con OT-2026-0019, 17-09-2026).
+    // Si ya estaba facturado, esto no es un paso hacia adelante -- es
+    // completar un dato que faltaba de algo que ya pasó. Pisar el estado
+    // sería retroceder de verdad (el monto y el número de factura
+    // seguían guardados, pero la OT volvía a mostrarse como "falta
+    // cobrar" -- pasó en vivo con OT-2026-0019, 17-09-2026, con
+    // "entregado"; mismo riesgo con "instalado" y "resuelto_en_terreno").
     // El estado más avanzado se queda como está; solo se completa el
     // hecho que faltaba.
-    if (ordenActual.estado !== "facturado") payload.estado = "entregado";
+    if (ordenActual.estado !== "facturado") payload.estado = nuevo;
   } else {
     payload.estado = nuevo;
   }
@@ -1800,14 +1817,15 @@ async function abrirFacturar() {
   $("fNumFactura").value = ordenActual.numero_factura ?? "";
   $("selFactTiene").querySelector('[data-v="0"]').click();
   actualizarPistaFacturar();
-  // Facturar antes de entregar es válido (se cobra antes de que el
-  // cliente retire), pero hay que avisarlo: si no, la OT queda marcada
-  // "falta entregar" sin que quien factura se entere en el momento.
-  if (flujoDe(ordenActual).includes("entregado") && !ordenActual.entregado_en) {
-    $("factError").textContent = "Este módulo todavía no se marcó como entregado. " +
-      "La OT va a seguir en el tablero como \"Facturado · falta entregar\" hasta que lo entregues.";
-    $("factError").className = "aviso info";
-  }
+  // Si el trabajo ya pasó por un paso físico (entregado/instalado/
+  // resuelto en terreno), ese hecho ya está guardado -- no hace falta
+  // preguntar de nuevo. Si no, puede ser que se esté facturando de un
+  // tirón (saltando los pasos intermedios) o cobrando antes de terminar
+  // -- son casos distintos y hay que preguntar cuál es, para no dejar la
+  // OT "falta entregar" para siempre por error, ni cerrarla si en
+  // realidad todavía falta terminar.
+  $("factEntregaCaja").classList.toggle("oculto", !!ordenActual.entregado_en);
+  if (!ordenActual.entregado_en) $("selFactEntregado").querySelector('[data-v="1"]').click();
   ver("vFacturar");
 }
 
@@ -1849,10 +1867,17 @@ $("btnConfirmarFacturar").onclick = async () => {
     monto_final: neto,
     numero_factura: $("fNumFactura").value.trim() || null,
   };
+  // Si ya estaba entregado/instalado/resuelto en terreno, ese hecho ya
+  // está guardado (la cajita ni se muestra). Si no, esta es la respuesta
+  // a "¿ya quedó listo?" -- "sí" cierra la OT ahora mismo; "no" la deja
+  // con "falta entregar" hasta que se confirme aparte.
+  if (!ordenActual.entregado_en && elegido("selFactEntregado") === "1") {
+    payload.entregado_en = new Date().toISOString();
+  }
   // Igual que al cambiar cualquier otro estado: fecha_cierre solo si la
-  // OT queda de verdad cerrada (ya entregada, o el flujo no la necesita).
-  // Si falta entregar, no se marca -- y la pantalla vuelve al detalle en
-  // vez del tablero, para que quede claro que todavía hay un paso pendiente.
+  // OT queda de verdad cerrada. Si falta entregar, no se marca -- y la
+  // pantalla vuelve al detalle en vez del tablero, para que quede claro
+  // que todavía hay un paso pendiente.
   const cierra = estaCerrada({ ...ordenActual, ...payload });
   if (cierra) payload.fecha_cierre = new Date().toISOString();
   const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);

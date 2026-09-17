@@ -398,6 +398,47 @@ en vez de dejarlo pasar en silencio. `cambiarEstado` guarda `entregado_en`
 la primera vez que se marca "Entregado", sin importar si eso pasa antes o
 después de facturar.
 
+**Revisión completa de los tres flujos (17-09-2026), a pedido explícito
+de Jonatan después del tercer incidente el mismo día.** El mismo patrón
+("un paso de trabajo físico terminado, puesto a cerrar la OT sin mirar si
+ya se cobró") estaba agazapado en **dos estados más**, no solo
+"entregado":
+
+- `instalado` (terreno + módulo): se reinstala el módulo en el camión,
+  justo antes de "facturado" en ese flujo. Estaba en `CERRADOS` sin
+  ningún resguardo — mismo riesgo exacto que tuvo "entregado".
+- `resuelto_en_terreno` (los dos flujos de terreno): "se arregló ahí
+  mismo, sin retirar nada" — en terreno+servicio va justo antes de
+  "facturado"; en terreno+módulo aparece temprano, como una salida
+  alternativa (el técnico soluciona en el sitio y el resto de los pasos
+  de laboratorio no aplican). En ambos casos, según su propia
+  definición ("es trabajo que se factura"), sigue pendiente el cobro.
+  También estaba en `CERRADOS` sin resguardo.
+
+Ninguno de los dos había reventado en vivo todavía (no hay ninguna OT
+real que haya pasado por ahí), pero el patrón es idéntico al de
+"entregado" y era cuestión de tiempo.
+
+**Arreglo, generalizado en vez de repetido tres veces:**
+- `PASOS_FISICOS = ["entregado","instalado","resuelto_en_terreno"]` — los
+  tres representan lo mismo: trabajo físico terminado, cobro aparte.
+- `CERRADOS` quedó en `["rechazado"]` — el único cierre real sin ningún
+  cobro pendiente (el cliente dijo que no).
+- `estaCerrada(o)`: `rechazado` cierra siempre; `facturado` cierra solo si
+  `entregado_en` existe. Ya no importa cuál de los tres pasos físicos fue
+  ni en qué flujo — el hecho es el mismo hecho.
+- `cambiarEstado`: marcar cualquiera de los tres pasos físicos guarda
+  `entregado_en`; si la OT ya estaba `facturado`, **no** retrocede el
+  estado (mismo resguardo que ya tenía "entregado", ahora para los tres).
+- **Nuevo, para poder cerrar una OT que se facturó de un tirón** (sin
+  pasar por ninguno de los tres pasos físicos — perfectamente válido para
+  un trabajo rápido): la pantalla de Facturar pregunta *"¿El trabajo ya
+  quedó terminado y entregado/instalado?"* cuando `entregado_en` todavía
+  no existe. "Sí" (la opción por defecto) cierra la OT ahí mismo; "No, cobré
+  antes de terminar" la deja "Facturado · falta entregar" hasta que se
+  confirme aparte. Sin esto, cualquier OT facturada de un solo paso
+  habría quedado "falta entregar" para siempre, sin forma de cerrarla.
+
 **Tercera vuelta, la misma tarde: "Entregado" pisaba "Facturado" si ya
 estaba facturado.** El primer intento de `cambiarEstado` seteaba
 `estado: "entregado"` siempre que se apretaba ese botón, sin mirar si la
