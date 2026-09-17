@@ -1729,7 +1729,7 @@ const REPARACION_SEQ = ["por_diagnosticar", "en_diagnostico", "diagnosticado", "
 // frente, el resto detrás de "Cambiar manualmente" -- mismo patrón que el
 // flujo único de antes, pero ahora son dos secuencias independientes en
 // vez de una sola lista que mezclaba ubicación y reparación.
-function grupoSecuencia(cont, rotuloTxt, secuencia, actualVal, onCambiar, extraBotones = []) {
+function grupoSecuencia(cont, rotuloTxt, secuencia, actualVal, onCambiar, extraBotones = [], bloquearAlFinal = false) {
   const idxActual = secuencia.indexOf(actualVal);
   const siguiente = idxActual >= 0 && idxActual < secuencia.length - 1 ? secuencia[idxActual + 1] : null;
 
@@ -1755,6 +1755,13 @@ function grupoSecuencia(cont, rotuloTxt, secuencia, actualVal, onCambiar, extraB
   // avance esperado y cuál la excepción.
   if (siguiente) boton(siguiente, ETIQUETA_UBICACION[siguiente] || ETIQUETA_REPARACION[siguiente], true);
   extraBotones.forEach(([valor, texto]) => boton(valor, texto, false));
+
+  // Una vez que llega al final de la secuencia, no se puede retroceder
+  // -- confirmado por Jonatan (17-09-2026) para Reparación: si ya avanzó
+  // a "Listo", el trabajo se dio por terminado, y volver atrás manual
+  // no corresponde (un error real se corrige por Garantía, no
+  // revirtiendo el estado).
+  if (bloquearAlFinal && !siguiente) return;
 
   const resto = secuencia.filter(v => v !== actualVal && v !== siguiente);
   if (!resto.length) return;
@@ -1853,7 +1860,7 @@ function pintarEstados(o) {
     ETAPAS_CON_DIAGNOSTICO.includes(o.reparacion) &&
     (o.ubicacion === "en_taller" || o.ubicacion === "entregado");
   grupoSecuencia(cont, "Reparación", REPARACION_SEQ, o.reparacion, cambiarReparacion,
-    puedeSerIrreparable ? [["irreparable", "Irreparable"]] : []);
+    puedeSerIrreparable ? [["irreparable", "Irreparable"]] : [], true);
 }
 
 // Espejo hacia el `estado` de siempre -- lo siguen leyendo
