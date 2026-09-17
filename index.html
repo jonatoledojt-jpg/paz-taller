@@ -1813,6 +1813,7 @@ function pintarEstados(o) {
       cont.appendChild(rot);
       const b = document.createElement("button");
       b.textContent = "Entregado";
+      b.style.cssText = "font-weight:700;text-align:center";
       b.onclick = () => cambiarUbicacion("entregado");
       cont.appendChild(b);
     }
