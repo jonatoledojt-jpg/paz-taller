@@ -575,6 +575,19 @@ parte. `cargarOrdenes()` ya no filtra por `origen` en el servidor (trae
 las dos y separa con `seccionDe` en el cliente, mismo criterio que
 `estaCerrada`).
 
+**"Módulos por recepcionar" en la Agenda (17-09-2026).** Pedido directo
+de Jonatan: cuando un módulo retirado en terreno pasa a ser
+responsabilidad del laboratorio, alguien tiene que acordarse de pedirlo
+— si no, se pierde en el camino sin que nadie lo note. Mismo problema
+que "Casos por agendar" ya resolvía para PAZ (no hay notificaciones de
+verdad todavía), así que se usó el mismo patrón: un bloque en la Agenda
+—donde el coordinador abre la app por defecto— que lista los módulos en
+estado `retirado` (el técnico ya los tiene, en tránsito) hasta que
+alguien los marca `Recepcionado`. Tocar uno abre su detalle directo. No
+es una notificación push real, es la misma clase de aviso honesto que ya
+se usa en el resto de la app: visible cada vez que se abre, no una
+promesa de algo que no existe.
+
 **"+ Se retiró un módulo en esta visita" (17-09-2026).** Salió de un caso
 real: una visita a terreno donde se repara algo directo en el camión
 (servicio) Y aparte se retira un módulo para el laboratorio — dos

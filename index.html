@@ -342,6 +342,11 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <!-- Casos que PAZ dejó listos y esperan que alguien los agende.
              Van arriba de todo porque el coordinador abre acá. -->
         <div class="seccion oculto" id="porAgendar"></div>
+        <!-- Módulos retirados en terreno que todavía no llegan al
+             laboratorio. Mismo criterio que "Casos por agendar": el
+             coordinador abre acá por defecto, así que es donde se
+             tiene que acordar de pedirlos. -->
+        <div class="seccion oculto" id="porRecepcionar"></div>
       </div>
 
       <div id="gastosControles" class="oculto">
@@ -1354,7 +1359,8 @@ $("selAgendaOrigen").querySelectorAll("button").forEach(b => {
 
 async function cargarAgendaSemana() {
   $("listaOT").innerHTML = '<div class="cargando">Cargando agenda…</div>';
-  cargarCasosPorAgendar();   // sin await: no atrasa la semana
+  cargarCasosPorAgendar();       // sin await: no atrasa la semana
+  cargarModulosPorRecepcionar(); // idem
   const lunes = lunesDeSemana(semanaOffset);
   const sabado = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + 5);
   $("semanaLabel").textContent =
@@ -4066,6 +4072,60 @@ async function cargarCasosPorAgendar() {
       [f.ubicacion, f.sintoma].filter(Boolean).join(" · ");
     div.querySelector(".ver").onclick = () => { ver("vNexa"); abrirCasoNexa(c.id); };
     div.querySelector(".agendar").onclick = () => llenarFormularioDesdeFicha(f, c.id);
+    lista.appendChild(div);
+  });
+}
+
+// ---------- Módulos por recepcionar (arriba de la Agenda) ----------
+// El técnico retira un módulo en terreno y lo marca "Retirado, en
+// tránsito" -- desde ahí hasta que alguien en el laboratorio confirma
+// que llegó (lo marca "Recepcionado"), queda acá. Es el mismo problema
+// que "Casos por agendar" resuelve para PAZ: no hay notificaciones de
+// verdad, así que el aviso vive donde el coordinador abre la app por
+// defecto. Sin esto, si al técnico se le olvida bajarlo de la camioneta,
+// nadie en el laboratorio tiene ninguna señal de que algo faltaba.
+async function cargarModulosPorRecepcionar() {
+  const caja = $("porRecepcionar");
+  if (!["dueno","coordinador"].includes(perfil?.rol)) {
+    caja.classList.add("oculto");
+    return;
+  }
+  const { data, error } = await db.from("ordenes")
+    .select("id,numero_ot,tipo_modulo,fecha_ingreso,clientes(nombre),vehiculos(patente)")
+    .eq("origen", "terreno").eq("tipo_trabajo", "modulo").eq("estado", "retirado")
+    .order("fecha_ingreso");
+
+  if (error || !data?.length) {
+    caja.classList.add("oculto");
+    return;
+  }
+
+  caja.classList.remove("oculto");
+  caja.innerHTML = `<span class="rotulo">Módulos por recepcionar (${data.length})</span>`;
+  const lista = document.createElement("div");
+  lista.className = "lista";
+  caja.appendChild(lista);
+
+  data.forEach(o => {
+    const dias = Math.floor((Date.now() - new Date(o.fecha_ingreso)) / 86400000);
+    const div = document.createElement("div");
+    div.className = "ot";
+    div.innerHTML = `
+      <div class="fila1">
+        <span class="num">${o.numero_ot}</span>
+        <span class="dias ${dias > 1 ? "tarde" : ""}">${dias === 0 ? "hoy" : dias + " días"}</span>
+      </div>
+      <div class="cliente"></div>
+      <div class="detalle"><span class="pat"></span> · <span class="mod"></span></div>`;
+    div.querySelector(".cliente").textContent = o.clientes?.nombre ?? "Sin cliente";
+    div.querySelector(".pat").textContent = o.vehiculos?.patente ?? "sin patente";
+    div.querySelector(".mod").textContent = o.tipo_modulo ?? "módulo";
+    div.onclick = async () => {
+      const { data: completa } = await db.from("ordenes")
+        .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
+        .eq("id", o.id).single();
+      if (completa) { ver("vTablero"); abrirDetalle(completa); }
+    };
     lista.appendChild(div);
   });
 }
