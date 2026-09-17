@@ -532,6 +532,25 @@ siempre). No es una tabla nueva ni una política de base aparte: la
 pantalla simplemente no existe para nadie más, mismo criterio que
 "Enseñarle a PAZ".
 
+**"+ Se retiró un módulo en esta visita" (17-09-2026).** Salió de un caso
+real: una visita a terreno donde se repara algo directo en el camión
+(servicio) Y aparte se retira un módulo para el laboratorio — dos
+trabajos, dos OT (`tipo_trabajo` es uno u otro por fila, no se mezclan).
+Jonatan había creado solo la del servicio; la del módulo nunca se guardó
+porque había que ir a "Nueva OT" desde cero y re-buscar el mismo cliente
+y la misma patente. Ahora, en el detalle de cualquier OT de `origen =
+terreno`, el botón **"+ Se retiró un módulo en esta visita"** abre "Nueva
+OT" con cliente y patente ya cargados, tipo módulo y origen terreno ya
+elegidos — solo falta el tipo de módulo y la falla.
+
+**`orden_padre_id` ya existía en el esquema (`01-schema.sql`) sin usarse
+nunca** — es justo para esto: la OT nueva queda con `orden_padre_id`
+apuntando a la OT desde la que se creó. El detalle de cada una ahora
+muestra el vínculo en las dos direcciones: la hija dice "Nace de la
+visita: OT-XXXX", y la que originó otras muestra "Otros trabajos de esta
+visita: OT-YYYY" — ambos con link directo. No se creó tabla ni columna
+nueva, solo se usó lo que ya estaba.
+
 ## Estado actual — qué funciona
 
 - Login con correo y contraseña
