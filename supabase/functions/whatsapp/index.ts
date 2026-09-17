@@ -159,7 +159,8 @@ async function guardarAdjunto(paz: any, conversacion_id: number, mediaId: string
   if (!bin.ok) throw new Error("No se pudo descargar el archivo.");
   const datos = new Uint8Array(await bin.arrayBuffer());
 
-  const ext = mime.includes("png") ? "png" : mime.includes("pdf") ? "pdf" : "jpg";
+  const ext = mime.includes("png") ? "png" : mime.includes("pdf") ? "pdf"
+    : mime.includes("ogg") ? "ogg" : mime.includes("audio") ? "m4a" : "jpg";
   const ruta = `${conversacion_id}/${mediaId}.${ext}`;
 
   const { error } = await admin.storage.from("paz-adjuntos")
@@ -171,6 +172,41 @@ async function guardarAdjunto(paz: any, conversacion_id: number, mediaId: string
     p_categoria: cat, p_mime: mime, p_wa_media_id: mediaId,
   });
   if (errRpc) throw errRpc;
+}
+
+// Audios de WhatsApp: sin esto, un cliente describiendo la falla por audio
+// —que en un taller es tan común como escribir, más todavía en terreno—
+// caía al "revísalo en WhatsApp" y PAZ seguía la conversación a ciegas.
+// Se baja el audio de Meta igual que una foto y se manda a transcribir;
+// el adjunto se guarda de todas formas (guardarAdjunto, mismo camino que
+// las fotos) para poder escucharlo si la transcripción falla o queda dudosa.
+async function transcribirAudio(mediaId: string): Promise<string> {
+  const token = Deno.env.get("WHATSAPP_TOKEN");
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) throw new Error("Falta OPENAI_API_KEY.");
+  const cab = { Authorization: `Bearer ${token}` };
+
+  const meta = await fetch(`${GRAPH}/${mediaId}`, { headers: cab });
+  if (!meta.ok) throw new Error(`Meta no entregó el audio: ${await meta.text()}`);
+  const { url, mime_type } = await meta.json();
+
+  const bin = await fetch(url, { headers: cab });
+  if (!bin.ok) throw new Error("No se pudo descargar el audio.");
+  const datos = await bin.blob();
+
+  const form = new FormData();
+  form.append("file", datos, `audio.${mime_type?.includes("ogg") ? "ogg" : "m4a"}`);
+  form.append("model", "whisper-1");
+  form.append("language", "es");
+
+  const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+  if (!r.ok) throw new Error(`OpenAI no pudo transcribir: ${await r.text()}`);
+  const { text } = await r.json();
+  return (text ?? "").trim();
 }
 
 // ---------- Conversación ----------
@@ -380,6 +416,18 @@ async function procesarMensaje(paz: any, msj: any) {
     });
     if (error) console.error("No se pudo guardar la ubicación:", error);
     contenido = `[el cliente compartió su ubicación${texto ? ": " + texto : ""}]`;
+  } else if (msj.type === "audio") {
+    const m = msj.audio;
+    adjunto = { id: m?.id, mime: m?.mime_type ?? "audio/ogg", cat: "audio_cliente" };
+    let transcrito = "";
+    try {
+      transcrito = await transcribirAudio(m?.id);
+    } catch (e) {
+      console.error("No se pudo transcribir el audio:", e);
+    }
+    contenido = transcrito
+      ? `[audio transcrito] ${transcrito}`
+      : "[el cliente envió un audio y no se pudo transcribir — revísalo en WhatsApp]";
   } else {
     contenido = `[el cliente envió ${msj.type}, revísalo en WhatsApp]`;
   }

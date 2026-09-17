@@ -76,11 +76,12 @@ sw.js                   service worker
 20b-fix-mi-rol-null.sql      corrige NULL en mi_rol() que se saltaba el guardia de dueño
 21-tecnico-crea-ot.sql       el técnico puede crear OT (recepcionar módulos), no solo actualizar las suyas
 22-nexa-app-entrenamiento.sql RPC paz_en_entrenamiento(): bloquea crear OT desde el chat interno en modo aprendizaje
+23-audio-whatsapp.sql        nexa_archivos admite categoria 'audio_cliente'
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 ```
 
-**De la 01 a la 22 están todas aplicadas en la base real** (verificado el
+**De la 01 a la 23 están todas aplicadas en la base real** (verificado el
 16-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
 en este documento: preguntarle a la base.
 
@@ -870,11 +871,26 @@ bloque con lo que la base ya tiene:
 PAZ lo anota sin discutir y lo resuelve una persona. Un dato pisado por un
 malentendido es peor que un dato en conflicto.
 
-### Fotos, ubicación y tope de frecuencia
+### Fotos, audio y tope de frecuencia
 
 - Las **imágenes** que manda el cliente se bajan de Meta y se guardan en el
   bucket privado `paz-adjuntos`, con registro en `nexa_archivos`. La tabla
   `archivos` no servía: cuelga de una OT, y el caso nace antes de que exista.
+- Los **audios** (16-09-2026) se transcriben con Whisper (`whisper-1`,
+  mismo `OPENAI_API_KEY`) antes de entrar a la conversación como
+  `[audio transcrito] ...` — sin esto PAZ seguía a ciegas cuando el cliente
+  describía la falla hablando en vez de escribiendo, algo común en terreno.
+  El audio igual se guarda como adjunto (mismo camino que una foto,
+  `categoria = 'audio_cliente'`) para poder escucharlo si la transcripción
+  falla o queda dudosa — no reemplaza el original, lo complementa. Si
+  Whisper falla, el mensaje queda como
+  "[el cliente envió un audio y no se pudo transcribir — revísalo en
+  WhatsApp]" en vez de cortar la conversación.
+  **Pendiente, a propósito:** esto solo cubre la conversación en vivo por
+  WhatsApp. Un `.txt`/`.zip` exportado para "Enseñarle a PAZ" que tenga
+  audios los muestra como "‎audio omitted" (así los omite WhatsApp al
+  exportar) — esos mensajes se pierden igual al entrenar desde un archivo
+  viejo, a menos que se pida explícitamente resolver también ese caso.
 - La **ubicación** de WhatsApp queda en `nexa_conversaciones.ubicacion_gps` y
   `ubicacion_texto`. Cuando el caso se convierta en OT, el GPS se copia.
 - **Tope de 30 mensajes por hora y por teléfono** (`TOPE_POR_HORA`). Al
