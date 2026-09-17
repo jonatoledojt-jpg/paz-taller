@@ -900,6 +900,14 @@ malentendido es peor que un dato en conflicto.
   puede costar la cuota de OpenAI en minutos.
 - **Duplicados**: `nexa_mensajes.wa_id` tiene índice único. Si Meta reintenta
   el mismo mensaje, el insert falla y no se contesta dos veces.
+- **Debounce en dos pasadas (16-09-2026), no una sola.** Encontrado probando
+  audio real: un audio y una ubicación mandados casi juntos generaron dos
+  respuestas — el audio tarda en bajarse de Meta y transcribirse antes de
+  insertarse, así que su mensaje quedó con hora de inserción más tardía que
+  la ubicación, que se insertó 4.2s después de todas formas: fuera de la
+  ventana de una sola pasada de 2.5s. Ahora `procesarMensaje` chequea dos
+  veces (2.5s + 2.5s) antes de contestar; agrega ~2.5s más de latencia a
+  cada respuesta, pero cierra el hueco sin volverlo instantáneo.
 
 ### La conexión a WhatsApp quedó funcionando (15-09-2026)
 

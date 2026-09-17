@@ -453,21 +453,30 @@ async function procesarMensaje(paz: any, msj: any) {
     }
   }
 
-  // Pausa breve antes de contestar. Sin esto, cuando el cliente manda
-  // varios mensajes seguidos (pasó de verdad: "Cuáles son las que te
-  // envié" y "?" tres segundos después), cada uno dispara su propia
-  // llamada a la IA y su propio envío por WhatsApp — el cliente recibe
-  // dos respuestas casi iguales, una atrás de otra, como si dos personas
-  // le contestaran sin mirarse. Si durante la espera llega un mensaje más
-  // nuevo del mismo cliente, este se retira: el más nuevo va a leer todo
-  // el historial (incluido este mensaje) y contesta por los dos.
-  await new Promise((r) => setTimeout(r, 2500));
-  const { data: masReciente } = await paz.from("nexa_mensajes")
-    .select("creado_en").eq("conversacion_id", conversacion_id).eq("rol", "user")
-    .order("creado_en", { ascending: false }).limit(1).maybeSingle();
-  if (masReciente && insertado &&
-      new Date(masReciente.creado_en).getTime() > new Date(insertado.creado_en).getTime()) {
-    return;
+  // Pausa antes de contestar, en dos pasadas de 2.5s. Sin esto, cuando el
+  // cliente manda varios mensajes seguidos (pasó de verdad: "Cuáles son
+  // las que te envié" y "?" tres segundos después), cada uno dispara su
+  // propia llamada a la IA y su propio envío por WhatsApp — el cliente
+  // recibe dos respuestas casi iguales, una atrás de otra, como si dos
+  // personas le contestaran sin mirarse. Si durante la espera llega un
+  // mensaje más nuevo del mismo cliente, este se retira: el más nuevo va a
+  // leer todo el historial (incluido este mensaje) y contesta por los dos.
+  //
+  // Dos pasadas y no una sola: un audio tarda en bajarse de Meta y
+  // transcribirse ANTES de insertarse, así que puede quedar con una hora
+  // de inserción más tardía que un mensaje hermano mandado casi al mismo
+  // tiempo (una ubicación, por ejemplo). Pasó de verdad: un audio seguido
+  // de una ubicación generó dos respuestas porque la ubicación se insertó
+  // 4.2s después del audio — fuera de una sola ventana de 2.5s.
+  for (let vuelta = 0; vuelta < 2; vuelta++) {
+    await new Promise((r) => setTimeout(r, 2500));
+    const { data: masReciente } = await paz.from("nexa_mensajes")
+      .select("creado_en").eq("conversacion_id", conversacion_id).eq("rol", "user")
+      .order("creado_en", { ascending: false }).limit(1).maybeSingle();
+    if (masReciente && insertado &&
+        new Date(masReciente.creado_en).getTime() > new Date(insertado.creado_en).getTime()) {
+      return;
+    }
   }
 
   // El prompt tiene precios y reglas comerciales: se sigue leyendo con
