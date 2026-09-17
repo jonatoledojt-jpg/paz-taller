@@ -530,7 +530,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
       <div class="seccion" id="seccionFotosDet">
         <div id="seccionSubirFotoDet">
-          <label class="foto-btn" for="dFoto">Subir foto o captura del escáner</label>
+          <label class="foto-btn" for="dFoto" id="lblFotoDet">Subir foto o captura del escáner</label>
           <input id="dFoto" type="file" accept="image/*" capture="environment">
         </div>
         <div class="miniaturas" id="detFotos"></div>
@@ -1919,6 +1919,10 @@ async function abrirDetalle(o) {
   msg("detError", "");
   $("detTitulo").textContent = o.numero_ot ?? "Orden";
   const esServicio = o.tipo_trabajo === "servicio";
+  // Un módulo no se escanea con el equipo de diagnóstico del camión --
+  // las fotos que sube el laboratorio son del diagnóstico del módulo en
+  // sí. "Captura del escáner" es lenguaje de terreno+servicio.
+  $("lblFotoDet").textContent = esServicio ? "Subir foto o captura del escáner" : "Subir foto del diagnóstico";
   $("detDatos").innerHTML = `
     <div class="dato"><span>Cliente</span><span>${o.clientes?.nombre ?? "—"}</span></div>
     <div class="dato"><span>Patente</span><span style="font-family:var(--mono)">${o.vehiculos?.patente ?? "—"}</span></div>
@@ -2235,7 +2239,8 @@ $("dFoto").onchange = async e => {
   if (!f) return;
   msg("detError", "");
   try {
-    await subirFoto(ordenActual.id, await comprimir(f), "captura_scanner");
+    const categoria = ordenActual.tipo_trabajo === "servicio" ? "captura_scanner" : "diagnostico";
+    await subirFoto(ordenActual.id, await comprimir(f), categoria);
     cargarFotos(ordenActual.id);
   } catch (err) {
     msg("detError", "No se pudo subir la foto: " + err.message);
