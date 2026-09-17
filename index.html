@@ -1801,6 +1801,20 @@ function pintarEstados(o) {
       b.textContent = "Reingresa como OT nueva";
       b.onclick = () => iniciarGarantia();
       cont.appendChild(b);
+    } else if (o.tipo_trabajo === "modulo") {
+      // Pagada, pero el módulo sigue en el taller -- falta el único
+      // paso que queda: confirmar que se lo llevaron. Esto es lo que
+      // faltaba (encontrado por Jonatan, 17-09-2026): al separar
+      // "cerrada" de "pagada" quedó el botón de Garantía pero se perdió
+      // el de "Entregado" para este caso, y no había cómo cerrar la OT.
+      const rot = document.createElement("span");
+      rot.className = "rotulo sep";
+      rot.textContent = "Cambiar a";
+      cont.appendChild(rot);
+      const b = document.createElement("button");
+      b.textContent = "Entregado";
+      b.onclick = () => cambiarUbicacion("entregado");
+      cont.appendChild(b);
     }
     return;
   }
