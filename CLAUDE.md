@@ -573,6 +573,16 @@ trabajo. `cargarOrdenes()` y `cargarAgendaSemana()` (la pestaña
 Terreno/Laboratorio de la Agenda, que tenía el mismo problema) usan
 `seccionDe` en vez de comparar `origen` directo.
 
+**"Sin agendar" y "Subir foto" seguían mostrándose en una OT cerrada
+(17-09-2026).** Jonatan marcó una captura: el punto anterior solo había
+sacado el *botón* de editar agenda, pero la sección "Agenda" seguía
+mostrando "Sin agendar" igual (puro ruido en una OT ya facturada que
+nunca tuvo visita), y "Subir foto o captura del escáner" seguía
+ofreciéndose. Ahora: la sección Agenda entera se esconde si está cerrada
+**y** nunca tuvo `fecha_agendada` (si sí tuvo una agenda real, se deja
+como registro de solo lectura); "Subir foto" se esconde si está cerrada,
+pero las fotos que ya se subieron se quedan visibles.
+
 **Se puede registrar un gasto contra una OT cerrada (17-09-2026).**
 Pedido de Jonatan, justo después del punto anterior: un costo puede
 llegar **después** de facturar (garantía, una factura de repuestos

@@ -529,8 +529,10 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div id="detMargenInfo"></div>
       </div>
       <div class="seccion">
-        <label class="foto-btn" for="dFoto">Subir foto o captura del escáner</label>
-        <input id="dFoto" type="file" accept="image/*" capture="environment">
+        <div id="seccionSubirFotoDet">
+          <label class="foto-btn" for="dFoto">Subir foto o captura del escáner</label>
+          <input id="dFoto" type="file" accept="image/*" capture="environment">
+        </div>
         <div class="miniaturas" id="detFotos"></div>
       </div>
       <button class="btn claro oculto" id="btnAprobar">Cliente aprobó la cotización</button>
@@ -1841,6 +1843,9 @@ async function abrirDetalle(o) {
   // a la OT correcta una vez cerrada. No cambia nada de la OT en sí,
   // solo crea un gasto aparte -- por eso no se esconde nunca.
   $("btnGastoDeOT").classList.remove("oculto");
+  // Subir fotos nuevas tampoco corresponde en una OT cerrada -- las que
+  // ya se subieron se quedan visibles, como registro.
+  $("seccionSubirFotoDet").classList.toggle("oculto", estaCerrada(o));
 
   pintarAgendaDet(o);
   pintarMargenOT(o);
@@ -1903,6 +1908,11 @@ $("btnRetiroModulo").onclick = () => {
 };
 
 function pintarAgendaDet(o) {
+  // Una OT cerrada que nunca tuvo agenda no tiene nada que mostrar acá --
+  // "Sin agendar" en una OT ya facturada es puro ruido, no información.
+  // Si sí tuvo agenda de verdad, se deja como registro (de solo lectura).
+  $("detAgenda").classList.toggle("oculto", estaCerrada(o) && !o.fecha_agendada);
+
   // Editar la agenda de una OT cerrada no corresponde -- el trabajo ya
   // terminó, reprogramarlo no tiene sentido.
   const puedeEditar = ["dueno","coordinador"].includes(perfil?.rol) && !estaCerrada(o);
