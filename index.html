@@ -1824,7 +1824,14 @@ function accionesPrincipales(o) {
   const terminal = o.reparacion === "listo" || o.reparacion === "irreparable";
   if (terminal) {
     if (!fisicoEntregado(o)) return [["Marcar entregado", () => cambiarUbicacion("entregado")]];
-    if (!o.pagado_en) return [["Registrar cobro", () => abrirFacturar()]];
+    if (!o.pagado_en) {
+      // El cobro solo se hace desde la OT padre (o desde una OT que no
+      // tiene padre, es su propia raíz) -- si esta es una hija, se
+      // cobra junto con las demás desde arriba, no suelta (pedido de
+      // Jonatan, 17-09-2026: "que solo se pueda cobrar en la OT padre").
+      if (o.orden_padre_id) return [["Ir a la OT padre para cobrar", () => irAOrden(o.orden_padre_id)]];
+      return [["Registrar cobro", () => abrirFacturar()]];
+    }
     return [["Cerrar OT", () => cerrarOT()]];
   }
   // Un módulo que todavía no llega al taller: el paso siguiente es de
@@ -2165,6 +2172,13 @@ async function abrirDetalle(o) {
 // segunda OT desde cero, re-buscando el mismo cliente y la misma patente
 // -- ahora "+ Se retiró un módulo en esta visita" la precarga sola.
 // orden_padre_id ya existía en el esquema desde 01-schema.sql, sin usar.
+async function irAOrden(id) {
+  const { data: destino } = await db.from("ordenes")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
+    .eq("id", id).single();
+  if (destino) abrirDetalle(destino);
+}
+
 async function pintarVinculos(o) {
   const caja = $("detVinculos");
   const partes = [];
@@ -2184,13 +2198,7 @@ async function pintarVinculos(o) {
 
   caja.classList.toggle("oculto", !partes.length);
   caja.innerHTML = partes.join("");
-  caja.querySelectorAll("a").forEach(a => a.onclick = async e => {
-    e.preventDefault();
-    const { data: destino } = await db.from("ordenes")
-      .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
-      .eq("id", a.dataset.id).single();
-    if (destino) abrirDetalle(destino);
-  });
+  caja.querySelectorAll("a").forEach(a => a.onclick = e => { e.preventDefault(); irAOrden(a.dataset.id); });
 }
 
 $("btnRetiroModulo").onclick = () => {
