@@ -573,6 +573,26 @@ trabajo. `cargarOrdenes()` y `cargarAgendaSemana()` (la pestaña
 Terreno/Laboratorio de la Agenda, que tenía el mismo problema) usan
 `seccionDe` en vez de comparar `origen` directo.
 
+**`noSeEdita(o)`, no `estaCerrada(o)`: el resto de los botones tenían el
+mismo hueco (17-09-2026).** Jonatan mandó tres capturas completas de la
+OT de Naranjo y encontró que "Pagada" seguía mostrando "Sin agendar",
+"Editar agenda", "Subir foto", "Cliente aprobó la cotización",
+"Cotización" e "Informe técnico" — el arreglo anterior solo había
+corregido `pintarEstados`, pero **todos los demás** botones de "esto ya
+no se edita" seguían mirando `estaCerrada(o)` (que a propósito excluye
+"Pagada", para que siga visible en el tablero). Dos preguntas distintas
+que se habían mezclado: *"¿se esconde del tablero?"* (`estaCerrada`, no
+cambia) vs. *"¿se puede seguir editando?"* (nueva función `noSeEdita(o)`
+= `estado === 'facturado' || estado === 'rechazado'`, sin mirar
+`entregado_en` para nada). Se cambiaron a `noSeEdita`: `btnRetiroModulo`,
+`btnCotizar`, `btnAprobar`, `btnCierre`, `seccionSubirFotoDet`,
+`detAgenda`/`puedeEditar`, y el recuadro vacío de fotos. `btnGastoDeOT`
+se queda igual (siempre visible, a propósito). De paso, el monto en
+"Margen de esta OT" ahora muestra el total con IVA al lado del neto
+(`$400.000 + IVA = $476.000`) — Jonatan insistió dos veces con la misma
+duda real (¿es un error o es neto?), así que quedó explícito en vez de
+depender de que alguien recuerde la convención.
+
 **"Pagada" también necesitaba la lista de botones restringida
 (17-09-2026).** El arreglo de "una OT cerrada no invita a seguir
 editándola" solo miraba `estaCerrada(o)` — pero "Pagada · módulo aún en

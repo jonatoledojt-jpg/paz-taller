@@ -1131,6 +1131,17 @@ function estaCerrada(o) {
   if (o.estado !== "facturado") return false;
   return !!o.entregado_en;
 }
+// "Cerrada" (estaCerrada) decide si se esconde del tablero -- "Pagada"
+// (facturado, sin entregado_en) a propósito NO se esconde, porque
+// todavía falta ir a buscar el módulo. Pero una y otra son el MISMO
+// caso para todo lo demás: ya se cobró, así que cotizar, aprobar,
+// agendar, subir informe o foto nueva no corresponden en ninguna de
+// las dos. Antes esos botones solo miraban estaCerrada y se colaban en
+// "Pagada" -- encontrado por Jonatan revisando la misma OT de Naranjo
+// tres veces (17-09-2026): "llevamos varias horas arreglando lo mismo".
+function noSeEdita(o) {
+  return o.estado === "facturado" || CERRADOS.includes(o.estado);
+}
 function etiquetaEstado(o) {
   if (PASOS_FISICOS.includes(o.estado)) return `${ETIQUETA[o.estado] || o.estado} · falta cobrar`;
   // "Facturado" en este taller ya significa "plata cobrada", no solo
@@ -1859,27 +1870,27 @@ async function abrirDetalle(o) {
   // módulo ya se retiró y avanzó (recepcionado en el laboratorio y más
   // allá), esta visita terminó y el botón no corresponde: mostrarlo ahí
   // sugiere que se puede seguir "retirando" desde algo que ya se cerró.
-  $("btnRetiroModulo").classList.toggle("oculto", estaCerrada(o) || o.origen !== "terreno" ||
+  $("btnRetiroModulo").classList.toggle("oculto", noSeEdita(o) || o.origen !== "terreno" ||
     (o.tipo_trabajo === "modulo" && !TERRENO_MODULO_VISITA_PENDIENTE.includes(o.estado)));
 
-  // Cotizar y aprobar tampoco corresponden en una OT cerrada -- el
-  // trabajo ya se cobró (o se rechazó), no hay nada que volver a cotizar.
-  $("btnCotizar").classList.toggle("oculto", estaCerrada(o) || perfil?.rol === "tecnico");
+  // Cotizar y aprobar tampoco corresponden si ya se cobró (o se
+  // rechazó) -- no hay nada que volver a cotizar.
+  $("btnCotizar").classList.toggle("oculto", noSeEdita(o) || perfil?.rol === "tecnico");
   $("btnAprobar").classList.toggle("oculto",
-    estaCerrada(o) || perfil?.rol === "tecnico" || o.aprobado_cliente === true);
+    noSeEdita(o) || perfil?.rol === "tecnico" || o.aprobado_cliente === true);
   // "Informe técnico" también escribe monto_final y observaciones al
-  // generarlo -- en una OT cerrada eso puede pisar sin querer el monto
+  // generarlo -- si ya se cobró, eso puede pisar sin querer el monto
   // que ya se facturó de verdad.
-  $("btnCierre").classList.toggle("oculto", estaCerrada(o));
+  $("btnCierre").classList.toggle("oculto", noSeEdita(o));
   // Registrar un gasto de esta OT sí tiene sentido aunque ya esté
   // cerrada -- un costo puede llegar después de facturar (garantía, una
   // factura de repuestos atrasada), y antes no había forma de asociarlo
   // a la OT correcta una vez cerrada. No cambia nada de la OT en sí,
   // solo crea un gasto aparte -- por eso no se esconde nunca.
   $("btnGastoDeOT").classList.remove("oculto");
-  // Subir fotos nuevas tampoco corresponde en una OT cerrada -- las que
-  // ya se subieron se quedan visibles, como registro.
-  $("seccionSubirFotoDet").classList.toggle("oculto", estaCerrada(o));
+  // Subir fotos nuevas tampoco corresponde si ya se cobró -- las que ya
+  // se subieron se quedan visibles, como registro.
+  $("seccionSubirFotoDet").classList.toggle("oculto", noSeEdita(o));
 
   pintarAgendaDet(o);
   pintarMargenOT(o);
@@ -1942,14 +1953,15 @@ $("btnRetiroModulo").onclick = () => {
 };
 
 function pintarAgendaDet(o) {
-  // Una OT cerrada que nunca tuvo agenda no tiene nada que mostrar acá --
-  // "Sin agendar" en una OT ya facturada es puro ruido, no información.
-  // Si sí tuvo agenda de verdad, se deja como registro (de solo lectura).
-  $("detAgenda").classList.toggle("oculto", estaCerrada(o) && !o.fecha_agendada);
+  // Una OT que ya se cobró y nunca tuvo agenda no tiene nada que mostrar
+  // acá -- "Sin agendar" en una OT ya pagada es puro ruido, no
+  // información. Si sí tuvo agenda de verdad, se deja como registro (de
+  // solo lectura).
+  $("detAgenda").classList.toggle("oculto", noSeEdita(o) && !o.fecha_agendada);
 
-  // Editar la agenda de una OT cerrada no corresponde -- el trabajo ya
-  // terminó, reprogramarlo no tiene sentido.
-  const puedeEditar = ["dueno","coordinador"].includes(perfil?.rol) && !estaCerrada(o);
+  // Editar la agenda tampoco corresponde si ya se cobró -- el trabajo
+  // está terminado (o casi), reprogramarlo no tiene sentido.
+  const puedeEditar = ["dueno","coordinador"].includes(perfil?.rol) && !noSeEdita(o);
   $("detAgendaEdit").classList.add("oculto");
   $("btnEditarAgendaDet").classList.toggle("oculto", !puedeEditar);
 
@@ -2030,8 +2042,13 @@ async function pintarMargenOT(o) {
     }
   }
 
+  // Todo acá es NETO (criterio de todo el sistema), pero mostrarlo sin
+  // aclararlo generó dudas de verdad más de una vez el 17-09-2026 (¿el
+  // monto es con o sin IVA?) -- se deja el total al lado para que no
+  // haga falta calcularlo ni recordar la convención cada vez.
+  const totalConIva = Math.round(ingreso * 1.19);
   $("detMargenInfo").innerHTML = `
-    <div class="dato"><span>${etiquetaIngreso}</span><span>$${miles(ingreso)}</span></div>
+    <div class="dato"><span>${etiquetaIngreso} (neto)</span><span>$${miles(ingreso)} <span style="color:var(--humo);font-weight:400">+ IVA = $${miles(totalConIva)}</span></span></div>
     ${diferencia}
     <div class="dato"><span>Gastos asociados</span><span>${r.hay_gastos ? "$" + miles(gastos) : "sin gastos registrados"}</span></div>
     <div class="dato total"><span>Margen</span><span class="${margen < 0 ? "neg" : "pos"}">$${miles(margen)}${pct === null ? "" : ` · ${pct}%`}</span></div>`;
@@ -2188,11 +2205,11 @@ async function cargarFotos(orden_id) {
     img.src = pub.publicUrl; img.alt = "Adjunto de la orden";
     $("detFotos").appendChild(img);
   });
-  // Si está cerrada y no hay ni foto que subir ni fotos que mostrar, no
+  // Si ya se cobró y no hay ni foto que subir ni fotos que mostrar, no
   // queda nada dentro de la tarjeta -- se esconde entera en vez de dejar
   // un recuadro blanco vacío.
   $("seccionFotosDet").classList.toggle("oculto",
-    estaCerrada(ordenActual) && !data?.length);
+    noSeEdita(ordenActual) && !data?.length);
 }
 
 $("btnVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
