@@ -1103,8 +1103,24 @@ const EXCEPCIONES_POR_FLUJO = {
   terreno_modulo:     ["irreparable", "rechazado", "garantia"],
   laboratorio_modulo: ["irreparable", "rechazado", "garantia"],
 };
-const excepcionesDe = o =>
-  EXCEPCIONES_POR_FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || EXCEPCIONES_POR_FLUJO.laboratorio_modulo;
+// La lista de arriba dice qué excepciones existen en cada flujo, pero no
+// alcanza: "Irreparable" y "Garantía" solo tienen sentido a partir de un
+// punto del proceso, no en cualquiera. Encontrado en la OT-2026-0022
+// (17-09-2026): un módulo recién agendado -- ni siquiera retirado todavía
+// -- mostraba el botón Garantía, que supone que ya hubo una entrega.
+// - Irreparable: no se puede diagnosticar algo que no se ha recepcionado.
+// - Garantía: no puede volver por garantía algo que nunca se entregó.
+function excepcionesDe(o) {
+  const base = EXCEPCIONES_POR_FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || EXCEPCIONES_POR_FLUJO.laboratorio_modulo;
+  const flujo = flujoDe(o);
+  const idxActual = flujo.indexOf(o.estado);
+  const idxRecepcionado = flujo.indexOf("recepcionado");
+  return base.filter(e => {
+    if (e === "garantia") return !!o.entregado_en;
+    if (e === "irreparable") return idxRecepcionado === -1 || idxActual >= idxRecepcionado;
+    return true;
+  });
+}
 
 // Revisión completa del 17-09-2026, después de que "entregado" escondiera
 // una OT sin cobrar dos veces el mismo día: el mismo problema estaba
@@ -1755,7 +1771,10 @@ function pintarEstados(o) {
     aviso.style.marginTop = "10px";
     aviso.textContent = "Esta OT ya está cerrada.";
     cont.appendChild(aviso);
-    if (o.estado !== "garantia") {
+    // Garantía solo si de verdad hubo una entrega antes -- una OT rechazada
+    // (cliente no aprobó la cotización) también está "cerrada" pero nunca
+    // se entregó nada, así que no corresponde.
+    if (o.estado !== "garantia" && o.entregado_en) {
       const rot = document.createElement("span");
       rot.className = "rotulo sep";
       rot.textContent = "Cambiar a";
@@ -1783,16 +1802,15 @@ function pintarEstados(o) {
     rot.className = "rotulo sep";
     rot.textContent = "Cambiar a";
     cont.appendChild(rot);
+    // Sin Garantía acá: "facturado sin entregado_en" significa justamente
+    // que todavía no hay una entrega -- no puede volver por garantía algo
+    // que nunca salió del taller.
     flujoDe(o).filter(e => PASOS_FISICOS.includes(e)).forEach(e => {
       const b = document.createElement("button");
       b.textContent = ETIQUETA[e] || e;
       b.onclick = () => cambiarEstado(e);
       cont.appendChild(b);
     });
-    const b = document.createElement("button");
-    b.textContent = "Garantía (reingresa la OT)";
-    b.onclick = () => cambiarEstado("garantia");
-    cont.appendChild(b);
     return;
   }
 
@@ -1956,8 +1974,11 @@ function pintarAgendaDet(o) {
   // Una OT que ya se cobró y nunca tuvo agenda no tiene nada que mostrar
   // acá -- "Sin agendar" en una OT ya pagada es puro ruido, no
   // información. Si sí tuvo agenda de verdad, se deja como registro (de
-  // solo lectura).
-  $("detAgenda").classList.toggle("oculto", noSeEdita(o) && !o.fecha_agendada);
+  // solo lectura). Lo mismo si el módulo nació de "+ Se retiró un módulo
+  // en esta visita" (orden_padre_id): la agenda de esa salida ya vive en
+  // la OT de la visita -- este módulo no tiene una propia que mostrar
+  // (encontrado en la OT-2026-0022, 17-09-2026).
+  $("detAgenda").classList.toggle("oculto", !o.fecha_agendada && (noSeEdita(o) || !!o.orden_padre_id));
 
   // Editar la agenda tampoco corresponde si ya se cobró -- el trabajo
   // está terminado (o casi), reprogramarlo no tiene sentido.
