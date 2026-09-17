@@ -1738,15 +1738,23 @@ function grupoSecuencia(cont, rotuloTxt, secuencia, actualVal, onCambiar, extraB
   rot.textContent = rotuloTxt;
   cont.appendChild(rot);
 
-  const boton = (valor, texto) => {
+  const boton = (valor, texto, principal) => {
     const b = document.createElement("button");
     b.textContent = texto;
+    if (principal) b.className = "actual";
     b.onclick = () => onCambiar(valor);
     cont.appendChild(b);
   };
 
-  if (siguiente) boton(siguiente, ETIQUETA_UBICACION[siguiente] || ETIQUETA_REPARACION[siguiente]);
-  extraBotones.forEach(([valor, texto]) => boton(valor, texto));
+  // El paso siguiente (el avance normal) se destaca en negro -- las
+  // excepciones (Irreparable, Garantía) quedan en blanco, con el mismo
+  // peso visual que "Cambiar manualmente", para que no se vean como si
+  // fueran la continuación natural del trabajo. Encontrado por Jonatan
+  // (17-09-2026): "En pruebas" e "Irreparable" se veían exactamente
+  // iguales, uno debajo del otro, sin forma de distinguir cuál era el
+  // avance esperado y cuál la excepción.
+  if (siguiente) boton(siguiente, ETIQUETA_UBICACION[siguiente] || ETIQUETA_REPARACION[siguiente], true);
+  extraBotones.forEach(([valor, texto]) => boton(valor, texto, false));
 
   const resto = secuencia.filter(v => v !== actualVal && v !== siguiente);
   if (!resto.length) return;
