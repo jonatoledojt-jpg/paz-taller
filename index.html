@@ -4334,7 +4334,19 @@ async function cargarModulosPorRecepcionar() {
 
 // ---------- Cierre de OT e informe ----------
 const miles = n => (n ?? 0).toLocaleString("es-CL", { maximumFractionDigits: 0 });
-const fechaCL = d => new Date(d).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
+// fecha_agendada es solo fecha (sin hora): "2026-09-21" a secas. new
+// Date() de un string así lo interpreta en UTC medianoche -- convertido
+// a la hora de Chile (atrás de UTC) retrocede un día en pantalla. Se
+// arma en componentes locales para las fechas puras; los timestamps
+// completos (creado_en, fecha_cierre) siguen el camino normal, que sí
+// trae su propia zona horaria y no tiene este problema.
+const fechaCL = d => {
+  if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    const [y, m, dia] = d.split("-").map(Number);
+    return new Date(y, m - 1, dia).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
+  }
+  return new Date(d).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
+};
 const escapar = t => String(t ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 $("cMonto").oninput = e => {
