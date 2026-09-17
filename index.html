@@ -1002,7 +1002,7 @@ const ETIQUETA = {
   agendado:"Agendado", en_terreno:"En terreno", resuelto_en_terreno:"Resuelto en terreno",
   retirado:"Retirado, en tránsito", recepcionado:"Recepcionado", en_diagnostico:"En diagnóstico",
   cotizado:"Cotizado", en_reparacion:"En reparación", en_pruebas:"En pruebas",
-  listo_entrega:"Listo para entrega", instalado:"Instalado", entregado:"Entregado · falta cobrar",
+  listo_entrega:"Listo para entrega", instalado:"Instalado", entregado:"Entregado",
   facturado:"Facturado", irreparable:"Irreparable", rechazado:"Cotización rechazada", garantia:"Garantía"
 };
 const TONO = {
@@ -1021,13 +1021,34 @@ const FLUJO = {
 };
 const flujoDe = o => FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || FLUJO.laboratorio_modulo;
 const EXCEPCIONES = ["irreparable","rechazado","garantia"];
-// "entregado" NO es un cierre real en el flujo de laboratorio: el módulo
-// salió, pero falta cobrar (el siguiente paso del flujo es "facturado").
-// Estaba en esta lista por error y sacaba la OT del tablero antes de
-// cobrar -- encontrado en vivo el 17-09-2026 con dos OT reales (Siria,
-// Rio Negro) que desaparecieron entregadas y sin pago. "facturado" ya
-// cubre el cierre real de ese flujo; no hace falta un estado nuevo.
-const CERRADOS = ["facturado","instalado","resuelto_en_terreno","rechazado"];
+// Cierres reales sin ambigüedad en cualquier flujo. "entregado" y
+// "facturado" NO están acá a propósito -- ver estaCerrada().
+const CERRADOS = ["instalado","resuelto_en_terreno","rechazado"];
+
+// "entregado" y "facturado" pueden pasar en cualquier orden (a veces se
+// cobra antes de que el cliente retire) -- esconder la OT no puede
+// depender solo del estado actual, porque el paso previo se puede saltar
+// por "Cambiar estado manualmente". Pasó en vivo dos veces el 17-09-2026:
+// OT-2026-0007 (Naranjo) y OT-2026-0019 (Jar spa) se facturaron saltando
+// "entregado", y desaparecieron con el módulo todavía en el taller.
+// entregado_en es el hecho aparte que faltaba: si el flujo tiene un paso
+// de "entregado" (solo laboratorio+módulo), la OT no se esconde hasta que
+// ese hecho exista de verdad, sin importar si ya se facturó.
+function estaCerrada(o) {
+  if (CERRADOS.includes(o.estado)) return true;
+  if (o.estado !== "facturado") return false;
+  return !flujoDe(o).includes("entregado") || !!o.entregado_en;
+}
+function etiquetaEstado(o) {
+  if (o.estado === "entregado") return "Entregado · falta cobrar";
+  if (o.estado === "facturado" && !estaCerrada(o)) return "Facturado · falta entregar";
+  return ETIQUETA[o.estado] || o.estado;
+}
+function tonoEstado(o) {
+  if (o.estado === "entregado") return "espera";
+  if (o.estado === "facturado" && !estaCerrada(o)) return "espera";
+  return TONO[o.estado] || "";
+}
 
 const ETIQUETA_FRANJA = { manana:"Mañana", tarde:"Tarde", todo_el_dia:"Todo el día" };
 const DIAS_SEMANA = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
@@ -1157,7 +1178,7 @@ function tarjetaOT(o, opts = {}) {
     <div class="cliente"></div>
     <div class="detalle"><span class="pat"></span> · <span class="mod"></span></div>
     <div class="sintoma"></div>
-    <span class="chip ${TONO[o.estado] || ""}">${ETIQUETA[o.estado] || o.estado}</span>`;
+    <span class="chip ${tonoEstado(o)}">${etiquetaEstado(o)}</span>`;
   div.querySelector(".cliente").textContent = o.clientes?.nombre ?? "Sin cliente";
   div.querySelector(".pat").textContent = o.vehiculos?.patente ?? "sin patente";
   div.querySelector(".mod").textContent = tipoTexto;
@@ -1168,8 +1189,11 @@ function tarjetaOT(o, opts = {}) {
 
 async function cargarOrdenes() {
   $("listaOT").innerHTML = '<div class="cargando">Cargando órdenes…</div>';
+  // El filtro de "cerrada" mira más de una columna (estaCerrada), así que
+  // acá solo se descartan en el servidor los cierres sin ambigüedad
+  // (CERRADOS); "entregado"/"facturado" se filtran en el cliente.
   const { data, error } = await db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,clientes(nombre,rut),vehiculos(patente)")
     .eq("origen", seccionActiva)
     .not("estado", "in", `(${CERRADOS.join(",")})`)
     .order("fecha_ingreso", { ascending: false });
@@ -1178,12 +1202,13 @@ async function cargarOrdenes() {
     $("listaOT").innerHTML = '<div class="aviso">No se pudieron cargar las órdenes. Revisa tu conexión.</div>';
     return;
   }
-  if (!data.length) {
+  const abiertas = data.filter(o => !estaCerrada(o));
+  if (!abiertas.length) {
     $("listaOT").innerHTML = '<div class="vacio"><p>No hay órdenes abiertas en esta sección.</p></div>';
     return;
   }
   $("listaOT").innerHTML = "";
-  data.forEach(o => $("listaOT").appendChild(tarjetaOT(o)));
+  abiertas.forEach(o => $("listaOT").appendChild(tarjetaOT(o)));
 }
 
 // ---------- Agenda semanal — capa sobre ordenes, no una entidad aparte ----------
@@ -1226,7 +1251,7 @@ async function cargarAgendaSemana() {
   // lo agendado está en la otra pestaña.
   const { data:{ user } } = await db.auth.getUser();
   let query = db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,fecha_agendada,franja,tecnico_agendado,orden_ruta,fecha_ingreso,vehiculo_id,aprobado_cliente,numero_factura,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,fecha_agendada,franja,tecnico_agendado,orden_ruta,fecha_ingreso,vehiculo_id,aprobado_cliente,numero_factura,entregado_en,clientes(nombre,rut),vehiculos(patente)")
     .gte("fecha_agendada", isoFecha(lunes)).lte("fecha_agendada", isoFecha(sabado))
     .order("fecha_agendada").order("orden_ruta", { nullsFirst: false });
   if (perfil?.rol === "tecnico") query = query.eq("tecnico_agendado", user.id);
@@ -1546,7 +1571,7 @@ function pintarEstados(o) {
 
   const actual = document.createElement("div");
   actual.innerHTML = `<span class="rotulo">Estado actual</span>
-    <span class="chip ${TONO[o.estado] || ""}" style="margin-top:0">${ETIQUETA[o.estado] || o.estado}</span>`;
+    <span class="chip ${tonoEstado(o)}" style="margin-top:0">${etiquetaEstado(o)}</span>`;
   cont.appendChild(actual);
 
   const flujo = flujoDe(o);
@@ -1737,12 +1762,13 @@ $("btnAprobar").onclick = async () => {
 async function cambiarEstado(nuevo) {
   if (nuevo === ordenActual.estado) return;
   if (nuevo === "facturado") return abrirFacturar();
-  const cierra = CERRADOS.includes(nuevo);
-  const { error } = await db.from("ordenes")
-    .update({ estado: nuevo, ...(cierra ? { fecha_cierre: new Date().toISOString() } : {}) })
-    .eq("id", ordenActual.id);
+  const payload = { estado: nuevo };
+  if (nuevo === "entregado") payload.entregado_en = new Date().toISOString();
+  const cierra = estaCerrada({ ...ordenActual, ...payload });
+  if (cierra) payload.fecha_cierre = new Date().toISOString();
+  const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
   if (error) return msg("detError", "No se pudo cambiar el estado: " + error.message);
-  ordenActual.estado = nuevo;
+  Object.assign(ordenActual, payload);
   if (cierra) { ver("vTablero"); cargarSeccion(); return; }
   abrirDetalle(ordenActual);
 }
@@ -1762,6 +1788,14 @@ async function abrirFacturar() {
   $("fNumFactura").value = ordenActual.numero_factura ?? "";
   $("selFactTiene").querySelector('[data-v="0"]').click();
   actualizarPistaFacturar();
+  // Facturar antes de entregar es válido (se cobra antes de que el
+  // cliente retire), pero hay que avisarlo: si no, la OT queda marcada
+  // "falta entregar" sin que quien factura se entere en el momento.
+  if (flujoDe(ordenActual).includes("entregado") && !ordenActual.entregado_en) {
+    $("factError").textContent = "Este módulo todavía no se marcó como entregado. " +
+      "La OT va a seguir en el tablero como \"Facturado · falta entregar\" hasta que lo entregues.";
+    $("factError").className = "aviso info";
+  }
   ver("vFacturar");
 }
 
@@ -1798,18 +1832,24 @@ $("btnConfirmarFacturar").onclick = async () => {
 
   $("btnConfirmarFacturar").disabled = true;
   $("btnConfirmarFacturar").textContent = "Guardando…";
-  const { error } = await db.from("ordenes").update({
+  const payload = {
     estado: "facturado",
     monto_final: neto,
     numero_factura: $("fNumFactura").value.trim() || null,
-    fecha_cierre: new Date().toISOString()
-  }).eq("id", ordenActual.id);
+  };
+  // Igual que al cambiar cualquier otro estado: fecha_cierre solo si la
+  // OT queda de verdad cerrada (ya entregada, o el flujo no la necesita).
+  // Si falta entregar, no se marca -- y la pantalla vuelve al detalle en
+  // vez del tablero, para que quede claro que todavía hay un paso pendiente.
+  const cierra = estaCerrada({ ...ordenActual, ...payload });
+  if (cierra) payload.fecha_cierre = new Date().toISOString();
+  const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
   $("btnConfirmarFacturar").disabled = false;
   $("btnConfirmarFacturar").textContent = "Marcar como facturado";
   if (error) return msg("factError", "No se pudo facturar: " + error.message + " — no se perdió lo que escribiste.");
-  ordenActual.estado = "facturado";
-  ver("vTablero");
-  cargarSeccion();
+  Object.assign(ordenActual, payload);
+  if (cierra) { ver("vTablero"); cargarSeccion(); return; }
+  abrirDetalle(ordenActual);
 };
 
 $("dFoto").onchange = async e => {
@@ -2057,10 +2097,10 @@ async function abrirGasto(g) {
 
 async function cargarOrdenesParaGasto() {
   const { data } = await db.from("ordenes")
-    .select("id,numero_ot,tipo_trabajo,tipo_modulo,sistema,clientes(nombre),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,entregado_en,clientes(nombre),vehiculos(patente)")
     .not("estado", "in", `(${CERRADOS.join(",")})`)
     .order("fecha_ingreso", { ascending: false }).limit(200);
-  gastoOrdenes = (data || []).map(o => ({
+  gastoOrdenes = (data || []).filter(o => !estaCerrada(o)).map(o => ({
     id: o.id,
     texto: [o.numero_ot, o.clientes?.nombre, o.vehiculos?.patente,
             o.tipo_trabajo === "servicio" ? o.sistema : o.tipo_modulo].filter(Boolean).join(" · ")

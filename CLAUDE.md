@@ -77,12 +77,13 @@ sw.js                   service worker
 21-tecnico-crea-ot.sql       el técnico puede crear OT (recepcionar módulos), no solo actualizar las suyas
 22-nexa-app-entrenamiento.sql RPC paz_en_entrenamiento(): bloquea crear OT desde el chat interno en modo aprendizaje
 23-audio-whatsapp.sql        nexa_archivos admite categoria 'audio_cliente'
+24-entregado-en.sql          ordenes.entregado_en: hecho aparte para saber si el módulo salió de verdad
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 ```
 
-**De la 01 a la 23 están todas aplicadas en la base real** (verificado el
-16-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
+**De la 01 a la 24 están todas aplicadas en la base real** (verificado el
+17-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
 en este documento: preguntarle a la base.
 
 `09-agenda.sql` (con tabla `visitas`) se reemplazó por `09-agenda-simple.sql`
@@ -374,6 +375,28 @@ También se acortó la etiqueta "Cotizado, esperando al cliente" a
 "Cotizado". **No se tocaron los nombres de los estados en la base ni el
 enum** — esto es solo cómo se presentan los botones, mismo `FLUJO` de
 siempre.
+
+**Segunda vuelta del mismo bug: "facturado" también podía esconder la OT
+sin entregar (17-09-2026).** El primer arreglo (sacar `entregado` de
+`CERRADOS`) no bastaba: `facturado` seguía ahí, y nada impedía saltarse
+`entregado` — pasó en vivo dos veces, `OT-2026-0007` (Naranjo) y
+`OT-2026-0019` (Jar spa) se facturaron directo desde `listo_entrega` (por
+"Cambiar estado manualmente"), cobrando antes de que el cliente retirara.
+Como el módulo nunca pasó por "entregado", la OT desapareció con el
+módulo todavía físicamente en el taller.
+
+La lección: **esconder una OT no puede depender solo del `estado` actual
+cuando ese estado se puede saltar.** Se agregó `ordenes.entregado_en`
+(`24-entregado-en.sql`) — un hecho aparte, independiente de si ya se
+facturó. `estaCerrada(o)` en `index.html` decide con las dos cosas: los
+cierres sin ambigüedad (`instalado`, `resuelto_en_terreno`, `rechazado`)
+siempre esconden; `facturado` solo esconde si el flujo no tiene paso de
+"entregado" (terreno) o si `entregado_en` ya existe (laboratorio). Si se
+factura sin haber entregado, la OT sigue visible como **"Facturado · falta
+entregar"** y la pantalla de Facturar avisa de esto antes de confirmar,
+en vez de dejarlo pasar en silencio. `cambiarEstado` guarda `entregado_en`
+la primera vez que se marca "Entregado", sin importar si eso pasa antes o
+después de facturar.
 
 **Facturar: con o sin factura (17-09-2026).** Al entregar un módulo se cobra
 ahí mismo, casi siempre en efectivo y sin factura — el monto que se escribe
