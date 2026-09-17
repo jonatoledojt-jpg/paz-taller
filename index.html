@@ -1833,8 +1833,12 @@ function pintarEstados(o) {
   // Reparación: "Irreparable" solo si el módulo ya está en el taller (no
   // se puede diagnosticar algo que sigue con el técnico o con el
   // cliente) -- en terreno+servicio no existe diagnóstico de laboratorio,
-  // así que nunca se ofrece.
-  const puedeSerIrreparable = o.tipo_trabajo === "modulo" &&
+  // así que nunca se ofrece. Tampoco si la reparación ya quedó "Listo":
+  // declarar irreparable algo que ya se dio por terminado es
+  // contradictorio (encontrado por Jonatan en la OT hija de Pablo Tapia,
+  // 17-09-2026 -- el chip decía "Listo para entrega" y justo debajo
+  // aparecía el botón Irreparable).
+  const puedeSerIrreparable = o.tipo_trabajo === "modulo" && o.reparacion !== "listo" &&
     (o.ubicacion === "en_taller" || o.ubicacion === "entregado");
   grupoSecuencia(cont, "Reparación", REPARACION_SEQ, o.reparacion, cambiarReparacion,
     puedeSerIrreparable ? [["irreparable", "Irreparable"]] : []);
