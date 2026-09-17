@@ -1133,7 +1133,13 @@ function estaCerrada(o) {
 }
 function etiquetaEstado(o) {
   if (PASOS_FISICOS.includes(o.estado)) return `${ETIQUETA[o.estado] || o.estado} · falta cobrar`;
-  if (o.estado === "facturado" && !estaCerrada(o)) return "Facturado · falta entregar";
+  // "Facturado" en este taller ya significa "plata cobrada", no solo
+  // "boleta emitida" (así lo usa resumen_rentabilidad: cuenta el monto
+  // apenas el estado es facturado, sin mirar si se entregó). Por eso el
+  // aviso dice "Pagada" -- es más directo que "falta entregar" para
+  // avisar que hay un módulo del cliente pendiente de retirar en el
+  // taller, con la plata ya adentro.
+  if (o.estado === "facturado" && !estaCerrada(o)) return "Pagada · módulo aún en el taller";
   return ETIQUETA[o.estado] || o.estado;
 }
 function tonoEstado(o) {

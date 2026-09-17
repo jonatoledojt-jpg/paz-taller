@@ -573,6 +573,20 @@ trabajo. `cargarOrdenes()` y `cargarAgendaSemana()` (la pestaña
 Terreno/Laboratorio de la Agenda, que tenía el mismo problema) usan
 `seccionDe` en vez de comparar `origen` directo.
 
+**"Facturado · falta entregar" pasó a decir "Pagada · módulo aún en el
+taller" (17-09-2026).** Jonatan, revisando otra vez la OT de Naranjo
+(que él mismo había regresado de "Facturado" a "Listo para entrega"
+probando "Cambiar estado manualmente" — se restauró a mano, el monto y
+la factura nunca se movieron de la fila): en este taller **"Facturado" ya
+significa "plata cobrada"**, no "boleta emitida" — así lo usa
+`resumen_rentabilidad()` desde siempre (cuenta el monto apenas el estado
+es `facturado`, sin mirar `entregado_en` para nada — se confirmó leyendo
+la función real de la base antes de tocar el texto). El monto de una OT
+así **ya cuenta en la rentabilidad del mes**, aunque el módulo siga
+físicamente en el taller. "Falta entregar" sonaba a que faltaba algo
+administrativo; "Pagada" es más directo sobre lo que realmente falta:
+que alguien venga a buscar el módulo.
+
 **La causa real de que "cerrar la app 3 veces" no actualizara nada:
 GitHub Pages sirve `index.html` con `Cache-Control: max-age=600`
 (17-09-2026).** El service worker ya pedía "red primero" (`fetch()` antes
