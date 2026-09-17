@@ -90,6 +90,36 @@ async function llamarIA(apiKey: string, modelo: string, instrucciones: string, e
   return extraerTexto(await r.json());
 }
 
+// Los aprendizajes no son todos del mismo tipo: unos son reglas de proceso
+// ("criterio"/"correccion", qué hacer) y otros son ejemplos de tono
+// ("ejemplo", cómo suena el equipo escribiendo de verdad). Mezclarlos en
+// una sola lista de "reglas" desperdiciaba los de tono -- el objetivo de
+// esos es que PAZ hable parecido a una persona, no que siga una
+// instrucción más. "respuesta_aprobada" (Positivo de un caso) queda fuera
+// a propósito: hoy su `contenido` es solo un puntero al caso de origen,
+// no texto de estilo de verdad -- el transcript real vive en `transcripcion`
+// pero usarlo acá es una mejora aparte, no construida todavía.
+function bloqueAprendizajes(apr: { tipo: string; titulo: string; contenido: string }[] | null) {
+  const reglas = (apr ?? []).filter((a) => a.tipo === "criterio" || a.tipo === "correccion");
+  const estilo = (apr ?? []).filter((a) => a.tipo === "ejemplo");
+  const partes: string[] = [];
+  if (reglas.length) {
+    partes.push(
+      "CRITERIOS DEL TALLER (mandan sobre cualquier costumbre tuya):\n" +
+      reglas.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n"),
+    );
+  }
+  if (estilo.length) {
+    partes.push(
+      "CÓMO HABLA EL EQUIPO DE VERDAD (imita este tono y estas frases -- el " +
+      "objetivo es que un cliente no note que está hablando con una IA; no " +
+      "las copies literal siempre, pero suena así):\n" +
+      estilo.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n"),
+    );
+  }
+  return partes.join("\n\n");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
@@ -147,27 +177,50 @@ Deno.serve(async (req) => {
         "electrónicos de camiones Mercedes Benz en Talca, Chile.",
         "Te van a pasar una conversación real con un cliente, o una",
         "corrección escrita por el dueño.",
-        "Saca de ahí los CRITERIOS que PAZ debería seguir de ahora en adelante.",
         "El texto puede traer una sola conversación corta o varias conversaciones",
         "reales seguidas (exportadas de WhatsApp, separadas con '--- nombre.txt ---').",
         "Si son varias, revísalas todas: cada una puede enseñar algo distinto.",
         "",
-        "Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:",
-        '{"criterios":[{"titulo":"...","contenido":"..."}]}',
+        "Sacas DOS cosas distintas de ahí, y no hay que mezclarlas:",
         "",
-        "Reglas para redactarlos:",
-        "- No hay un máximo fijo: saca todos los criterios reales y distintos que",
-        "  encuentres, uno por cada cosa concreta que aprendiste del texto. Si el",
-        "  texto no enseña nada nuevo, devuelve la lista vacía. No inventes",
-        "  criterios de relleno solo para completar un número.",
-        "- No repitas el mismo criterio con otras palabras: si dos partes del",
-        "  texto enseñan lo mismo, es un solo criterio.",
+        "1. CRITERIOS: reglas de PROCESO que valen para cualquier cliente futuro,",
+        "   no lo que se acordó con este cliente en particular.",
+        "   - Sirven: pedir un dato antes de prometer algo, cuándo escalar a una",
+        "     persona, cómo confirmar la versión de un equipo, qué hacer si no",
+        "     sabes algo, en qué orden preguntar.",
+        "   - NO van acá: ningún precio, descuento, monto ni condición comercial",
+        "     puntual que se haya negociado en esa conversación. Eso fue lo que",
+        "     se acordó con ESE cliente, no una lista de precios — convertirlo en",
+        "     regla fija haría que PAZ le cotice lo mismo a cualquiera de ahí en",
+        "     adelante, aunque el precio real sea otro. Si el texto solo tiene",
+        "     negociación de precio y nada de proceso, no saques ningún criterio",
+        "     de ahí (los precios de verdad se cargan aparte, a mano, revisados).",
+        "",
+        "2. ESTILO: el objetivo de fondo es que cuando un cliente escriba y le",
+        "   conteste PAZ, no note que está hablando con una IA. Para eso no sirve",
+        "   una regla abstracta ('sé cercano') — sirve una frase real, casi tal",
+        "   cual la escribió la persona del taller: cómo saluda, cómo remata,",
+        "   qué muletillas usa, qué tan formal o informal es, el largo de sus",
+        "   mensajes, si usa mayúsculas o signos de exclamación. Saca entre 2 y 5",
+        "   ejemplos así, citando o parafraseando muy de cerca lo que la persona",
+        "   escribió de verdad — no inventes una frase nueva 'en ese estilo'.",
+        "",
+        "Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:",
+        '{"criterios":[{"titulo":"...","contenido":"..."}],"estilo":[{"titulo":"...","contenido":"..."}]}',
+        "",
+        "Reglas para redactar ambos:",
+        "- No hay un máximo fijo en criterios; en estilo, entre 2 y 5. Si el texto",
+        "  no da para alguno de los dos, esa lista queda vacía. No inventes nada",
+        "  de relleno solo para completar un número.",
+        "- No repitas lo mismo con otras palabras: si dos partes del texto",
+        "  enseñan lo mismo, es una sola entrada.",
         "- El título es corto, una frase, en minúsculas salvo nombres propios.",
-        "- El contenido le habla a PAZ de tú y dice QUÉ HACER, no qué evitar.",
-        "- Concreto y accionable. Nada de 'ser profesional' o 'dar buen servicio'.",
+        "- El contenido le habla a PAZ de tú.",
+        "  En criterios, dice QUÉ HACER, no qué evitar — concreto y accionable,",
+        "  nada de 'ser profesional' o 'dar buen servicio'.",
+        "  En estilo, es la frase o el patrón en sí, no una descripción de él.",
         "- Español chileno, directo, sin adornos.",
-        "- Si el texto menciona un precio, condición comercial o plazo, recógelo tal cual sin redondear ni inventar.",
-        "- No inventes reglas que no estén en el texto.",
+        "- No inventes nada que no esté en el texto.",
       ].join("\n");
 
       const crudo = await llamarIA(apiKey, cfg.modelo, instrucciones, [
@@ -175,8 +228,11 @@ Deno.serve(async (req) => {
       ]);
       const limpio = crudo.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
       try {
-        const { criterios } = JSON.parse(limpio);
-        return json({ criterios: Array.isArray(criterios) ? criterios : [] });
+        const { criterios, estilo } = JSON.parse(limpio);
+        return json({
+          criterios: Array.isArray(criterios) ? criterios : [],
+          estilo: Array.isArray(estilo) ? estilo : [],
+        });
       } catch {
         return json({ error: "No se entendió lo que devolvió la IA.", crudo: limpio }, 502);
       }
@@ -218,11 +274,8 @@ Deno.serve(async (req) => {
         // no tiene sentido que una regla del negocio valga cuando PAZ
         // responde sola y se pueda saltar cuando alguien la asiste.
         const { data: apr } = await admin.from("paz_aprendizajes")
-          .select("titulo,contenido").eq("activo", true).order("id");
-        const aprendizajes = apr?.length
-          ? "CRITERIOS DEL TALLER (mandan sobre cualquier costumbre tuya):\n" +
-            apr.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n")
-          : "";
+          .select("tipo,titulo,contenido").eq("activo", true).order("id");
+        const aprendizajes = bloqueAprendizajes(apr);
 
         const contexto = [
           `Cliente: ${caso.cliente_nombre ?? "sin nombre"}.`,
@@ -388,11 +441,8 @@ Deno.serve(async (req) => {
         .slice().reverse().find((m) => m.rol === "assistant" && new Date(m.creado_en) > new Date(previos[idxUltimoUser].creado_en));
 
       const { data: apr } = await admin.from("paz_aprendizajes")
-        .select("titulo,contenido").eq("activo", true).order("id");
-      const aprendizajes = apr?.length
-        ? "CRITERIOS DEL TALLER (mandan sobre cualquier costumbre tuya):\n" +
-          apr.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n")
-        : "";
+        .select("tipo,titulo,contenido").eq("activo", true).order("id");
+      const aprendizajes = bloqueAprendizajes(apr);
 
       const instrucciones = [
         cfg.prompt,

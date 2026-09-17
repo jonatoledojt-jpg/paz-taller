@@ -3616,7 +3616,7 @@ $("btnSacarCriterios").onclick = async () => {
     });
     const cuerpo = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(cuerpo.error || `Error ${r.status}.`);
-    pintarPropuestas(cuerpo.criterios || []);
+    pintarPropuestas(cuerpo.criterios || [], cuerpo.estilo || []);
   } catch (e) {
     msg("entError", e.message || "No se pudo leer el texto.");
   } finally {
@@ -3625,49 +3625,68 @@ $("btnSacarCriterios").onclick = async () => {
   }
 };
 
-// PAZ propone, el dueño confirma. Mismo criterio que con las OT:
-// nada entra al sistema sin que una persona lo mire.
-function pintarPropuestas(criterios) {
+// PAZ propone, el dueño confirma. Mismo criterio que con las OT: nada
+// entra al sistema sin que una persona lo mire.
+//
+// Dos grupos, no uno: los CRITERIOS son reglas de proceso (qué hacer) y
+// se guardan como tipo "criterio". El ESTILO son frases o patrones de
+// cómo habla el equipo de verdad — el objetivo es que PAZ no se note
+// como una IA — y se guardan como tipo "ejemplo", para que la
+// conversación no mezcle "hay que hacer esto" con "así se dice esto".
+function pintarPropuestas(criterios, estilo) {
   const caja = $("entPropuestas");
   caja.innerHTML = "";
-  if (!criterios.length) {
-    caja.innerHTML = '<div class="aviso info">De ese texto no salió ningún criterio nuevo. ' +
-      'Prueba con una conversación donde PAZ haya hecho algo bien, o escribe derecho qué debería cambiar.</div>';
+  if (!criterios.length && !estilo.length) {
+    caja.innerHTML = '<div class="aviso info">De ese texto no salió nada nuevo. ' +
+      'Prueba con una conversación donde PAZ (o el equipo) haya hecho algo bien, o escribe derecho qué debería cambiar.</div>';
     return;
   }
+  if (criterios.length) {
+    pintarGrupoPropuestas(caja, "criterio", "cr",
+      `PAZ propone ${criterios.length} criterio${criterios.length === 1 ? "" : "s"} de proceso`,
+      "Qué tiene que hacer", criterios);
+  }
+  if (estilo.length) {
+    pintarGrupoPropuestas(caja, "ejemplo", "es",
+      `PAZ propone ${estilo.length} ejemplo${estilo.length === 1 ? "" : "s"} de estilo (para sonar humana)`,
+      "Cómo se dice", estilo);
+  }
+}
 
+function pintarGrupoPropuestas(caja, tipoGuardar, prefijo, rotuloTexto, etiquetaContenido, items) {
   const rot = document.createElement("span");
-  rot.className = "rotulo";
-  rot.textContent = `PAZ propone ${criterios.length} criterio${criterios.length === 1 ? "" : "s"} — revísalos antes de guardar`;
+  rot.className = "rotulo sep";
+  rot.textContent = `${rotuloTexto} — revísalos antes de guardar`;
   caja.appendChild(rot);
 
-  criterios.forEach((c, i) => {
+  items.forEach((c, i) => {
+    const id = `${prefijo}${i}`;
     const div = document.createElement("div");
     div.className = "seccion";
     div.innerHTML = `
       <div class="campo">
-        <label for="pt${i}">Título</label>
-        <input id="pt${i}">
+        <label for="pt_${id}">Título</label>
+        <input id="pt_${id}">
       </div>
       <div class="campo">
-        <label for="pc${i}">Qué tiene que hacer</label>
-        <textarea id="pc${i}" style="min-height:96px"></textarea>
+        <label for="pc_${id}">${etiquetaContenido}</label>
+        <textarea id="pc_${id}" style="min-height:96px"></textarea>
       </div>
       <div class="reordenar">
         <button type="button" class="descartar">Descartar</button>
         <button type="button" class="guardar">Guardar</button>
       </div>`;
-    div.querySelector(`#pt${i}`).value = c.titulo ?? "";
-    div.querySelector(`#pc${i}`).value = c.contenido ?? "";
+    div.querySelector(`#pt_${id}`).value = c.titulo ?? "";
+    div.querySelector(`#pc_${id}`).value = c.contenido ?? "";
 
     div.querySelector(".descartar").onclick = () => div.remove();
     div.querySelector(".guardar").onclick = async () => {
-      const titulo = div.querySelector(`#pt${i}`).value.trim();
-      const contenido = div.querySelector(`#pc${i}`).value.trim();
-      if (!titulo || !contenido) return msg("entError", "El criterio necesita título y contenido.");
+      const titulo = div.querySelector(`#pt_${id}`).value.trim();
+      const contenido = div.querySelector(`#pc_${id}`).value.trim();
+      if (!titulo || !contenido) return msg("entError", "Necesita título y contenido.");
       const { data:{ user } } = await db.auth.getUser();
       const { error } = await db.from("paz_aprendizajes")
-        .insert({ tipo: "criterio", titulo, contenido, creado_por: user.id });
+        .insert({ tipo: tipoGuardar, titulo, contenido, creado_por: user.id });
       if (error) return msg("entError", "No se pudo guardar: " + error.message);
       div.remove();
       msg("entError", "");

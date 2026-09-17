@@ -850,6 +850,45 @@ OT — nada entra al sistema sin que una persona lo mire.
 Los criterios se pueden **apagar** (siguen a la vista, dejan de aplicar) o
 borrar. Apagar es casi siempre lo correcto: deja el rastro de lo que se probó.
 
+**Criterios vs. estilo (16-09-2026) — no son lo mismo.** Jonatan subió una
+conversación real de venta (negociando un INS de Actros MP3) y "Sacar
+criterios" propuso guardar el precio negociado ($600.000 + IVA, garantía 3
+meses) y el descuento acordado ($100.000 por el tablero antiguo) como si
+fueran reglas fijas — eso habría hecho que PAZ le cotizara exactamente eso
+a cualquier cliente futuro, aunque fuera un trato puntual con ese cliente.
+Y lo que Jonatan de verdad quería no era eso: quería que PAZ aprenda a
+**hablar** de las conversaciones reales, para que un cliente no note que
+está hablando con una IA — no que aprenda valores de piezas ni condiciones
+comerciales.
+
+`accion: "aprender"` ahora separa dos cosas explícitamente:
+
+- **Criterios** (`tipo = 'criterio'`): reglas de proceso que valen para
+  cualquier cliente futuro. La instrucción le prohíbe explícitamente sacar
+  precios, descuentos o condiciones comerciales puntuales de una
+  conversación — eso se acordó con ese cliente, no es una lista de precios.
+  Los precios de verdad siguen viviendo solo en `nexa_config.prompt`,
+  cargados a mano y revisados.
+- **Estilo** (`tipo = 'ejemplo'`, tipo nuevo en uso — ya existía en el
+  enum y en el filtro de "Enseñarle a PAZ" pero nada lo generaba): frases
+  o patrones citados casi tal cual de la conversación real — saludos,
+  remates, muletillas, nivel de formalidad — no una descripción del
+  estilo ("sé cercano"), sino el ejemplo en sí.
+
+Ambos se leen aparte al armar el prompt (`bloqueAprendizajes()`, en
+`nexa/index.ts` y `whatsapp/index.ts`): los criterios van bajo "CRITERIOS
+DEL TALLER" (mandan), el estilo va bajo "CÓMO HABLA EL EQUIPO DE VERDAD"
+(para imitar el tono, no como instrucción literal). Mezclarlos en una sola
+lista de "reglas" desperdiciaba los de estilo — el objetivo de esos es que
+PAZ hable parecido a una persona, no que siga una instrucción más.
+
+**Pendiente, a propósito:** `respuesta_aprobada` (lo que se guarda al
+marcar un caso de entrenamiento como Positivo) queda fuera de "estilo" por
+ahora — su `contenido` hoy es solo un puntero al caso de origen ("Ejemplo
+aprobado por el dueño: ..."), no texto de estilo real. El transcript
+completo sí vive en `paz_aprendizajes.transcripcion`, pero usarlo para
+estilo es una mejora aparte, no construida todavía.
+
 **Solo el dueño, de verdad:** la política `esc_paz_aprendizajes` exige
 `mi_rol() = 'dueno'`, y la acción `aprender` de la función vuelve a comprobar
 el rol. No es que se le esconda el botón al coordinador.

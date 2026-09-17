@@ -110,6 +110,37 @@ async function llamarIA(modelo: string, instrucciones: string, entrada: unknown)
   return extraerTexto(await r.json());
 }
 
+// Los aprendizajes no son todos del mismo tipo: unos son reglas de proceso
+// ("criterio"/"correccion", qué hacer) y otros son ejemplos de tono
+// ("ejemplo", cómo suena el equipo escribiendo de verdad). Mezclarlos en
+// una sola lista de "reglas" desperdiciaba los de tono -- el objetivo de
+// esos es que PAZ hable parecido a una persona, no que siga una
+// instrucción más. "respuesta_aprobada" (Positivo de un caso) queda fuera
+// a propósito: hoy su `contenido` es solo un puntero al caso de origen,
+// no texto de estilo de verdad -- el transcript real vive en `transcripcion`
+// pero usarlo acá es una mejora aparte, no construida todavía. Mismo
+// criterio que en nexa/index.ts.
+function bloqueAprendizajes(apr: { tipo: string; titulo: string; contenido: string }[] | null) {
+  const reglas = (apr ?? []).filter((a) => a.tipo === "criterio" || a.tipo === "correccion");
+  const estilo = (apr ?? []).filter((a) => a.tipo === "ejemplo");
+  const partes: string[] = [];
+  if (reglas.length) {
+    partes.push(
+      "CRITERIOS DEL TALLER (mandan sobre cualquier costumbre tuya):\n" +
+      reglas.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n"),
+    );
+  }
+  if (estilo.length) {
+    partes.push(
+      "CÓMO HABLA EL EQUIPO DE VERDAD (imita este tono y estas frases -- el " +
+      "objetivo es que un cliente no note que está hablando con una IA; no " +
+      "las copies literal siempre, pero suena así):\n" +
+      estilo.map((a) => `- ${a.titulo}: ${a.contenido}`).join("\n"),
+    );
+  }
+  return partes.join("\n\n");
+}
+
 // ---------- WhatsApp ----------
 // Devuelve lo que contestó Meta. Si falla, queda anotado en wa_log:
 // un envío que se pierde en silencio es el peor error posible acá,
@@ -509,11 +540,8 @@ async function procesarMensaje(paz: any, msj: any) {
   // Los aprendizajes se leen en cada respuesta: así una corrección que
   // hace el dueño vale desde el mensaje siguiente, sin desplegar nada.
   const { data: apr } = await paz.from("paz_aprendizajes")
-    .select("titulo,contenido").eq("activo", true).order("id");
-  const aprendizajes = apr?.length
-    ? "CRITERIOS DEL TALLER (mandan sobre cualquier costumbre tuya):\n" +
-      apr.map((a: any) => `- ${a.titulo}: ${a.contenido}`).join("\n")
-    : "";
+    .select("tipo,titulo,contenido").eq("activo", true).order("id");
+  const aprendizajes = bloqueAprendizajes(apr);
 
   const contexto = await contextoDelSistema(paz, telefono, historial, conversacion_id);
 
