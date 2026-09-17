@@ -1001,7 +1001,7 @@ const msg = (el, texto, bien) => {
 const ETIQUETA = {
   agendado:"Agendado", en_terreno:"En terreno", resuelto_en_terreno:"Resuelto en terreno",
   retirado:"Retirado, en tránsito", recepcionado:"Recepcionado", en_diagnostico:"En diagnóstico",
-  cotizado:"Cotizado, esperando al cliente", en_reparacion:"En reparación", en_pruebas:"En pruebas",
+  cotizado:"Cotizado", en_reparacion:"En reparación", en_pruebas:"En pruebas",
   listo_entrega:"Listo para entrega", instalado:"Instalado", entregado:"Entregado · falta cobrar",
   facturado:"Facturado", irreparable:"Irreparable", rechazado:"Cotización rechazada", garantia:"Garantía"
 };
@@ -1535,6 +1535,74 @@ async function buscarOCrearVehiculo(patente, cliente_id) {
   return nuevo.id;
 }
 
+// Solo el paso siguiente del flujo, no la lista completa siempre --
+// antes mostraba los mismos botones para cualquier estado, mezclando
+// pasos de terreno y de laboratorio sin distinguir de dónde venía la
+// OT. "Cambiar estado manualmente" queda como salida de emergencia
+// (por ejemplo, volver de en_pruebas a en_reparacion si algo falló).
+function pintarEstados(o) {
+  const cont = $("detEstados");
+  cont.innerHTML = "";
+
+  const actual = document.createElement("div");
+  actual.innerHTML = `<span class="rotulo">Estado actual</span>
+    <span class="chip ${TONO[o.estado] || ""}" style="margin-top:0">${ETIQUETA[o.estado] || o.estado}</span>`;
+  cont.appendChild(actual);
+
+  const flujo = flujoDe(o);
+  const idxActual = flujo.indexOf(o.estado);
+  const siguiente = idxActual >= 0 && idxActual < flujo.length - 1 ? flujo[idxActual + 1] : null;
+  const excepciones = EXCEPCIONES.filter(e => e !== o.estado);
+  // Si el estado actual es una excepción (irreparable, rechazado, garantía)
+  // no hay "paso siguiente" claro dentro del flujo -- se muestra la lista
+  // completa directo, sin esconder nada detrás del botón manual.
+  const sinSiguienteClaro = idxActual === -1;
+
+  const rot = document.createElement("span");
+  rot.className = "rotulo sep";
+  rot.textContent = "Cambiar a";
+  cont.appendChild(rot);
+
+  const boton = (e) => {
+    const b = document.createElement("button");
+    b.textContent = ETIQUETA[e] || e;
+    b.onclick = () => cambiarEstado(e);
+    cont.appendChild(b);
+  };
+
+  if (siguiente) boton(siguiente);
+  excepciones.forEach(boton);
+
+  const resto = [...flujo, ...EXCEPCIONES].filter(e => e !== o.estado && e !== siguiente);
+  if (!resto.length) return;
+
+  if (sinSiguienteClaro) { resto.forEach(boton); return; }
+
+  const link = document.createElement("button");
+  link.type = "button";
+  link.style.cssText = "text-align:center;color:var(--humo)";
+  link.textContent = "Cambiar estado manualmente ▾";
+  link.setAttribute("aria-expanded", "false");
+  link.onclick = () => {
+    const abierto = link.getAttribute("aria-expanded") === "true";
+    link.setAttribute("aria-expanded", abierto ? "false" : "true");
+    link.textContent = abierto ? "Cambiar estado manualmente ▾" : "Ocultar ▴";
+    manual.classList.toggle("oculto", abierto);
+  };
+  cont.appendChild(link);
+
+  const manual = document.createElement("div");
+  manual.className = "estados oculto";
+  manual.style.marginTop = "4px";
+  resto.forEach(e => {
+    const b = document.createElement("button");
+    b.textContent = ETIQUETA[e] || e;
+    b.onclick = () => cambiarEstado(e);
+    manual.appendChild(b);
+  });
+  cont.appendChild(manual);
+}
+
 // ---------- Detalle ----------
 async function abrirDetalle(o) {
   ordenActual = o;
@@ -1549,28 +1617,7 @@ async function abrirDetalle(o) {
     <div class="dato"><span>Origen</span><span>${o.origen === "terreno" ? "Terreno" : "Laboratorio"}</span></div>
     <div class="dato"><span>Falla</span><span>${o.sintoma_cliente ?? "—"}</span></div>`;
 
-  const flujo = flujoDe(o);
-  const otros = [...flujo, ...EXCEPCIONES].filter(e => e !== o.estado);
-
-  $("detEstados").innerHTML = "";
-  const cont = $("detEstados");
-
-  const actual = document.createElement("div");
-  actual.innerHTML = `<span class="rotulo">Estado actual</span>
-    <span class="chip ${TONO[o.estado] || ""}" style="margin-top:0">${ETIQUETA[o.estado] || o.estado}</span>`;
-  cont.appendChild(actual);
-
-  const rot = document.createElement("span");
-  rot.className = "rotulo sep";
-  rot.textContent = "Cambiar a";
-  cont.appendChild(rot);
-
-  otros.forEach(e => {
-    const b = document.createElement("button");
-    b.textContent = ETIQUETA[e] || e;
-    b.onclick = () => cambiarEstado(e);
-    cont.appendChild(b);
-  });
+  pintarEstados(o);
 
   $("btnCotizar").classList.toggle("oculto", perfil?.rol === "tecnico");
   $("btnAprobar").classList.toggle("oculto",

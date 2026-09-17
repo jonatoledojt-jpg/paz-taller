@@ -360,6 +360,21 @@ pagos, `pagado`/`medio_pago`/etc. — pero `facturado` ya cumple ese rol de
 cierre real para este flujo, y agregar un estado que no encaja en los
 otros dos flujos de `FLUJO` era más riesgo del que pedía el bug real).
 
+**Detalle de la OT: solo el paso siguiente, no el flujo completo
+(17-09-2026).** `pintarEstados()` mostraba antes todos los estados del
+flujo como botones, siempre — mezclaba pasos de laboratorio con los de
+terreno según de dónde venía la OT y ensuciaba la pantalla. Ahora muestra
+solo el **siguiente** paso del flujo (`flujoDe(o)[idx+1]`) más las
+excepciones (irreparable/rechazado/garantía), y el resto queda detrás de
+un botón secundario **"Cambiar estado manualmente"** — para poder volver
+atrás (de `en_pruebas` a `en_reparacion`, por ejemplo) sin que sea lo
+primero que se ve. Si el estado actual es una excepción (no está en el
+flujo normal), se muestra la lista completa directo, sin esconder nada.
+También se acortó la etiqueta "Cotizado, esperando al cliente" a
+"Cotizado". **No se tocaron los nombres de los estados en la base ni el
+enum** — esto es solo cómo se presentan los botones, mismo `FLUJO` de
+siempre.
+
 **Facturar: con o sin factura (17-09-2026).** Al entregar un módulo se cobra
 ahí mismo, casi siempre en efectivo y sin factura — el monto que se escribe
 ya es neto. A veces sí se emite factura, y ahí lo que se cobra incluye IVA.
