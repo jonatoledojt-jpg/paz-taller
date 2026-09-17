@@ -185,6 +185,14 @@ seguir moviendo de estado con la política de update que ya existía.
 Encontrado en vivo: Diego Toledo (técnico) no podía ni guardar el cliente
 al intentar ingresar un módulo — RLS lo cortaba en el primer insert.
 
+**Diego Toledo es coordinador, no técnico (17-09-2026).** Es el encargado
+de laboratorio: cobra y entrega módulos, necesita las mismas atribuciones
+que un coordinador (montos, cotizaciones, facturar). Se le cambió el rol
+directo en `perfiles` — no se construyó un permiso intermedio nuevo, se usó
+el rol que ya existía y ya encajaba. La idea original de dejarlo cobrar
+desde el botón "Entregado" se descartó: quedaba un botón de más: el cobro
+va en "Facturar", que es donde siempre vivió `monto_final`.
+
 **Importante:** el esquema de roles no distingue "mecánico de terreno" de
 "técnico de laboratorio" — ambos son `rol = 'tecnico'`. Si algún día hace
 falta separar sus permisos o su pantalla por defecto de verdad (no solo el
@@ -334,6 +342,19 @@ primero y qué se terminó acordando.
 Al guardar bien, el formulario se limpia solo (un ítem vacío, validez 15) y
 avisa en verde con el número nuevo. Si falla, **no se limpia nada** para no
 perder lo escrito.
+
+**Facturar: con o sin factura (17-09-2026).** Al entregar un módulo se cobra
+ahí mismo, casi siempre en efectivo y sin factura — el monto que se escribe
+ya es neto. A veces sí se emite factura, y ahí lo que se cobra incluye IVA.
+La pantalla "Facturar" (`vFacturar`) tiene un toggle "¿Cómo entró el pago?":
+sin factura guarda el monto tal cual; con factura le descuenta el IVA antes
+de guardar (`Math.round(monto/1.19)`, mismo criterio que `gastos.monto_neto`
+en `11-gastos.sql`). **`ordenes.monto_final` sigue siendo siempre neto** —
+no se agregó ninguna columna nueva a la base, el cálculo se hace en el
+front antes de escribir, igual que ya se hacía con un solo camino. La
+pantalla de "Informe técnico" (`vCierre`/`cMonto`) sigue pidiendo el monto
+directo, sin este toggle — es otra pantalla, con otro propósito (el PDF
+para el cliente), y no se tocó.
 
 ## Agenda
 

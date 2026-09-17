@@ -664,7 +664,14 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div id="factError" class="aviso oculto"></div>
       <div class="seccion">
         <div class="campo">
-          <label for="fMontoFinal">Monto final cobrado (neto, sin IVA)</label>
+          <span class="rotulo">¿Cómo entró el pago?</span>
+          <div class="opciones" id="selFactTiene">
+            <button type="button" data-v="0" aria-pressed="true">Sin factura (efectivo, el monto ya es neto)</button>
+            <button type="button" data-v="1" aria-pressed="false">Con factura (el monto incluye IVA)</button>
+          </div>
+        </div>
+        <div class="campo">
+          <label for="fMontoFinal" id="fMontoFinalLabel">Monto cobrado</label>
           <input id="fMontoFinal" inputmode="numeric" placeholder="350000">
           <div class="pista" id="pistaFacturar"></div>
         </div>
@@ -1324,6 +1331,7 @@ function grupoOpciones(cont, multiple) {
 }
 grupoOpciones("selOrigen");
 grupoOpciones("selTipoTrabajo");
+grupoOpciones("selFactTiene");
 grupoOpciones("selFranja");
 grupoOpciones("selFranjaDet");
 grupoOpciones("selFranjaCaso");
@@ -1687,6 +1695,11 @@ async function cambiarEstado(nuevo) {
 }
 
 // ---------- Facturar ----------
+// El módulo se entrega y se cobra en el momento, casi siempre en efectivo
+// y sin factura (el monto ya es neto); a veces sí se emite factura, y ahí
+// el monto que dicen es con IVA incluido — hay que descontarlo antes de
+// guardar, porque ordenes.monto_final siempre es neto (mismo criterio que
+// gastos.monto_neto). El toggle decide cuál de los dos casos es.
 async function abrirFacturar() {
   msg("factError", "");
   $("factTitulo").textContent = "Facturar " + (ordenActual.numero_ot ?? "");
@@ -1694,36 +1707,47 @@ async function abrirFacturar() {
   montoCotizadoOT = m?.[0]?.monto_cotizado != null ? Number(m[0].monto_cotizado) : null;
   $("fMontoFinal").value = m?.[0]?.monto_final ?? montoCotizadoOT ?? "";
   $("fNumFactura").value = ordenActual.numero_factura ?? "";
+  $("selFactTiene").querySelector('[data-v="0"]').click();
   actualizarPistaFacturar();
   ver("vFacturar");
 }
 
-function actualizarPistaFacturar() {
+function netoFacturar() {
   const val = parseInt(($("fMontoFinal").value || "").replace(/\D/g, "") || "0", 10);
+  const conFactura = elegido("selFactTiene") === "1";
+  return conFactura ? Math.round(val / 1.19) : val;
+}
+
+function actualizarPistaFacturar() {
+  const conFactura = elegido("selFactTiene") === "1";
+  $("fMontoFinalLabel").textContent = conFactura ? "Monto cobrado (con IVA incluido)" : "Monto cobrado";
+  const neto = netoFacturar();
   const p = $("pistaFacturar");
-  if (montoCotizadoOT == null) { p.textContent = "Sin cotización vigente para comparar."; p.className = "pista"; return; }
-  const dif = val - montoCotizadoOT;
+  const base = conFactura ? `Neto: $${miles(neto)} (se descontó el IVA). ` : "";
+  if (montoCotizadoOT == null) { p.textContent = base + "Sin cotización vigente para comparar."; p.className = "pista"; return; }
+  const dif = neto - montoCotizadoOT;
   if (dif === 0) {
-    p.textContent = `Igual a lo cotizado ($${miles(montoCotizadoOT)}).`;
+    p.textContent = `${base}Igual a lo cotizado ($${miles(montoCotizadoOT)}).`;
     p.className = "pista bien";
   } else {
-    p.textContent = `Diferencia contra cotización: ${dif < 0 ? "−" : "+"}$${miles(Math.abs(dif))} (cotizado $${miles(montoCotizadoOT)})`;
+    p.textContent = `${base}Diferencia contra cotización: ${dif < 0 ? "−" : "+"}$${miles(Math.abs(dif))} (cotizado $${miles(montoCotizadoOT)})`;
     p.className = "pista" + (dif < 0 ? " mal" : "");
   }
 }
 $("fMontoFinal").oninput = e => { e.target.value = e.target.value.replace(/\D/g, ""); actualizarPistaFacturar(); };
+$("selFactTiene").querySelectorAll("button").forEach(b => b.addEventListener("click", actualizarPistaFacturar));
 $("btnFactCancelar").onclick = () => abrirDetalle(ordenActual);
 
 $("btnConfirmarFacturar").onclick = async () => {
   msg("factError", "");
-  const monto = parseInt(($("fMontoFinal").value || "").replace(/\D/g, "") || "0", 10);
-  if (!monto) return msg("factError", "Falta el monto final cobrado.");
+  const neto = netoFacturar();
+  if (!neto) return msg("factError", "Falta el monto cobrado.");
 
   $("btnConfirmarFacturar").disabled = true;
   $("btnConfirmarFacturar").textContent = "Guardando…";
   const { error } = await db.from("ordenes").update({
     estado: "facturado",
-    monto_final: monto,
+    monto_final: neto,
     numero_factura: $("fNumFactura").value.trim() || null,
     fecha_cierre: new Date().toISOString()
   }).eq("id", ordenActual.id);
