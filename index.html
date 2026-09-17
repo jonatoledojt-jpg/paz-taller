@@ -1046,7 +1046,22 @@ const FLUJO = {
                        "listo_entrega","entregado","facturado"]
 };
 const flujoDe = o => FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || FLUJO.laboratorio_modulo;
-const EXCEPCIONES = ["irreparable","rechazado","garantia"];
+
+// "Irreparable" es un resultado de diagnóstico -- solo tiene sentido en un
+// flujo que de verdad pasa por diagnóstico (laboratorio, o terreno+módulo
+// porque el módulo retirado también se diagnostica allá). En terreno+
+// servicio no hay diagnóstico de laboratorio: o se arregla ahí mismo o no
+// -- mostrar "Irreparable" ahí no corresponde (avisado por Jonatan, que
+// ya lo había dejado explícito en su lista original de estados).
+// "Cotización rechazada" y "Garantía" sí aplican a cualquier flujo:
+// los tres pasan por "cotizado", y una garantía puede volver de cualquiera.
+const EXCEPCIONES_POR_FLUJO = {
+  terreno_servicio:   ["rechazado", "garantia"],
+  terreno_modulo:     ["irreparable", "rechazado", "garantia"],
+  laboratorio_modulo: ["irreparable", "rechazado", "garantia"],
+};
+const excepcionesDe = o =>
+  EXCEPCIONES_POR_FLUJO[`${o.origen}_${o.tipo_trabajo || "modulo"}`] || EXCEPCIONES_POR_FLUJO.laboratorio_modulo;
 
 // Revisión completa del 17-09-2026, después de que "entregado" escondiera
 // una OT sin cobrar dos veces el mismo día: el mismo problema estaba
@@ -1658,7 +1673,7 @@ function pintarEstados(o) {
   const flujo = flujoDe(o);
   const idxActual = flujo.indexOf(o.estado);
   const siguiente = idxActual >= 0 && idxActual < flujo.length - 1 ? flujo[idxActual + 1] : null;
-  const excepciones = EXCEPCIONES.filter(e => e !== o.estado);
+  const excepciones = excepcionesDe(o).filter(e => e !== o.estado);
   // Si el estado actual es una excepción (irreparable, rechazado, garantía)
   // no hay "paso siguiente" claro dentro del flujo -- se muestra la lista
   // completa directo, sin esconder nada detrás del botón manual.
@@ -1679,7 +1694,7 @@ function pintarEstados(o) {
   if (siguiente) boton(siguiente);
   excepciones.forEach(boton);
 
-  const resto = [...flujo, ...EXCEPCIONES].filter(e => e !== o.estado && e !== siguiente);
+  const resto = [...flujo, ...excepcionesDe(o)].filter(e => e !== o.estado && e !== siguiente);
   if (!resto.length) return;
 
   if (sinSiguienteClaro) { resto.forEach(boton); return; }

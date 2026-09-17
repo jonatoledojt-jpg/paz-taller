@@ -361,6 +361,19 @@ pagos, `pagado`/`medio_pago`/etc. — pero `facturado` ya cumple ese rol de
 cierre real para este flujo, y agregar un estado que no encaja en los
 otros dos flujos de `FLUJO` era más riesgo del que pedía el bug real).
 
+**Las excepciones (Irreparable/Garantía) también dependen del flujo
+(17-09-2026).** Se corrigió el punto anterior (solo mostrar el paso
+siguiente) pero se dejó pasar algo que Jonatan ya había dejado explícito
+en su especificación original: *"Irreparable"* es un resultado de
+diagnóstico de laboratorio, no tiene sentido ofrecerlo en una OT
+terreno+servicio (nunca pasa por diagnóstico — o se arregla ahí mismo o
+no). Seguía apareciendo igual para las tres porque `EXCEPCIONES` era una
+sola lista fija para todos los flujos. Ahora `EXCEPCIONES_POR_FLUJO` la
+reparte: `terreno_servicio` no ofrece "Irreparable" (solo "Cotización
+rechazada" y "Garantía"); `terreno_modulo` y `laboratorio_modulo` sí lo
+ofrecen, porque un módulo —se haya retirado en terreno o llegado directo—
+sí pasa por diagnóstico real y puede resultar irreparable.
+
 **Detalle de la OT: solo el paso siguiente, no el flujo completo
 (17-09-2026).** `pintarEstados()` mostraba antes todos los estados del
 flujo como botones, siempre — mezclaba pasos de laboratorio con los de
