@@ -539,6 +539,8 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div style="height:10px"></div>
       <button class="btn" id="btnCierre">Informe técnico</button>
       <div style="height:10px"></div>
+      <button class="btn claro oculto" id="btnGastoDeOT">+ Registrar gasto de esta OT</button>
+      <div style="height:10px"></div>
       <button class="btn claro" id="btnVolver">Volver al tablero</button>
     </section>
 
@@ -1833,6 +1835,12 @@ async function abrirDetalle(o) {
   // generarlo -- en una OT cerrada eso puede pisar sin querer el monto
   // que ya se facturó de verdad.
   $("btnCierre").classList.toggle("oculto", estaCerrada(o));
+  // Registrar un gasto de esta OT sí tiene sentido aunque ya esté
+  // cerrada -- un costo puede llegar después de facturar (garantía, una
+  // factura de repuestos atrasada), y antes no había forma de asociarlo
+  // a la OT correcta una vez cerrada. No cambia nada de la OT en sí,
+  // solo crea un gasto aparte -- por eso no se esconde nunca.
+  $("btnGastoDeOT").classList.remove("oculto");
 
   pintarAgendaDet(o);
   pintarMargenOT(o);
@@ -2332,9 +2340,10 @@ async function anularGasto(g) {
 
 // ---------- Formulario de gasto ----------
 $("btnNuevoGasto").onclick = () => abrirGasto(null);
+$("btnGastoDeOT").onclick = () => abrirGasto(null, ordenActual.id);
 $("btnGastoCancelar").onclick = () => { ver("vTablero"); cargarGastos(); };
 
-async function abrirGasto(g) {
+async function abrirGasto(g, ordenPrefillId) {
   msg("gastoError", "");
   gastoEditandoId = g?.id ?? null;
   fotoGasto = null;
@@ -2351,17 +2360,21 @@ async function abrirGasto(g) {
   $("gFoto").value = "";
   actualizarPistaGasto();
   await cargarOrdenesParaGasto();
-  $("gOrden").value = g?.orden_id ? (gastoOrdenes.find(o => o.id === g.orden_id)?.texto ?? "") : "";
+  const idOrden = g?.orden_id ?? ordenPrefillId ?? null;
+  $("gOrden").value = idOrden ? (gastoOrdenes.find(o => o.id === idOrden)?.texto ?? "") : "";
   cargarCategorias();
   ver("vGasto");
 }
 
 async function cargarOrdenesParaGasto() {
+  // A diferencia del tablero, acá SÍ se puede elegir una OT cerrada --
+  // un costo puede llegar después de facturar (una factura de repuestos
+  // atrasada, algo de garantía), y no hay ninguna razón para que eso
+  // no se pueda seguir asociando a la OT correcta.
   const { data } = await db.from("ordenes")
     .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,entregado_en,clientes(nombre),vehiculos(patente)")
-    .not("estado", "in", `(${CERRADOS.join(",")})`)
     .order("fecha_ingreso", { ascending: false }).limit(200);
-  gastoOrdenes = (data || []).filter(o => !estaCerrada(o)).map(o => ({
+  gastoOrdenes = (data || []).map(o => ({
     id: o.id,
     texto: [o.numero_ot, o.clientes?.nombre, o.vehiculos?.patente,
             o.tipo_trabajo === "servicio" ? o.sistema : o.tipo_modulo].filter(Boolean).join(" · ")

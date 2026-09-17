@@ -573,6 +573,17 @@ trabajo. `cargarOrdenes()` y `cargarAgendaSemana()` (la pestaña
 Terreno/Laboratorio de la Agenda, que tenía el mismo problema) usan
 `seccionDe` en vez de comparar `origen` directo.
 
+**Se puede registrar un gasto contra una OT cerrada (17-09-2026).**
+Pedido de Jonatan, justo después del punto anterior: un costo puede
+llegar **después** de facturar (garantía, una factura de repuestos
+atrasada) — cerrar la OT no debería cerrar también la posibilidad de
+asociarle gastos. `cargarOrdenesParaGasto()` ya no excluye las cerradas
+del selector, y el detalle de cualquier OT (abierta o cerrada) tiene un
+botón **"+ Registrar gasto de esta OT"** que abre el formulario con esa
+orden ya elegida. Distinto de los demás botones que se esconden al
+cerrar: **este no cambia nada de la OT**, solo crea un gasto aparte —
+por eso no tenía sentido restringirlo.
+
 **Una OT cerrada seguía invitando a editarla como si estuviera abierta
 (17-09-2026).** Jonatan: *"fíjate en las OT que fueron cerradas y ve todo
 lo que no debería verse"*. El detalle no distinguía cerrada de abierta —
