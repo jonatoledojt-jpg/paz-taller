@@ -83,11 +83,12 @@ sw.js                   service worker
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
 28-proteger-pago-tecnico.sql pagado_en/comercial/numero_factura protegidos igual que monto_final
 29-rentabilidad-usa-pagado-en.sql resumen_rentabilidad cuenta el mes por pagado_en, no fecha_cierre
+30-asistencia.sql            asistencia diaria, pagos con comprobante, auditoría, mano de obra en rentabilidad
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 ```
 
-**De la 01 a la 29 están todas aplicadas en la base real** (verificado el
+**De la 01 a la 30 están todas aplicadas en la base real** (verificado el
 17-09-2026 contra `information_schema` y `pg_proc`). Si alguna vez hay duda, no confiar
 en este documento: preguntarle a la base.
 
@@ -1736,6 +1737,108 @@ cierto (cerrada o rechazada).
 leyendo `estado`, vía `estadoLegado`, sin cambios); ningún flujo de
 terreno ni de laboratorio; los permisos existentes; Cotización, Agenda,
 Fotos siguen siendo secciones aparte, no se mezclaron con los estados.
+
+## Asistencia, pagos y mano de obra real (21-09-2026)
+
+Ver `30-asistencia.sql`. Antes se pagaba de memoria y por transferencia,
+sin registro; la rentabilidad mostraba un margen inflado porque la mano de
+obra —el costo más grande— no estaba en el sistema. Ahora es un **costo
+variable calculado desde la asistencia real**, no una estimación.
+
+**Equipo cargado**: Luis Gonzales (terreno, $50.000/día), Jonatan Osores
+(coordinación, $50.000/día), Diego Toledo (laboratorio, $40.000/día). Los
+tres `por_dia`, enlazados a su cuenta por nombre. La modalidad
+`semanal_fijo` existe en la base pero hoy no la usa nadie.
+
+**Día hábil = lunes a viernes.** Sábado y domingo se pagan **igual**, sin
+recargo — solo que no se esperan: no entran en el aviso de "días sin
+marcar" ni en el prorrateo del semanal fijo (que va sobre 5 días).
+
+**Decisiones que costaron bugs reales en la revisión previa (no revertir):**
+
+- **El valor del día se congela al registrar** en `asistencia.valor_referencia`.
+  Corregir el estado de un día recalcula solo el factor, siempre sobre esa
+  tarifa original. Si sube `valor_dia`, los días viejos no se tocan. La
+  primera versión recalculaba con la tarifa de HOY en cada update — y el
+  simple hecho de amarrar los días a un pago los repactaba a todos.
+- **El factor sale de la tabla, siempre**, salvo `factor_manual = true`,
+  que solo pone el dueño vía RPC `ajustar_factor_jornada()` con observación
+  obligatoria. Sin esa bandera era imposible corregir un día marcado: el
+  factor viejo se arrastraba y disparaba el guardia de permisos.
+- **`sin_carga` no es ausencia** en ningún conteo. Es decisión de la
+  empresa, no del colaborador. `resumen_periodo_colaborador` lo devuelve
+  aparte.
+- **Un pago emitido queda congelado**: monto, días, período, bonos y
+  descuentos. Y **deja de tragarse días nuevos**: un día registrado después
+  queda libre y lo toma el siguiente pago. `emitido` solo avanza a `pagado`
+  o `anulado`; nunca vuelve a `borrador` (el mismo COMP-XXXX respaldaría
+  otro monto).
+- **`asistencia.pago_id` lo escribe solo la base** (trigger del pago, con
+  el setting `paz.amarrando_dias`). El cliente no puede colgar días a un
+  pago ni soltarlos. Al mover el período de un borrador, primero se
+  sueltan los que quedaron fuera y después se amarran los libres.
+- **El correlativo `COMP-2026-0001`** lo asigna solo el trigger al emitir,
+  con `pg_advisory_xact_lock` contra emisiones simultáneas, y nunca se
+  reutiliza. El cliente no puede mandarlo; hay constraint de formato.
+- **Emitir exige** que todos los días del período estén revisados **y**
+  que no haya días hábiles sin marcar — los dos errores dicen cuáles.
+
+**Permisos, lo más crítico.** Dueño y coordinador son ambos el rol de
+Postgres `authenticated`: los grants de columna no los distinguen. Por eso
+la plata se revoca para **todos**, lectura **y escritura** (`revoke all` +
+`grant` columna por columna), y se abre por RPC que valida `mi_rol()`:
+`colaboradores_valores()`, `asistencia_valores()`, `resumen_periodo_colaborador()`,
+`resumen_mano_obra()`. El coordinador ve días y estados, marca asistencia
+(hasta 7 días atrás), y **no puede leer ni escribir** `valor_dia`,
+`valor_semana`, `factor_jornada`, `factor_manual`, `valor_referencia`,
+`valor_aplicado`, `pago_id`, ni nada de `pagos_colaboradores` ni
+`auditoria_mano_obra`. La primera versión revocó solo el SELECT y dejó la
+escritura abierta.
+
+**Auditoría** (`auditoria_mano_obra`): insert, update, delete y anular de
+las tres tablas, con `usuario_id` de `auth.uid()` nunca nulo. Sin política
+de insert/update/delete para nadie: entra solo por triggers `security
+definer`, y un trigger `tg_no_borrar` la protege incluso del dueño.
+
+**Toda escritura exige sesión** (`exigir_sesion()` en cada trigger). La
+siembra de colaboradores va **antes** de crear los triggers de auditoría,
+a propósito: corre por CLI sin sesión y no debe dejar rastro como acción
+de usuario. (La primera versión apagaba el trigger alrededor de la
+siembra: si fallaba a la mitad, quedaba apagado para siempre.)
+
+**Comprobante de pago — dos documentos distintos** (criterio de Jonatan):
+el de la **app** (COMP-XXXX, imprimible con `.hoja`) dice **qué** se pagó:
+período, días, total. El del **banco** (pantallazo en el bucket privado
+`comprobantes-pagos`) prueba **que** se pagó. `numero_transferencia` es
+**opcional**: el banco de la empresa no lo entrega. Y **no se exige la
+foto para marcar pagado** — invertiría el orden real (primero se paga,
+después se sube) y una subida fallida perdería el registro del pago; la
+lista de Pagos destaca los que quedaron sin respaldo, la base no bloquea.
+Mismo criterio que los comprobantes de gastos.
+
+**Rentabilidad**: `resumen_rentabilidad` devuelve `mano_obra`
+(devengado del mes, pagado o no), `mano_obra_pagada` y
+`mano_obra_pendiente`; el margen la resta. El campo manual pasó a ser
+"Otros costos fijos (sin mano de obra)". `rentabilidad_ot` suma la mano
+de obra de los días con `orden_id` a esa OT (`costo_total`, `hay_costos`)
+— antes una OT con tres días de mecánico y sin repuestos mostraba "100%
+de margen". Ambas cambiaron de firma, por eso van con `drop function` y
+**al final del archivo**: si algo falla antes, producción sigue con las
+de siempre.
+
+**Pantallas**: botón **Asistencia** en la barra de la Agenda (dueño y
+coordinador) → `vAsistencia`, un toque por persona. Pestaña **Pagos** en
+Gastos (solo dueño) → lista; `vPago` para armar, emitir, marcar pagado,
+subir pantallazo, anular; `vComprobante` imprimible.
+
+**No construido, a propósito**: AFP/salud/liquidaciones, hora de entrada
+y salida, Previred/SII. Viáticos y alimentación van en gastos.
+
+**Pendiente**: las pruebas de punta a punta del punto 12 de la
+especificación con sesión real (dueño y coordinador). La migración se
+probó ejecutando dos veces en transacción revertida contra la base real, y
+pasó revisión adversarial de 6 lentes (22 hallazgos, todos corregidos
+antes de aplicar).
 
 ## Contexto de negocio que importa
 

@@ -100,6 +100,9 @@ main.con-navinf{padding-bottom:96px}
    rojo -- con un borde a la izquierda, para que se note sin leer cada
    tarjeta una por una (pedido de Jonatan, 17-09-2026). */
 .ot.falta-cobrar{border-left:4px solid var(--alerta);background:#FFFBFA}
+/* Seis estados de asistencia en dos filas de tres, con guantes. */
+.asis-opc{flex-wrap:wrap}
+.asis-opc button{flex:1 1 30%;font-size:13px;padding:10px 6px}
 .ot .fila1{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .ot .fila1-der{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
 .ot .fila1-der .chip{margin-top:0}
@@ -366,6 +369,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <button type="button" data-v="persona" aria-pressed="false">Por persona</button>
           <button type="button" data-v="global" aria-pressed="false">Global</button>
           <button type="button" data-v="rentabilidad" aria-pressed="false">Rentabilidad</button>
+          <button type="button" data-v="pagos" aria-pressed="false">Pagos</button>
         </div>
         <div class="campo oculto" id="campoGastoPersona">
           <label for="selGastoPersona">Colaborador</label>
@@ -379,6 +383,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <button class="btn oculto" id="btnAgendar">Agendar</button>
         <button class="btn oculto" id="btnNuevoGasto">+ Registrar gasto</button>
         <button class="btn claro oculto" id="btnVerCerradas" style="max-width:120px">Cerradas</button>
+        <button class="btn claro oculto" id="btnAsistencia" style="max-width:130px">Asistencia</button>
         <button class="btn claro" id="btnRecargar" style="max-width:110px">Recargar</button>
       </div>
       <div id="porCobrarAviso" class="oculto"></div>
@@ -735,6 +740,72 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <button class="btn claro" id="btnFactCancelar">Cancelar</button>
     </section>
 
+    <!-- Asistencia: dueño y coordinador marcan el día -->
+    <section id="vAsistencia" class="oculto">
+      <h2>Asistencia</h2>
+      <div id="asisError" class="aviso oculto"></div>
+      <div class="campo"><label for="asisFecha">Día</label><input id="asisFecha" type="date"></div>
+      <div id="asisAviso" class="aviso oculto"></div>
+      <div id="asisLista"></div>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnAsisVolver">Volver</button>
+    </section>
+
+    <!-- Pago a colaborador: solo dueño -->
+    <section id="vPago" class="oculto">
+      <h2 id="pagoTitulo">Pago</h2>
+      <div id="pagoError" class="aviso oculto"></div>
+      <div id="pagoMotivoAnulacion" class="aviso oculto"></div>
+      <div class="seccion">
+        <div class="campo"><label for="pColab">Colaborador</label><select id="pColab"></select></div>
+        <div class="campo"><label for="pDesde">Desde</label><input id="pDesde" type="date"></div>
+        <div class="campo"><label for="pHasta">Hasta</label><input id="pHasta" type="date"></div>
+        <div id="pagoResumen"></div>
+        <button class="btn claro oculto" id="btnRevisarDias" style="margin-top:10px">Marcar todos los días del período como revisados</button>
+      </div>
+      <div class="seccion" id="pagoAjustes">
+        <div class="campo"><label for="pBonos">Bonos</label><input id="pBonos" inputmode="numeric" placeholder="0"></div>
+        <div class="campo"><label for="pNotaBonos">Motivo del bono</label><input id="pNotaBonos" placeholder="Obligatorio si hay bono"></div>
+        <div class="campo"><label for="pDesc">Descuentos</label><input id="pDesc" inputmode="numeric" placeholder="0"></div>
+        <div class="campo"><label for="pNotaDesc">Motivo del descuento</label><input id="pNotaDesc" placeholder="Obligatorio si hay descuento"></div>
+      </div>
+      <div id="pagoAccionesBorrador" class="oculto">
+        <button class="btn" id="btnPagoEmitir">Emitir comprobante</button>
+        <div style="height:10px"></div>
+        <button class="btn claro" id="btnPagoBorrador">Guardar borrador</button>
+        <div style="height:10px"></div>
+      </div>
+      <div id="pagoAccionesEmitido" class="seccion oculto">
+        <span class="rotulo">Registrar el pago</span>
+        <div class="campo"><label for="pMedio">Medio</label>
+          <select id="pMedio"><option value="transferencia">Transferencia</option><option value="efectivo">Efectivo</option></select></div>
+        <div class="campo"><label for="pNumTransf">N° de comprobante del banco (si lo trae)</label><input id="pNumTransf" placeholder="Opcional"></div>
+        <div class="campo"><label for="pBanco">Banco</label><input id="pBanco" placeholder="Opcional"></div>
+        <button class="btn" id="btnPagoPagar">Marcar como pagado</button>
+      </div>
+      <div id="pagoAccionesPagado" class="seccion oculto">
+        <span class="rotulo">Respaldo del pago</span>
+        <label class="foto-btn" for="pFoto">Subir pantallazo del comprobante del banco</label>
+        <input id="pFoto" type="file" accept="image/*">
+        <button class="btn claro oculto" id="btnVerFotoPago" style="margin-top:10px">Ver comprobante subido</button>
+      </div>
+      <button class="btn claro oculto" id="btnVerComprobante">Ver comprobante para imprimir</button>
+      <div style="height:10px"></div>
+      <button class="btn claro oculto" id="btnPagoAnular" style="color:var(--alerta)">Anular este pago</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnPagoVolver">Volver</button>
+    </section>
+
+    <!-- Comprobante de pago imprimible -->
+    <section id="vComprobante" class="oculto">
+      <div id="hojaComprobante"></div>
+      <div class="noimprimir">
+        <button class="btn" id="btnCompImprimir">Imprimir o guardar PDF</button>
+        <div style="height:10px"></div>
+        <button class="btn claro" id="btnCompVolver">Volver</button>
+      </div>
+    </section>
+
     <!-- Informe -->
     <section id="vInforme" class="oculto">
       <div id="hojaInforme"></div>
@@ -1038,7 +1109,8 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
-   "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas"].forEach(v => $(v).classList.add("oculto"));
+   "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas",
+   "vAsistencia","vPago","vComprobante"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -1275,6 +1347,9 @@ function cambiarSeccion(seccion) {
   $("btnVerCerradas").classList.toggle("oculto",
     !esDueno || (seccion !== "terreno" && seccion !== "laboratorio"));
   $("btnAgendar").classList.toggle("oculto", !(seccion === "agenda" && ["dueno","coordinador"].includes(perfil?.rol)));
+  // Asistencia vive en la Agenda: es donde el coordinador abre la app, y
+  // marcar el día tiene que tomar treinta segundos. Dueño y coordinador.
+  $("btnAsistencia").classList.toggle("oculto", !(seccion === "agenda" && ["dueno","coordinador"].includes(perfil?.rol)));
   $("btnNuevoGasto").classList.toggle("oculto", seccion !== "gastos");
   $("agendaControles").classList.toggle("oculto", seccion !== "agenda");
   $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
@@ -2290,16 +2365,23 @@ async function pintarMargenOT(o) {
   const r = data[0];
   caja.classList.remove("oculto");
 
+  const manoObra = Number(r.mano_obra || 0);
+  const filaMO = `<div class="dato"><span>Mano de obra</span><span>${manoObra ? "$" + miles(manoObra) : "sin días atribuidos"}</span></div>`;
+
   if (r.tipo_ingreso === "sin_ingreso") {
     $("detMargenInfo").innerHTML = `
       <div class="dato"><span>Ingreso</span><span>Sin ingreso confirmado</span></div>
-      <div class="dato"><span>Gastos asociados</span><span>${r.hay_gastos ? "$" + miles(Number(r.monto_gastos)) : "sin gastos registrados"}</span></div>`;
+      <div class="dato"><span>Gastos asociados</span><span>${r.hay_gastos ? "$" + miles(Number(r.monto_gastos)) : "sin gastos registrados"}</span></div>
+      ${filaMO}`;
     return;
   }
 
   const ingreso = Number(r.ingreso);
   const gastos = Number(r.monto_gastos);
-  const margen = ingreso - gastos;
+  // La mano de obra de los días atribuidos a esta OT (asistencia.orden_id)
+  // es costo de esta OT -- sin restarla, una OT con 3 días de mecánico y
+  // sin repuestos mostraba "100% de margen".
+  const margen = ingreso - gastos - manoObra;
   const pct = ingreso > 0 ? Math.round((margen / ingreso) * 100) : null;
   const etiquetaIngreso = r.tipo_ingreso === "facturado" ? "Facturado" : "Cotizado aprobado";
 
@@ -2322,6 +2404,7 @@ async function pintarMargenOT(o) {
     <div class="dato"><span>${etiquetaIngreso} (neto)</span><span>$${miles(ingreso)} <span style="color:var(--humo);font-weight:400">+ IVA = $${miles(totalConIva)}</span></span></div>
     ${diferencia}
     <div class="dato"><span>Gastos asociados</span><span>${r.hay_gastos ? "$" + miles(gastos) : "sin gastos registrados"}</span></div>
+    ${filaMO}
     <div class="dato total"><span>Margen</span><span class="${margen < 0 ? "neg" : "pos"}">$${miles(margen)}${pct === null ? "" : ` · ${pct}%`}</span></div>`;
 }
 
@@ -2566,6 +2649,7 @@ async function cargarGastos() {
   $("campoGastoPersona").classList.toggle("oculto", gastoVista !== "persona");
   $("btnNuevoGasto").classList.toggle("oculto", gastoVista !== "mio");
   if (gastoVista === "rentabilidad") return cargarRentabilidad(r);
+  if (gastoVista === "pagos") return cargarPagos(r);
   if (gastoVista === "global") return cargarGastosGlobal(r);
   if (gastoVista === "persona") return cargarGastosPersona(r);
   return cargarGastosMios(r);
@@ -2883,6 +2967,10 @@ async function cargarRentabilidad(r) {
   const x = data?.[0];
   if (!x) { $("listaOT").innerHTML = '<div class="aviso">Sin datos.</div>'; return; }
 
+  // Desglose de mano de obra por área (terreno / laboratorio / coordinación).
+  const { data: moData } = await db.rpc("resumen_mano_obra", { p_mes: r.ini });
+  const mo = moData?.[0] || {};
+
   const facturado = Number(x.facturado), margen = Number(x.margen);
   const pct = facturado > 0 ? Math.round((margen / facturado) * 100) : null;
 
@@ -2905,8 +2993,16 @@ async function cargarRentabilidad(r) {
           .map(([a, v]) => `<tr><td>${ETIQUETA_AREA[a] || a}</td><td>$${miles(v)}</td></tr>`).join("")
           || '<tr class="sub"><td>Sin gastos registrados este mes</td><td></td></tr>'}
         <tr><td>Gastos netos del mes</td><td>$${miles(Number(x.gastos_netos))}</td></tr>
-        <tr><td>Costo fijo del mes</td><td>$${miles(Number(x.costo_fijo))}</td></tr>
-        <tr class="sub"><td>No incluye sueldos ni asistencia: todavía no están en el sistema.</td><td></td></tr>
+
+        <tr class="grupo"><td colspan="2">Mano de obra (según asistencia, pagada o no)</td></tr>
+        ${Object.entries(mo.por_area || {}).sort((a,b)=>Number(b[1])-Number(a[1]))
+          .map(([a, v]) => `<tr><td>${ETIQUETA_AREA[a] || a}</td><td>$${miles(Number(v))}</td></tr>`).join("")
+          || '<tr class="sub"><td>Sin asistencia registrada este mes</td><td></td></tr>'}
+        <tr><td>Mano de obra del mes</td><td>$${miles(Number(x.mano_obra))}</td></tr>
+        <tr class="sub"><td>Ya pagado $${miles(Number(x.mano_obra_pagada))} · pendiente de pago $${miles(Number(x.mano_obra_pendiente))}</td><td></td></tr>
+
+        <tr><td>Otros costos fijos</td><td>$${miles(Number(x.costo_fijo))}</td></tr>
+        <tr class="sub"><td>Luz, internet, seguros, camioneta, contador, software. No incluye mano de obra, que ya va arriba.</td><td></td></tr>
 
         <tr class="fuerte"><td>Margen del mes</td><td class="${margen < 0 ? "neg" : "pos"}">$${miles(margen)}</td></tr>
         <tr><td>Margen %</td><td>${pct === null ? "sin facturación registrada" : pct + "%"}</td></tr>
@@ -2914,10 +3010,10 @@ async function cargarRentabilidad(r) {
     </div>
     <div class="seccion">
       <div class="campo">
-        <label for="gCostoFijo">Costo fijo de ${r.etiqueta}</label>
+        <label for="gCostoFijo">Otros costos fijos de ${r.etiqueta} (sin mano de obra)</label>
         <input id="gCostoFijo" inputmode="numeric" value="${Number(x.costo_fijo) || ""}" placeholder="0">
       </div>
-      <button class="btn claro" id="btnGuardarCostoFijo">Guardar costo fijo</button>
+      <button class="btn claro" id="btnGuardarCostoFijo">Guardar otros costos fijos</button>
     </div>`;
 
   $("btnGuardarCostoFijo").onclick = async () => {
@@ -2929,6 +3025,312 @@ async function cargarRentabilidad(r) {
     cargarGastos();
   };
 }
+
+// ---------- Asistencia (dueño y coordinador) ----------
+// Marcar el día en treinta segundos: la lista de colaboradores activos y
+// un toque por persona. Factor y valor los calcula la base (30-asistencia.sql);
+// acá solo se manda el estado. El coordinador ni siquiera puede leer los
+// montos -- están revocados a nivel de columna.
+const ETIQUETA_ASIS = {
+  presente:"Presente", media_jornada:"Media jornada", ausente_con_aviso:"Ausente c/aviso",
+  ausente_sin_aviso:"Ausente s/aviso", feriado:"Feriado", sin_carga:"Sin carga"
+};
+const ESTADOS_ASIS = Object.keys(ETIQUETA_ASIS);
+let asisFecha = null, asisColabs = [];
+
+const hoyISO = () => isoFecha(new Date());
+const sumarDias = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return isoFecha(d); };
+
+$("btnAsistencia").onclick = () => { asisFecha = hoyISO(); ver("vAsistencia"); cargarAsistencia(); };
+$("btnAsisVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
+$("asisFecha").onchange = e => { asisFecha = e.target.value; cargarAsistencia(); };
+
+async function cargarAsistencia() {
+  msg("asisError", "");
+  const f = $("asisFecha");
+  f.value = asisFecha; f.max = hoyISO(); f.min = sumarDias(hoyISO(), -7);   // hasta 7 días atrás
+  $("asisLista").innerHTML = '<div class="cargando">Cargando…</div>';
+  const [{ data: colabs, error: e1 }, { data: marcas, error: e2 }] = await Promise.all([
+    db.from("colaboradores").select("id,nombre,cargo").eq("activo", true).order("nombre"),
+    db.from("asistencia").select("id,colaborador_id,estado,observacion").eq("fecha", asisFecha),
+  ]);
+  if (e1 || e2) { $("asisLista").innerHTML = `<div class="aviso">${escapar((e1 || e2).message)}</div>`; return; }
+  asisColabs = colabs || [];
+  const porColab = {};
+  (marcas || []).forEach(m => { porColab[m.colaborador_id] = m; });
+  $("asisLista").innerHTML = "";
+  asisColabs.forEach(c => {
+    const m = porColab[c.id];
+    const div = document.createElement("div");
+    div.className = "seccion";
+    div.innerHTML = `<span class="rotulo">${escapar(c.nombre)}${c.cargo ? " · " + escapar(c.cargo) : ""}</span>
+      <div class="opciones asis-opc"></div>
+      <input class="asis-obs" placeholder="Observación (opcional)" style="margin-top:8px">`;
+    div.querySelector(".asis-obs").value = m?.observacion ?? "";
+    const opc = div.querySelector(".asis-opc");
+    ESTADOS_ASIS.forEach(e => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = ETIQUETA_ASIS[e];
+      b.setAttribute("aria-pressed", m?.estado === e ? "true" : "false");
+      b.onclick = () => marcarAsistencia(c.id, e, div.querySelector(".asis-obs").value.trim(), m?.id);
+      opc.appendChild(b);
+    });
+    $("asisLista").appendChild(div);
+  });
+  avisoSinMarcar();
+}
+
+async function marcarAsistencia(colabId, estado, obs, idExistente) {
+  msg("asisError", "");
+  const { error } = idExistente
+    ? await db.from("asistencia").update({ estado, observacion: obs || null }).eq("id", idExistente)
+    : await db.from("asistencia").insert({ colaborador_id: colabId, fecha: asisFecha, estado, observacion: obs || null });
+  if (error) return msg("asisError", "No se pudo marcar: " + error.message);
+  cargarAsistencia();
+}
+
+// Días hábiles (lunes a viernes) de ESTA semana, hasta hoy, sin marca.
+// Sábado y domingo no se esperan, así que nunca aparecen acá.
+async function avisoSinMarcar() {
+  const lunes = lunesDeSemana(0), dias = [];
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + i);
+    const iso = isoFecha(d);
+    if (iso <= hoyISO()) dias.push(iso);
+  }
+  if (!dias.length || !asisColabs.length) { $("asisAviso").classList.add("oculto"); return; }
+  const { data } = await db.from("asistencia").select("colaborador_id,fecha")
+    .gte("fecha", dias[0]).lte("fecha", dias[dias.length - 1]);
+  const marcados = new Set((data || []).map(m => m.colaborador_id + "|" + m.fecha));
+  const faltan = [];
+  asisColabs.forEach(c => dias.forEach(d => {
+    if (!marcados.has(c.id + "|" + d)) faltan.push(`${c.nombre.split(" ")[0]} ${fechaCL(d).slice(0, 5)}`);
+  }));
+  $("asisAviso").classList.toggle("oculto", !faltan.length);
+  if (faltan.length) $("asisAviso").textContent = "Días hábiles sin marcar esta semana: " + faltan.join(", ");
+}
+
+// ---------- Pagos a colaboradores (solo dueño) ----------
+const ETIQUETA_PAGO = { borrador:"Borrador", emitido:"Emitido", pagado:"Pagado", anulado:"Anulado" };
+const TONO_PAGO = { borrador:"trabajo", emitido:"espera", pagado:"listo", anulado:"" };
+let pagoActual = null;
+
+async function cargarPagos(r) {
+  $("gastosResumen").classList.add("oculto");
+  $("listaOT").innerHTML = '<div class="cargando">Cargando…</div>';
+  const { data, error } = await db.from("pagos_colaboradores")
+    .select("id,periodo_desde,periodo_hasta,dias_trabajados,monto_total,estado,comprobante_numero,medio_pago,ruta_comprobante,colaboradores(nombre)")
+    .gte("periodo_hasta", r.ini).lte("periodo_desde", r.fin)
+    .order("periodo_desde", { ascending: false });
+  if (error) { $("listaOT").innerHTML = `<div class="aviso">${escapar(error.message)}</div>`; return; }
+  const cont = $("listaOT");
+  cont.innerHTML = "";
+  const nuevo = document.createElement("button");
+  nuevo.className = "btn"; nuevo.textContent = "+ Nuevo pago"; nuevo.style.marginBottom = "14px";
+  nuevo.onclick = () => abrirPago(null);
+  cont.appendChild(nuevo);
+  if (!data.length) { cont.insertAdjacentHTML("beforeend", '<div class="vacio"><p>Sin pagos en este mes.</p></div>'); return; }
+  data.forEach(p => {
+    const card = document.createElement("div");
+    card.className = "ot";
+    // Pagado por transferencia y sin pantallazo: la base no lo bloquea (ver
+    // 30-asistencia.sql), pero acá se destaca para que no quede sin respaldo.
+    const sinRespaldo = p.estado === "pagado" && p.medio_pago === "transferencia" && !p.ruta_comprobante;
+    if (sinRespaldo) card.classList.add("falta-cobrar");
+    card.innerHTML = `
+      <div class="fila1">
+        <span class="num">${escapar(p.comprobante_numero ?? "borrador")}</span>
+        <div class="fila1-der"><span class="chip ${TONO_PAGO[p.estado] || ""}">${ETIQUETA_PAGO[p.estado]}</span></div>
+      </div>
+      <div class="cliente"></div>
+      <div class="detalle">${fechaCL(p.periodo_desde)} al ${fechaCL(p.periodo_hasta)} · ${Number(p.dias_trabajados)} días</div>
+      <div class="sintoma">$${miles(Number(p.monto_total))}${sinRespaldo ? " · sin comprobante del banco" : ""}</div>`;
+    card.querySelector(".cliente").textContent = p.colaboradores?.nombre ?? "—";
+    card.onclick = () => abrirPago(p.id);
+    cont.appendChild(card);
+  });
+}
+
+async function abrirPago(id) {
+  msg("pagoError", "");
+  const { data: colabs } = await db.from("colaboradores").select("id,nombre").eq("activo", true).order("nombre");
+  $("pColab").innerHTML = (colabs || []).map(c => `<option value="${c.id}">${escapar(c.nombre)}</option>`).join("");
+  if (id) {
+    const { data, error } = await db.from("pagos_colaboradores").select("*,colaboradores(nombre,rut,cargo)").eq("id", id).single();
+    if (error) return msg("pagoError", error.message);
+    pagoActual = data;
+  } else {
+    pagoActual = { estado: "borrador", colaborador_id: colabs?.[0]?.id, periodo_desde: isoFecha(lunesDeSemana(0)),
+                   periodo_hasta: hoyISO(), bonos: 0, descuentos: 0 };
+  }
+  const p = pagoActual, editable = p.estado === "borrador";
+  $("pagoTitulo").textContent = p.id ? (p.comprobante_numero ?? "Pago en borrador") : "Nuevo pago";
+  $("pColab").value = p.colaborador_id; $("pColab").disabled = !editable;
+  $("pDesde").value = p.periodo_desde; $("pHasta").value = p.periodo_hasta;
+  $("pDesde").disabled = $("pHasta").disabled = !editable;
+  $("pBonos").value = Number(p.bonos) || ""; $("pDesc").value = Number(p.descuentos) || "";
+  $("pNotaBonos").value = p.nota_bonos ?? ""; $("pNotaDesc").value = p.nota_descuentos ?? "";
+  ["pBonos","pDesc","pNotaBonos","pNotaDesc"].forEach(i => $(i).disabled = !editable);
+  $("pMedio").value = p.medio_pago ?? "transferencia";
+  $("pNumTransf").value = p.numero_transferencia ?? ""; $("pBanco").value = p.banco ?? "";
+  $("pagoAccionesBorrador").classList.toggle("oculto", !editable);
+  $("pagoAccionesEmitido").classList.toggle("oculto", p.estado !== "emitido");
+  $("pagoAccionesPagado").classList.toggle("oculto", p.estado !== "pagado");
+  $("btnVerFotoPago").classList.toggle("oculto", !p.ruta_comprobante);
+  $("btnVerComprobante").classList.toggle("oculto", !p.comprobante_numero);
+  $("btnPagoAnular").classList.toggle("oculto", !(p.id && ["emitido","pagado"].includes(p.estado)));
+  $("pagoMotivoAnulacion").classList.toggle("oculto", p.estado !== "anulado");
+  if (p.estado === "anulado") $("pagoMotivoAnulacion").textContent = "Anulado: " + (p.motivo_anulacion ?? "");
+  ver("vPago");
+  calcularPago();
+}
+
+const enteroDe = id => parseInt(($(id).value || "").replace(/\D/g, "") || "0", 10);
+
+async function calcularPago() {
+  const colab = Number($("pColab").value), desde = $("pDesde").value, hasta = $("pHasta").value;
+  if (!colab || !desde || !hasta) return;
+  const { data, error } = await db.rpc("resumen_periodo_colaborador", { p_colaborador_id: colab, p_desde: desde, p_hasta: hasta });
+  if (error) return msg("pagoError", error.message);
+  const s = data?.[0];
+  if (!s) return;
+  const bonos = enteroDe("pBonos"), desc = enteroDe("pDesc");
+  // Una vez emitido, el devengado es el del comprobante, no el de hoy.
+  const devengado = pagoActual.estado === "borrador" ? Number(s.monto_devengado) : Number(pagoActual.monto_devengado);
+  const total = devengado + bonos - desc;
+  const alerta = (t, v) => `<div class="dato"><span style="color:var(--alerta)">${t}</span><span style="color:var(--alerta)">${v}</span></div>`;
+  $("pagoResumen").innerHTML = `
+    <div class="dato"><span>Días trabajados</span><span>${Number(s.dias_trabajados)}${s.medias_jornadas ? ` (${s.medias_jornadas} media${s.medias_jornadas > 1 ? "s" : ""})` : ""}</span></div>
+    <div class="dato"><span>Ausencias con aviso</span><span>${s.ausencias_con_aviso}</span></div>
+    <div class="dato"><span>Ausencias sin aviso</span><span>${s.ausencias_sin_aviso}</span></div>
+    ${s.feriados ? `<div class="dato"><span>Feriados</span><span>${s.feriados}</span></div>` : ""}
+    ${s.dias_sin_carga ? `<div class="dato"><span>Sin carga (no cuenta como ausencia)</span><span>${s.dias_sin_carga}</span></div>` : ""}
+    ${s.dias_sin_revisar ? alerta("Días sin revisar", s.dias_sin_revisar) : ""}
+    ${s.dias_habiles_sin_marcar ? alerta("Días hábiles sin marcar", s.dias_habiles_sin_marcar) : ""}
+    <div class="dato"><span>Devengado</span><span>$${miles(devengado)}</span></div>
+    ${bonos ? `<div class="dato"><span>Bonos</span><span>+$${miles(bonos)}</span></div>` : ""}
+    ${desc ? `<div class="dato"><span>Descuentos</span><span>−$${miles(desc)}</span></div>` : ""}
+    <div class="dato total"><span>Total a pagar</span><span>$${miles(total)}</span></div>`;
+  $("btnRevisarDias").classList.toggle("oculto", !(pagoActual.estado === "borrador" && Number(s.dias_sin_revisar) > 0));
+}
+
+function datosPago(estado) {
+  return {
+    colaborador_id: Number($("pColab").value), periodo_desde: $("pDesde").value, periodo_hasta: $("pHasta").value,
+    bonos: enteroDe("pBonos"), descuentos: enteroDe("pDesc"),
+    nota_bonos: $("pNotaBonos").value.trim() || null, nota_descuentos: $("pNotaDesc").value.trim() || null,
+    estado,
+  };
+}
+
+async function guardarPago(estado) {
+  msg("pagoError", "");
+  const d = datosPago(estado);
+  const { data, error } = pagoActual.id
+    ? await db.from("pagos_colaboradores").update(d).eq("id", pagoActual.id).select("id").single()
+    : await db.from("pagos_colaboradores").insert(d).select("id").single();
+  if (error) return msg("pagoError", error.message);
+  abrirPago(data.id);
+}
+
+$("btnPagoBorrador").onclick = () => guardarPago("borrador");
+$("btnPagoEmitir").onclick = () => guardarPago("emitido");
+$("btnRevisarDias").onclick = async () => {
+  msg("pagoError", "");
+  const { error } = await db.from("asistencia").update({ revisado: true })
+    .eq("colaborador_id", Number($("pColab").value))
+    .gte("fecha", $("pDesde").value).lte("fecha", $("pHasta").value).eq("revisado", false);
+  if (error) return msg("pagoError", error.message);
+  calcularPago();
+};
+$("btnPagoPagar").onclick = async () => {
+  msg("pagoError", "");
+  const { error } = await db.from("pagos_colaboradores").update({
+    estado: "pagado", medio_pago: $("pMedio").value,
+    numero_transferencia: $("pNumTransf").value.trim() || null, banco: $("pBanco").value.trim() || null,
+  }).eq("id", pagoActual.id);
+  if (error) return msg("pagoError", error.message);
+  abrirPago(pagoActual.id);
+};
+$("btnPagoAnular").onclick = async () => {
+  const motivo = prompt("¿Por qué se anula este pago? (obligatorio). Esto libera los días para corregirlos y emitir uno nuevo.");
+  if (!motivo || !motivo.trim()) return;
+  const { error } = await db.from("pagos_colaboradores").update({ estado: "anulado", motivo_anulacion: motivo.trim() }).eq("id", pagoActual.id);
+  if (error) return msg("pagoError", error.message);
+  abrirPago(pagoActual.id);
+};
+$("btnPagoVolver").onclick = () => { gastoVista = "pagos"; ver("vTablero"); cargarGastos(); };
+["pColab","pDesde","pHasta","pBonos","pDesc"].forEach(i => $(i).addEventListener("change", calcularPago));
+$("pBonos").oninput = $("pDesc").oninput = e => { e.target.value = e.target.value.replace(/\D/g, ""); };
+
+// Pantallazo del comprobante del banco. Se sube DESPUÉS de marcar pagado:
+// si falla la señal, el pago igual quedó registrado y la foto se reintenta.
+$("pFoto").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  msg("pagoError", "");
+  try {
+    const ruta = `${pagoActual.id}/comprobante-${Date.now()}.jpg`;
+    const { error: eu } = await db.storage.from("comprobantes-pagos")
+      .upload(ruta, await comprimir(f), { contentType: "image/jpeg", upsert: true });
+    if (eu) throw eu;
+    const { error } = await db.from("pagos_colaboradores").update({ ruta_comprobante: ruta }).eq("id", pagoActual.id);
+    if (error) throw error;
+    abrirPago(pagoActual.id);
+  } catch (err) {
+    msg("pagoError", "No se pudo subir el comprobante: " + err.message);
+  }
+  e.target.value = "";
+};
+$("btnVerFotoPago").onclick = async () => {
+  const { data, error } = await db.storage.from("comprobantes-pagos").createSignedUrl(pagoActual.ruta_comprobante, 120);
+  if (error) return msg("pagoError", error.message);
+  window.open(data.signedUrl, "_blank", "noopener");
+};
+
+// Comprobante de la app: dice QUÉ se pagó (período y detalle). El del
+// banco (pantallazo) prueba que la plata se movió. Son cosas distintas.
+$("btnVerComprobante").onclick = async () => {
+  const p = pagoActual;
+  const dias = Number(p.dias_trabajados);
+  const valorProm = dias > 0 ? Math.round(Number(p.monto_devengado) / dias) : null;
+  const pago = p.estado === "pagado"
+    ? `${ETIQUETA_MEDIO[p.medio_pago] ?? p.medio_pago ?? ""} · ${fechaCL(p.pagado_en)}` +
+      (p.numero_transferencia ? ` · N° ${escapar(p.numero_transferencia)}` : "") + (p.banco ? ` · ${escapar(p.banco)}` : "")
+    : (p.estado === "anulado" ? "ANULADO — " + escapar(p.motivo_anulacion ?? "") : "Pendiente de pago");
+  $("hojaComprobante").innerHTML = `
+  <div class="hoja">
+    <div class="cab">
+      <h1>PAZ SERVICES &nbsp;|&nbsp; COMPROBANTE DE PAGO</h1>
+      <div class="sub">Mano de obra &middot; Talca &middot; ${escapar(p.comprobante_numero ?? "borrador")}</div>
+    </div>
+    <table class="datos">
+      <tr><td class="et">Colaborador</td><td>${escapar(p.colaboradores?.nombre ?? "—")}</td></tr>
+      <tr><td class="et">RUT</td><td>${escapar(p.colaboradores?.rut ?? "—")}</td></tr>
+      <tr><td class="et">Cargo</td><td>${escapar(p.colaboradores?.cargo ?? "—")}</td></tr>
+      <tr><td class="et">Período</td><td>${fechaCL(p.periodo_desde)} al ${fechaCL(p.periodo_hasta)}</td></tr>
+      <tr><td class="et">Fecha</td><td>${fechaCL(p.comprobante_generado_en || p.creado_en || Date.now())}</td></tr>
+    </table>
+    <h3>Detalle</h3>
+    <table class="valor">
+      <tr><td>Días trabajados</td><td>${dias}</td></tr>
+      ${valorProm != null ? `<tr><td>Valor aplicado por día</td><td>$${miles(valorProm)}</td></tr>` : ""}
+      <tr><td>Devengado</td><td>$${miles(Number(p.monto_devengado))}</td></tr>
+      ${Number(p.bonos) ? `<tr><td>Bonos${p.nota_bonos ? " — " + escapar(p.nota_bonos) : ""}</td><td>+$${miles(Number(p.bonos))}</td></tr>` : ""}
+      ${Number(p.descuentos) ? `<tr><td>Descuentos${p.nota_descuentos ? " — " + escapar(p.nota_descuentos) : ""}</td><td>−$${miles(Number(p.descuentos))}</td></tr>` : ""}
+      <tr class="total"><td>Total</td><td>$${miles(Number(p.monto_total))}</td></tr>
+    </table>
+    <h3>Pago</h3>
+    <p>${pago}</p>
+    <div class="firmas">
+      <div>Jonatan Daniel Toledo Orellana<br>Paz Services LTDA.</div>
+      <div>${escapar(p.colaboradores?.nombre ?? "")}<br>Recibí conforme</div>
+    </div>
+  </div>`;
+  ver("vComprobante");
+};
+$("btnCompImprimir").onclick = () => window.print();
+$("btnCompVolver").onclick = () => ver("vPago");
 
 // ---------- Cotización ----------
 // El formulario SIEMPRE crea una cotización nueva. No se edita una
