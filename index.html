@@ -1327,6 +1327,11 @@ async function iniciar() {
   $("main").classList.add("con-navinf");
   $("btnNexa").classList.toggle("oculto", !["dueno","coordinador"].includes(perfil.rol));
   $("btnEntrenar").classList.toggle("oculto", perfil.rol !== "dueno");
+  // Diego (área laboratorio) es "su área pura y dura es laboratorio"
+  // (Jonatan, 21-09-2026): no ve la pestaña Terreno ni nada de retiros
+  // en camino -- lo suyo empieza cuando el módulo ya está en el taller.
+  document.querySelector('[data-seccion="terreno"]')
+    .classList.toggle("oculto", perfil.rol === "coordinador" && perfil.area === "laboratorio");
   if (["dueno","coordinador"].includes(perfil.rol)) {
     actualizarBadgeCasos();
     suscribirAlertasCasos();
@@ -1367,7 +1372,6 @@ function cambiarSeccion(seccion) {
   semanaOffset = 0;
   mesOffset = 0;
   const esDueno = perfil?.rol === "dueno";
-  const esGestor = ["dueno","coordinador"].includes(perfil?.rol);
   // Gastos ya no tiene su propia pestaña -- es una herramienta más
   // dentro de "Herramientas", así que esa pestaña queda marcada como
   // activa también mientras se está en Gastos.
@@ -1389,8 +1393,8 @@ function cambiarSeccion(seccion) {
   $("barraTablero").classList.toggle("oculto", seccion === "agenda");
   $("listaOT").classList.toggle("oculto", seccion === "agenda");
   $("herramientasGrid").classList.toggle("oculto", seccion !== "agenda");
-  $("btnHerAgendar").classList.toggle("oculto", !esGestor);
-  $("btnHerAsistencia").classList.toggle("oculto", !veAsistencia());
+  $("btnHerAgendar").classList.toggle("oculto", !veCoordinacionGeneral());
+  $("btnHerAsistencia").classList.toggle("oculto", !veCoordinacionGeneral());
   $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
   $("porCobrarAviso").classList.add("oculto");
   $("selGastoVista").classList.toggle("oculto", !(seccion === "gastos" && esDueno));
@@ -1415,10 +1419,13 @@ const veCasosPorAgendar = () =>
   perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "coordinacion");
 const veModulosPorRecepcionar = () =>
   perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "laboratorio");
-// Registro de asistencia es tarea de coordinación general, no de
-// laboratorio -- Diego (área laboratorio) no la ve; Jonatan Osores
-// (área coordinación) y el dueño sí (pedido de Jonatan, 21-09-2026).
-const veAsistencia = () =>
+// Agendar visita y Registro de asistencia son tareas de coordinación
+// general, no de laboratorio -- Diego (área laboratorio) hace y cobra
+// el trabajo del taller, pero no coordina con el cliente ni agenda
+// nada de eso (Jonatan, 21-09-2026: "Jonatan Osores es coordinador
+// general sobre Diego"). Diego se entera de lo que llega por "Módulos
+// por recepcionar", no porque él mismo lo haya agendado.
+const veCoordinacionGeneral = () =>
   perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "coordinacion");
 
 // Aviso persistente arriba de Terreno/Laboratorio/Herramientas (nunca

@@ -377,17 +377,22 @@ Barra fija abajo, siempre visible dentro de la app -- desde el
   las herramientas no las OT". Cada botón se ve u oculta según el rol
   (mismo patrón que ya usaba `btnAsistencia`) -- Luis (técnico) hoy solo
   ve "Gastos"; el resto es dueño/coordinador. Botones de hoy:
-  - **Agendar visita** — abre "Nueva OT" con la sección de agenda ya
-    desplegada (antes vivía como botón `btnAgendar` en la barra de
-    arriba de la Agenda; misma función, movida). `btnHerAgendar`.
+  - **Agendar visita** (`btnHerAgendar`) — abre "Nueva OT" con la
+    sección de agenda ya desplegada (antes vivía como botón `btnAgendar`
+    en la barra de arriba de la Agenda; misma función, movida).
   - **Registro de asistencia** — igual que antes (`btnAsistencia`),
     renombrado `btnHerAsistencia` (texto del botón: "Registro de
-    asistencia", a pedido de Jonatan). **Diego no la ve** (21-09-2026,
-    Jonatan: "Jonatan Osores es coordinador general sobre Diego" -- ver
-    `veAsistencia()` justo abajo de `veCasosPorAgendar`/
-    `veModulosPorRecepcionar`, mismo criterio de área que Pendientes).
-    Solo tapa el botón; la pantalla y las RPC de asistencia siguen
-    abiertas a cualquier `coordinador` (no se tocó RLS por esto).
+    asistencia", a pedido de Jonatan).
+  - **Diego no ve ninguna de las dos de arriba** (21-09-2026, Jonatan:
+    "Jonatan Osores es coordinador general sobre Diego y Diego es
+    coordinador de laboratorio... [Diego] puede agregar módulos que
+    llegaron al laboratorio y no necesita coordinar la llegada de algo"
+    -- agendar una visita o avisar que llega un módulo es coordinación
+    con el cliente, no ejecución de laboratorio). `veCoordinacionGeneral()`
+    (junto a `veCasosPorAgendar`/`veModulosPorRecepcionar`) gatea ambos
+    botones: dueño, o coordinador con `area = 'coordinacion'`. Solo tapa
+    los botones; las pantallas y RPC de agenda/asistencia siguen abiertas
+    a cualquier `coordinador` (no se tocó RLS por esto).
   - **Gastos** — ya no es una pestaña de la barra inferior, es una
     herramienta más (`btnHerGastos` → `cambiarSeccion("gastos")`, misma
     pantalla de siempre, nada cambió puertas adentro). Para el dueño
@@ -405,6 +410,14 @@ debajo — nada se duplica. El técnico solo ve sus propias visitas en el
 grupo de arriba (`tecnico_agendado = auth.uid()`). Una sola función,
 `tarjetaOT(o, opts)` en `index.html`, arma la tarjeta en todas las
 listas.
+
+**Diego no ve la pestaña Terreno de la barra inferior** (21-09-2026,
+Jonatan: "su área pura y dura es laboratorio"). Se esconde una sola vez
+en `iniciar()` con `document.querySelector('[data-seccion="terreno"]')`
+para `coordinador` con `area = 'laboratorio'` -- no depende de
+`cambiarSeccion` porque el rol/área no cambian durante la sesión. Mismo
+criterio que lo de arriba: es solo la pestaña, la RLS de `ordenes` sigue
+igual de abierta para cualquier `coordinador`.
 
 Cada rol abre por defecto en una sección (`coordinador` → Herramientas,
 el resto → Terreno) pero puede navegar a las otras — no se esconde
