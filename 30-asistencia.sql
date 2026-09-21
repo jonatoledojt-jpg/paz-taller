@@ -680,15 +680,30 @@ declare
   v_motivo text;
   v_id     bigint;
 begin
+  -- OJO: "elsif tg_table_name = 'pagos_colaboradores' and new.estado =
+  -- 'anulado' ..." (versión anterior) rompía CUALQUIER update en
+  -- asistencia o colaboradores con "invalid input value for enum
+  -- estado_asistencia: anulado". Postgres necesita tipar los DOS lados
+  -- del AND aunque el primero sea falso -- el corto-circuito es del
+  -- VALOR en tiempo de ejecución, no evita el chequeo de TIPO en tiempo
+  -- de parseo -- y 'anulado' no existe en estado_asistencia (solo en
+  -- estado_pago_colab). Iba a reventar cada vez que alguien corrigiera
+  -- un día ya marcado (bug real, encontrado por Jonatan, 21-09-2026:
+  -- "se aprieta por error y no hay como arreglarlo"). Con el IF
+  -- anidado, la comparación con 'anulado' solo se compila/ejecuta
+  -- cuando la tabla es de verdad pagos_colaboradores.
   if tg_op = 'INSERT' then
     v_accion := 'insert';  v_id := new.id;
   elsif tg_op = 'DELETE' then
     v_accion := 'delete';  v_id := old.id;
-  elsif tg_table_name = 'pagos_colaboradores'
-        and new.estado = 'anulado' and old.estado <> 'anulado' then
-    v_accion := 'anular';  v_id := new.id;  v_motivo := new.motivo_anulacion;
   else
     v_accion := 'update';  v_id := new.id;
+    if tg_table_name = 'pagos_colaboradores' then
+      if new.estado = 'anulado' and old.estado <> 'anulado' then
+        v_accion := 'anular';
+        v_motivo := new.motivo_anulacion;
+      end if;
+    end if;
   end if;
 
   if tg_table_name = 'asistencia' and tg_op <> 'DELETE' then
