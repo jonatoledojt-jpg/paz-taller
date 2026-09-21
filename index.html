@@ -222,6 +222,17 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 .semana-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
 .semana-nav button{flex:0 0 auto;width:auto;padding:11px 18px;border:1px solid var(--linea);border-radius:8px;background:var(--panel);cursor:pointer;font-size:17px}
 .semana-nav button[disabled]{opacity:.4;cursor:default}
+
+/* Tira de días del mes en Asistencia -- deslizar y tocar, sin abrir
+   selector de fecha nativo */
+.dias-strip{display:flex;gap:6px;overflow-x:auto;padding:2px 2px 6px;-webkit-overflow-scrolling:touch}
+.dias-strip button{
+  flex:0 0 auto;width:42px;height:42px;border-radius:8px;
+  border:1px solid var(--linea);background:var(--panel);font-size:14px;
+  font-weight:500;cursor:pointer
+}
+.dias-strip button.actual{background:var(--accion);color:#fff;border-color:var(--accion)}
+.dias-strip button[disabled]{opacity:.3;cursor:default}
 .semana-nav .lbl{font-size:14.5px;font-weight:500;text-align:center}
 .dia-grupo{display:flex;justify-content:space-between;align-items:baseline;margin:18px 0 8px}
 .dia-grupo:first-child{margin-top:0}
@@ -776,12 +787,13 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <h2>Asistencia</h2>
       <div id="asisError" class="aviso oculto"></div>
       <div class="campo">
-        <label for="asisFecha">Día</label>
+        <label>Día</label>
         <div class="semana-nav">
-          <button type="button" id="btnAsisDiaAnt">◀</button>
-          <input id="asisFecha" type="date" style="flex:1;min-width:0;text-align:center">
-          <button type="button" id="btnAsisDiaSig">▶</button>
+          <button type="button" id="btnAsisMesAnt">◀</button>
+          <span class="lbl" id="asisMesLabel"></span>
+          <button type="button" id="btnAsisMesSig">▶</button>
         </div>
+        <div id="asisDiasStrip" class="dias-strip"></div>
       </div>
       <div id="asisAviso" class="aviso oculto"></div>
       <div id="asisLista"></div>
@@ -3086,35 +3098,62 @@ const ETIQUETA_ASIS = {
   ausente_sin_aviso:"Ausente s/aviso", feriado:"Feriado", sin_carga:"Sin carga"
 };
 const ESTADOS_ASIS = Object.keys(ETIQUETA_ASIS);
-let asisFecha = null, asisColabs = [];
+let asisFecha = null, asisColabs = [], asisMesOffset = 0;
 
 const hoyISO = () => isoFecha(new Date());
-const sumarDias = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return isoFecha(d); };
 
-$("btnHerAsistencia").onclick = () => { asisFecha = hoyISO(); ver("vAsistencia"); cargarAsistencia(); };
+$("btnHerAsistencia").onclick = () => {
+  asisFecha = hoyISO(); asisMesOffset = 0;
+  ver("vAsistencia"); pintarMesAsistencia(); cargarAsistencia();
+};
 $("btnAsisVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
-$("asisFecha").onchange = e => { asisFecha = e.target.value; cargarAsistencia(); };
-// Flechas para moverse día a día sin tener que abrir el selector de
-// fecha nativo cada vez -- respetan el mismo rango que ya tenía el
-// campo (hasta 7 días atrás, nunca a futuro).
-$("btnAsisDiaAnt").onclick = () => {
-  const min = sumarDias(hoyISO(), -7);
-  if (asisFecha <= min) return;
-  asisFecha = sumarDias(asisFecha, -1);
+
+// Antes un solo día con flechas limitadas a 7 atrás/hoy; Jonatan pidió
+// (21-09-2026) poder moverse por TODO el mes que se está revisando --
+// "para adelante lo que queda de mes y para atrás siempre hasta el 1".
+// Se cambió a navegador de mes (mismo patrón que Gastos, `rangoMes`)
+// más una tira de días para tocar directo, sin abrir un selector nativo.
+// El límite de "hasta 7 días atrás" de antes era solo de pantalla, nunca
+// existió en la base (`crear_asistencia`/`editar_asistencia` no miran
+// fecha) -- no hay nada que destrabar del lado del servidor.
+$("btnAsisMesAnt").onclick = () => irAMesAsistencia(asisMesOffset - 1);
+$("btnAsisMesSig").onclick = () => { if (asisMesOffset < 0) irAMesAsistencia(asisMesOffset + 1); };
+
+function irAMesAsistencia(offset) {
+  asisMesOffset = offset;
+  const r = rangoMes(offset);
+  const ini = new Date(r.ini + "T00:00:00");
+  const ultimoDia = new Date(ini.getFullYear(), ini.getMonth() + 1, 0).getDate();
+  const tope = offset === 0 ? new Date().getDate() : ultimoDia;
+  asisFecha = isoFecha(new Date(ini.getFullYear(), ini.getMonth(), tope));
+  pintarMesAsistencia();
   cargarAsistencia();
-};
-$("btnAsisDiaSig").onclick = () => {
-  if (asisFecha >= hoyISO()) return;
-  asisFecha = sumarDias(asisFecha, 1);
-  cargarAsistencia();
-};
+}
+
+function pintarMesAsistencia() {
+  const r = rangoMes(asisMesOffset);
+  $("asisMesLabel").textContent = r.etiqueta;
+  $("btnAsisMesSig").disabled = asisMesOffset >= 0;
+  const ini = new Date(r.ini + "T00:00:00");
+  const ultimoDia = new Date(ini.getFullYear(), ini.getMonth() + 1, 0).getDate();
+  const tope = asisMesOffset === 0 ? new Date().getDate() : ultimoDia;
+  const cont = $("asisDiasStrip");
+  cont.innerHTML = "";
+  for (let d = 1; d <= ultimoDia; d++) {
+    const iso = isoFecha(new Date(ini.getFullYear(), ini.getMonth(), d));
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = d;
+    btn.disabled = d > tope;
+    if (iso === asisFecha) btn.classList.add("actual");
+    btn.onclick = () => { asisFecha = iso; pintarMesAsistencia(); cargarAsistencia(); };
+    cont.appendChild(btn);
+  }
+  cont.querySelector(".actual")?.scrollIntoView({ inline: "center", block: "nearest" });
+}
 
 async function cargarAsistencia() {
   msg("asisError", "");
-  const f = $("asisFecha");
-  f.value = asisFecha; f.max = hoyISO(); f.min = sumarDias(hoyISO(), -7);   // hasta 7 días atrás
-  $("btnAsisDiaAnt").disabled = asisFecha <= f.min;
-  $("btnAsisDiaSig").disabled = asisFecha >= f.max;
   $("asisLista").innerHTML = '<div class="cargando">Cargando…</div>';
   const [{ data: colabs, error: e1 }, { data: marcas, error: e2 }] = await Promise.all([
     db.from("colaboradores").select("id,nombre,cargo").eq("activo", true).order("nombre"),

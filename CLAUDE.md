@@ -1954,6 +1954,20 @@ probó ejecutando dos veces en transacción revertida contra la base real, y
 pasó revisión adversarial de 6 lentes (22 hallazgos, todos corregidos
 antes de aplicar).
 
+**Navegación por mes en vez de un solo día con flechas limitadas
+(21-09-2026).** El campo "Día" era un `<input type="date">` con flechas
+◀▶ agregadas encima, acotado a 7 días atrás / nunca a futuro -- ese
+límite era **solo de pantalla** (`f.min`/`f.max`), nunca existió en
+`crear_asistencia`/`editar_asistencia` (no miran fecha). Jonatan pidió
+poder moverse por todo el mes: *"para adelante lo que queda de mes y
+para atrás siempre hasta el 1 del mes que se está revisando"*. Se
+reemplazó por un navegador de mes (mismo patrón que Gastos, reusa
+`rangoMes`/`MESES`) más una tira de días tocable (`#asisDiasStrip`) --
+sin abrir el selector nativo. Tope hacia adelante: hoy (mes actual) o
+el último día del mes (meses pasados); no se puede navegar a meses
+futuros. Al entrar por "Registro de asistencia" siempre parte en el mes
+actual con hoy seleccionado.
+
 ## Contexto de negocio que importa
 
 Jonatan es el cuello de botella técnico: el mecánico escanea en terreno y le
