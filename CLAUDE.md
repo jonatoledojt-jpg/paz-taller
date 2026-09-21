@@ -81,6 +81,7 @@ sw.js                   service worker
 29-rentabilidad-usa-pagado-en.sql  resumen_rentabilidad cuenta el mes por pagado_en, no fecha_cierre
 30-asistencia.sql            asistencia, pagos de colaboradores y mano de obra real en rentabilidad
 31-cotizacion-suma-todas.sql monto_cotizado suma TODAS las cotizaciones no anuladas, no solo la última
+32-perfiles-area.sql         perfiles.area (reusa area_gasto) -- distingue a Diego de Jonatan Osores
 25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
@@ -378,14 +379,10 @@ Barra fija abajo, siempre visible dentro de la app -- desde el
   ve "Gastos"; el resto es dueño/coordinador. Botones de hoy:
   - **Agendar visita** — abre "Nueva OT" con la sección de agenda ya
     desplegada (antes vivía como botón `btnAgendar` en la barra de
-    arriba de la Agenda; misma función, movida).
-  - **Asistencia personal** — igual que antes (`btnAsistencia`), ahora
-    `btnHerAsistencia`.
-  - **Pendientes** — "Casos por agendar" + "Módulos por recepcionar",
-    que antes estaban SIEMPRE visibles arriba de la Agenda. Ahora viven
-    en una pantalla aparte (`vPendientes`) que se abre al tocar el
-    botón, con un contador en un badge (`#badgePendientes`) para que no
-    se pierdan de vista del todo aunque ya no salten solos a la pantalla.
+    arriba de la Agenda; misma función, movida). `btnHerAgendar`.
+  - **Registro de asistencia** — igual que antes (`btnAsistencia`),
+    renombrado `btnHerAsistencia` (texto del botón: "Registro de
+    asistencia", a pedido de Jonatan).
   - **Gastos** — ya no es una pestaña de la barra inferior, es una
     herramienta más (`btnHerGastos` → `cambiarSeccion("gastos")`, misma
     pantalla de siempre, nada cambió puertas adentro). Para el dueño
@@ -409,9 +406,54 @@ el resto → Terreno) pero puede navegar a las otras — no se esconde
 nada, es navegación, no permiso.
 
 **Importante:** el esquema de roles no distingue "mecánico de terreno" de
-"técnico de laboratorio" — ambos son `rol = 'tecnico'`. Si algún día hace
-falta separar sus permisos o su pantalla por defecto de verdad, va a hacer
-falta un campo nuevo (por ejemplo `perfiles.area`).
+"técnico de laboratorio" — ambos son `rol = 'tecnico'`. La sección
+Terreno/Módulos sigue siendo solo de navegación, no de permisos, para el
+técnico. (Para **coordinador** sí hay diferenciación desde `32-perfiles-
+area.sql` -- ver "Pendientes" justo abajo.)
+
+### "Pendientes" es un aviso persistente, no una herramienta (21-09-2026)
+
+Antes "Casos por agendar" y "Módulos por recepcionar" vivían siempre
+visibles arriba de la Agenda; con el rediseño de Herramientas pasaron un
+rato a ser un botón más de la grilla (`btnHerPendientes`, con contador en
+badge). Jonatan pidió ir más lejos: *"sácala de ahí y ponla al inicio de
+la app... la tecla larga que cubra toda la pantalla... que sea del porte
+que podamos apretar"* y, en un mensaje siguiente, aclaró que no era una
+pantalla de una sola vez sino algo que se ve **"al navegar en ella
+siempre ahí... menos dentro de las OT obviamente pero en los menús
+principales siempre"**.
+
+Quedó como `#bannerPendientes`: un botón ancho, dentro de `vTablero`
+(arriba de `seccion-tit`), así que se ve en Terreno, Laboratorio,
+Herramientas y Gastos — todo lo que comparte esa misma sección — y
+desaparece solo cuando se navega a un detalle de OT o cualquier otra
+pantalla, porque `vTablero` completo queda oculto. Dice "Revisa los
+pendientes (N)" y al tocarlo abre `vPendientes` (las mismas dos listas
+de siempre). Se recalcula en cada `cargarSeccion()` -- o sea cada vez
+que se cambia de pestaña o se recarga -- y se esconde solo si no hay
+nada pendiente para esa persona.
+
+**Cada quien ve solo lo suyo (`perfiles.area`, `32-perfiles-area.sql`).**
+Diego Toledo y Jonatan Osores son los dos `rol = 'coordinador'` -- el rol
+no alcanza para distinguirlos, hacía falta el campo que ya se había
+anotado como pendiente en este mismo documento. Se reusó `area_gasto`
+(el enum de `11-gastos.sql`: terreno/laboratorio/coordinacion/
+administracion) en vez de crear uno nuevo. Con eso:
+- **Diego** (`area = 'laboratorio'`) ve solo "Módulos por recepcionar".
+- **Jonatan Osores** (`area = 'coordinacion'`) ve solo "Casos por
+  agendar" (los que arma PAZ).
+- **El dueño** ve las dos cosas siempre, sin filtro de área.
+- Un coordinador sin área asignada, o el técnico, no ve ninguna --
+  mismo criterio de "fallar cerrado" que el resto de la app.
+
+`veCasosPorAgendar()`/`veModulosPorRecepcionar()` en `index.html`
+concentran esa regla; `cargarCasosPorAgendar()`/`cargarModulosPorRecepcionar()`
+las usan tanto para pintar `vPendientes` como para el conteo del banner
+-- una sola fuente de verdad, sin repetir la consulta. **Esto es un
+filtro de pantalla, no de RLS:** Diego y Jonatan Osores siguen teniendo
+acceso de base a los mismos datos (ambos son `coordinador`), la
+separación por área es solo para no mostrarle a cada uno lo que no le
+toca revisar.
 
 ## Gastos y rentabilidad
 

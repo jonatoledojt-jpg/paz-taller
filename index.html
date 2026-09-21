@@ -89,6 +89,14 @@ main.con-navinf{padding-bottom:96px}
 .barra{display:flex;gap:10px;margin-bottom:16px}
 .barra .btn{padding:14px}
 
+/* Aviso persistente de pendientes, arriba de las tres pestañas principales */
+#bannerPendientes{
+  width:100%;padding:22px 16px;margin-bottom:16px;border:none;border-radius:10px;
+  background:var(--marca);color:#14181C;font-weight:700;font-size:17px;
+  text-align:center;cursor:pointer
+}
+#bannerPendientes:active{opacity:.85}
+
 /* Herramientas: un botón grande por herramienta, nada de listas de OT */
 .herramientas-grid{display:flex;flex-direction:column;gap:12px}
 .herramienta{
@@ -342,6 +350,14 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 
     <!-- Tablero (Terreno / Laboratorio / Agenda) -->
     <section id="vTablero">
+      <!-- Aviso persistente de "Pendientes" (casos por agendar / módulos
+           por recepcionar) -- visible en las tres pestañas principales
+           (Terreno, Laboratorio, Herramientas), nunca dentro de una OT
+           (pedido de Jonatan, 21-09-2026). Cada quien ve solo lo suyo:
+           Diego (área laboratorio) solo módulos, Jonatan Osores (área
+           coordinación) solo casos de PAZ, el dueño ambos siempre. -->
+      <button type="button" id="bannerPendientes" class="oculto">Revisa los pendientes<span id="bannerPendientesN"></span></button>
+
       <div class="seccion-tit">
         <h2 id="seccionTitulo">Terreno</h2>
         <span id="seccionSub"></span>
@@ -354,7 +370,6 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div id="herramientasGrid" class="oculto herramientas-grid">
         <button type="button" class="herramienta oculto" id="btnHerAgendar">Agendar visita</button>
         <button type="button" class="herramienta oculto" id="btnHerAsistencia">Registro de asistencia</button>
-        <button type="button" class="herramienta oculto" id="btnHerPendientes">Pendientes<span id="badgePendientes" class="badge oculto"></span></button>
         <button type="button" class="herramienta" id="btnHerGastos">Gastos</button>
       </div>
 
@@ -405,14 +420,15 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     </section>
 
     <!-- Pendientes: casos que PAZ dejó listos para agendar y módulos
-         retirados en terreno que todavía no llegan al laboratorio. Antes
-         vivían siempre visibles arriba de la Agenda; ahora son una
-         herramienta más (con aviso de cuántos hay en el botón que abre
-         acá), para que Herramientas sea solo botones. -->
+         retirados en terreno que todavía no llegan al laboratorio. Ya no
+         viven arriba de la Agenda ni son un botón de Herramientas: ahora
+         se abren desde el aviso #bannerPendientes, visible arriba de las
+         tres pestañas principales (21-09-2026). Cada quien ve solo lo
+         suyo según su área (ver veCasosPorAgendar/veModulosPorRecepcionar). -->
     <section id="vPendientes" class="oculto">
       <div class="seccion-tit">
         <h2>Pendientes</h2>
-        <span>Solo tú y coordinación</span>
+        <span>Según tu área</span>
       </div>
       <div class="seccion oculto" id="porAgendar"></div>
       <div class="seccion oculto" id="porRecepcionar"></div>
@@ -1303,7 +1319,7 @@ $("btnSalir").onclick = async () => { await db.auth.signOut(); location.reload()
 async function iniciar() {
   const { data:{ user } } = await db.auth.getUser();
   if (!user) return;
-  const { data } = await db.from("perfiles").select("nombre,rol").eq("id", user.id).single();
+  const { data } = await db.from("perfiles").select("nombre,rol,area").eq("id", user.id).single();
   perfil = data || { nombre: user.email, rol: "tecnico" };
   $("quien").textContent = perfil.nombre;
   $("vLogin").classList.add("oculto");
@@ -1367,15 +1383,14 @@ function cambiarSeccion(seccion) {
   $("btnNuevoGasto").classList.toggle("oculto", seccion !== "gastos");
   // Herramientas no tiene barra de arriba ni lista de OT -- es solo la
   // grilla de botones (pedido de Jonatan, 21-09-2026: "solo las
-  // herramientas no las OT"). Agendar/Asistencia/Pendientes son de
-  // dueño/coordinador; Gastos (la ex-pestaña de la barra inferior,
-  // ahora una herramienta más) es de todos, igual que siempre.
+  // herramientas no las OT"). Agendar/Asistencia son de dueño/coordinador;
+  // Gastos (la ex-pestaña de la barra inferior, ahora una herramienta
+  // más) es de todos, igual que siempre.
   $("barraTablero").classList.toggle("oculto", seccion === "agenda");
   $("listaOT").classList.toggle("oculto", seccion === "agenda");
   $("herramientasGrid").classList.toggle("oculto", seccion !== "agenda");
   $("btnHerAgendar").classList.toggle("oculto", !esGestor);
   $("btnHerAsistencia").classList.toggle("oculto", !esGestor);
-  $("btnHerPendientes").classList.toggle("oculto", !esGestor);
   $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
   $("porCobrarAviso").classList.add("oculto");
   $("selGastoVista").classList.toggle("oculto", !(seccion === "gastos" && esDueno));
@@ -1386,26 +1401,34 @@ function cambiarSeccion(seccion) {
 $("btnRecargar").onclick = cargarSeccion;
 
 async function cargarSeccion() {
-  if (seccionActiva === "agenda") return cargarHerramientas();
+  actualizarBannerPendientes();
+  if (seccionActiva === "agenda") return;
   if (seccionActiva === "gastos") return cargarGastos();
   return cargarOrdenes();
 }
 
-// Herramientas es solo una grilla de botones -- nada de listas de OT acá
-// (pedido de Jonatan, 21-09-2026). "Casos por agendar" y "Módulos por
-// recepcionar" (antes siempre visibles arriba de la Agenda) pasaron a
-// ser la herramienta "Pendientes", con un contador en el botón para que
-// no se pierdan de vista del todo -- las funciones que arman esas listas
-// no cambiaron, solo que ahora escriben en #porAgendar/#porRecepcionar
-// dentro de la pantalla vPendientes en vez de en el tablero, y devuelven
-// cuántas encontraron para el badge.
-async function cargarHerramientas() {
-  if (!["dueno","coordinador"].includes(perfil?.rol)) return;
+// Diego (área laboratorio) y Jonatan Osores (área coordinación) son
+// ambos "coordinador" -- el rol solo no alcanza para distinguirlos.
+// Pedido de Jonatan, 21-09-2026: que cada uno vea solo lo suyo. El
+// dueño ve las dos cosas siempre, sin filtro de área.
+const veCasosPorAgendar = () =>
+  perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "coordinacion");
+const veModulosPorRecepcionar = () =>
+  perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "laboratorio");
+
+// Aviso persistente arriba de Terreno/Laboratorio/Herramientas (nunca
+// dentro de una OT) -- reemplaza al botón "Pendientes" que antes vivía
+// en la grilla de Herramientas: ahora es imposible no verlo si hay algo
+// esperando. Reusa las mismas funciones que arman las listas de
+// vPendientes (ya devuelven cuántas encontraron), así que no se duplica
+// ninguna consulta.
+async function actualizarBannerPendientes() {
   const [a, b] = await Promise.all([cargarCasosPorAgendar(), cargarModulosPorRecepcionar()]);
   const total = a + b;
-  $("badgePendientes").textContent = total;
-  $("badgePendientes").classList.toggle("oculto", !total);
+  $("bannerPendientes").classList.toggle("oculto", !total);
+  $("bannerPendientesN").textContent = total ? ` (${total})` : "";
 }
+$("bannerPendientes").onclick = () => ver("vPendientes");
 
 // Una sola tarjeta para OT en todas las listas (terreno, laboratorio, agenda).
 function tarjetaOT(o, opts = {}) {
@@ -1602,8 +1625,7 @@ $("btnHerAgendar").onclick = () => {
 };
 
 $("btnHerGastos").onclick = () => { ver("vTablero"); cambiarSeccion("gastos"); };
-$("btnHerPendientes").onclick = () => ver("vPendientes");
-$("btnPendientesVolver").onclick = () => ver("vTablero");
+$("btnPendientesVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
 
 async function cargarClientes() {
   const { data } = await db.from("clientes").select("nombre").order("nombre");
@@ -4912,7 +4934,7 @@ function pintarGrupoPropuestas(caja, tipoGuardar, prefijo, rotuloTexto, etiqueta
 // no hay notificaciones todavía, pero él abre la app justo en esta pantalla.
 async function cargarCasosPorAgendar() {
   const caja = $("porAgendar");
-  if (!["dueno","coordinador"].includes(perfil?.rol)) {
+  if (!veCasosPorAgendar()) {
     caja.classList.add("oculto");
     return 0;
   }
@@ -4985,7 +5007,7 @@ async function cargarCasosPorAgendar() {
 // nadie en el laboratorio tiene ninguna señal de que algo faltaba.
 async function cargarModulosPorRecepcionar() {
   const caja = $("porRecepcionar");
-  if (!["dueno","coordinador"].includes(perfil?.rol)) {
+  if (!veModulosPorRecepcionar()) {
     caja.classList.add("oculto");
     return 0;
   }
