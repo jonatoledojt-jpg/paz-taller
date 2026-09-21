@@ -1390,7 +1390,7 @@ function cambiarSeccion(seccion) {
   $("listaOT").classList.toggle("oculto", seccion === "agenda");
   $("herramientasGrid").classList.toggle("oculto", seccion !== "agenda");
   $("btnHerAgendar").classList.toggle("oculto", !esGestor);
-  $("btnHerAsistencia").classList.toggle("oculto", !esGestor);
+  $("btnHerAsistencia").classList.toggle("oculto", !veAsistencia());
   $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
   $("porCobrarAviso").classList.add("oculto");
   $("selGastoVista").classList.toggle("oculto", !(seccion === "gastos" && esDueno));
@@ -1415,6 +1415,11 @@ const veCasosPorAgendar = () =>
   perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "coordinacion");
 const veModulosPorRecepcionar = () =>
   perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "laboratorio");
+// Registro de asistencia es tarea de coordinación general, no de
+// laboratorio -- Diego (área laboratorio) no la ve; Jonatan Osores
+// (área coordinación) y el dueño sí (pedido de Jonatan, 21-09-2026).
+const veAsistencia = () =>
+  perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "coordinacion");
 
 // Aviso persistente arriba de Terreno/Laboratorio/Herramientas (nunca
 // dentro de una OT) -- reemplaza al botón "Pendientes" que antes vivía

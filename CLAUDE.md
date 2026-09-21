@@ -382,7 +382,12 @@ Barra fija abajo, siempre visible dentro de la app -- desde el
     arriba de la Agenda; misma función, movida). `btnHerAgendar`.
   - **Registro de asistencia** — igual que antes (`btnAsistencia`),
     renombrado `btnHerAsistencia` (texto del botón: "Registro de
-    asistencia", a pedido de Jonatan).
+    asistencia", a pedido de Jonatan). **Diego no la ve** (21-09-2026,
+    Jonatan: "Jonatan Osores es coordinador general sobre Diego" -- ver
+    `veAsistencia()` justo abajo de `veCasosPorAgendar`/
+    `veModulosPorRecepcionar`, mismo criterio de área que Pendientes).
+    Solo tapa el botón; la pantalla y las RPC de asistencia siguen
+    abiertas a cualquier `coordinador` (no se tocó RLS por esto).
   - **Gastos** — ya no es una pestaña de la barra inferior, es una
     herramienta más (`btnHerGastos` → `cambiarSeccion("gastos")`, misma
     pantalla de siempre, nada cambió puertas adentro). Para el dueño
