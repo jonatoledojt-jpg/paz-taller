@@ -231,6 +231,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   border:1px solid var(--linea);background:var(--panel);font-size:14px;
   font-weight:500;cursor:pointer
 }
+.dias-strip button.finde{color:var(--alerta);border-color:#F0C4BC}
 .dias-strip button.actual{background:var(--accion);color:#fff;border-color:var(--accion)}
 .dias-strip button[disabled]{opacity:.3;cursor:default}
 .semana-nav .lbl{font-size:14.5px;font-weight:500;text-align:center}
@@ -3140,11 +3141,15 @@ function pintarMesAsistencia() {
   const cont = $("asisDiasStrip");
   cont.innerHTML = "";
   for (let d = 1; d <= ultimoDia; d++) {
-    const iso = isoFecha(new Date(ini.getFullYear(), ini.getMonth(), d));
+    const fecha = new Date(ini.getFullYear(), ini.getMonth(), d);
+    const iso = isoFecha(fecha);
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = d;
     btn.disabled = d > tope;
+    // Sábado y domingo se pagan igual (sin recargo), pero no se esperan
+    // -- marcarlos distinto ayuda a leer la semana de un vistazo.
+    if (fecha.getDay() === 0 || fecha.getDay() === 6) btn.classList.add("finde");
     if (iso === asisFecha) btn.classList.add("actual");
     btn.onclick = () => { asisFecha = iso; pintarMesAsistencia(); cargarAsistencia(); };
     cont.appendChild(btn);
