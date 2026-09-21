@@ -3345,7 +3345,9 @@ function pintarListaCotizaciones() {
   cotLista.forEach(c => {
     const total = c.neto + Math.round(c.neto * 0.19);
     const esVig = !!vig && c.id === vig.id;
-    const etiqueta = c.anulada ? "Anulada" : (esVig ? "Vigente" : "Anterior");
+    // Todas las no anuladas se suman al monto cotizado de la OT -- "Activa"
+    // no implica que sea la única que cuenta, solo que sigue vigente.
+    const etiqueta = c.anulada ? "Anulada" : (esVig ? "Activa · más reciente" : "Activa");
 
     const caja = document.createElement("div");
     caja.className = "cot-guardada" + (esVig ? " vigente" : "") + (c.anulada ? " anulada" : "");
@@ -3379,19 +3381,19 @@ function actualizarBotonFormal() {
   const vig = cotVigente();
   $("btnVerCotFormal").disabled = !vig;
   $("pistaFormal").textContent = vig
-    ? `Abre la vigente: ${cotNum(vig.id)}`
+    ? `Abre la más reciente: ${cotNum(vig.id)}`
     : "Guarda una cotización antes de ver el documento formal.";
 }
 
 async function anularCotizacion(id) {
-  if (!confirm(`¿Anular la ${cotNum(id)}? Queda en el historial, pero deja de ser la vigente.`)) return;
+  if (!confirm(`¿Anular la ${cotNum(id)}? Deja de sumarse al monto cotizado de la OT.`)) return;
   msg("cotError", ""); msg("cotAviso", "");
   const { error } = await db.from("cotizaciones")
     .update({ anulada: true, fecha_anulacion: new Date().toISOString() }).eq("id", id);
   if (error) return msg("cotError", "No se pudo anular: " + error.message);
   if (cotBaseId === id) limpiarFormularioCot();
   await cargarListaCotizaciones();
-  msg("cotAviso", `${cotNum(id)} anulada. Vigente ahora: ${cotVigente() ? cotNum(cotVigente().id) : "ninguna"}.`, true);
+  msg("cotAviso", `${cotNum(id)} anulada. Ya no se suma al monto cotizado de la OT.`, true);
 }
 
 async function usarComoBase(id) {
@@ -3546,6 +3548,15 @@ async function guardarCotizacion() {
       await db.from("ordenes").update(payloadCot).eq("id", ordenActual.id);
       Object.assign(ordenActual, payloadCot);
     }
+
+    // "Usar como base" es renegociar: reemplaza, no suma. Las demás
+    // cotizaciones no anuladas SÍ se suman entre sí (ver 31-cotizacion-suma-todas.sql).
+    if (cotBaseId) {
+      const { error: eAnular } = await db.from("cotizaciones")
+        .update({ anulada: true, fecha_anulacion: new Date().toISOString() })
+        .eq("id", cotBaseId);
+      if (eAnular) console.error("No se pudo anular la cotización base:", eAnular.message);
+    }
     return nueva.id;
   } catch (e) {
     msg("cotError", "No se pudo guardar: " + (e.message || "error desconocido") +
@@ -3557,13 +3568,16 @@ async function guardarCotizacion() {
 $("btnGuardarCot").onclick = async () => {
   $("btnGuardarCot").disabled = true;
   $("btnGuardarCot").textContent = "Guardando…";
+  const eraBase = cotBaseId;
   const id = await guardarCotizacion();
   $("btnGuardarCot").textContent = "Guardar cotización";
   $("btnGuardarCot").disabled = false;
   if (!id) return;
   limpiarFormularioCot();
   await cargarListaCotizaciones();
-  msg("cotAviso", `Cotización guardada correctamente: ${cotNum(id)}`, true);
+  msg("cotAviso", eraBase
+    ? `Cotización guardada correctamente: ${cotNum(id)}. ${cotNum(eraBase)} quedó anulada (renegociación).`
+    : `Cotización guardada correctamente: ${cotNum(id)}`, true);
 };
 
 $("btnVerCotFormal").onclick = () => {
@@ -3583,8 +3597,8 @@ async function mostrarCotizacionFormal(id) {
     avisoImp.classList.add("oculto");
   } else {
     avisoImp.className = "aviso info noimprimir";
-    avisoImp.textContent = `Estás viendo ${cotNum(id)}, que no es la cotización vigente de esta OT` +
-      (vig ? ` (la vigente es ${cotNum(vig.id)}).` : ".");
+    avisoImp.textContent = `Estás viendo ${cotNum(id)}, que no es la más reciente de esta OT` +
+      (vig ? ` (la más reciente es ${cotNum(vig.id)}).` : ".");
   }
 
   const { data: o } = await db.from("ordenes")

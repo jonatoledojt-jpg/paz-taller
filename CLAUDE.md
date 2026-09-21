@@ -78,6 +78,9 @@ sw.js                   service worker
 22-nexa-app-entrenamiento.sql RPC paz_en_entrenamiento(): bloquea crear OT desde el chat interno en modo aprendizaje
 23-audio-whatsapp.sql        nexa_archivos admite categoria 'audio_cliente'
 24-entregado-en.sql          ordenes.entregado_en: hecho aparte para saber si el módulo salió de verdad
+29-rentabilidad-usa-pagado-en.sql  resumen_rentabilidad cuenta el mes por pagado_en, no fecha_cierre
+30-asistencia.sql            asistencia, pagos de colaboradores y mano de obra real en rentabilidad
+31-cotizacion-suma-todas.sql monto_cotizado suma TODAS las cotizaciones no anuladas, no solo la última
 25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
@@ -477,8 +480,34 @@ monto de la vigente.
 guardada. Para renegociar se usa "Usar como base": carga los ítems y la
 validez de una cotización anterior en el formulario, muestra un aviso
 "Basada en COT-000X", y al guardar nace una cotización nueva con su propio
-número — la original no se toca. Así queda registro de qué se ofreció
-primero y qué se terminó acordando.
+número. Desde el 21-09-2026 "Usar como base" **anula automáticamente** la
+cotización base al guardar la nueva (`guardarCotizacion()` en
+`index.html`) — es el único caso real donde reemplazar tiene sentido; el
+resto de "Historial" se explica abajo.
+
+**Bug real: `monto_cotizado` solo contaba UNA cotización, no todas las que
+correspondían (21-09-2026).** `recalcular_monto_cotizado(orden_id)` sumaba
+los ítems de la "vigente" (última no anulada) nada más — pensado para
+renegociar (reemplazar). Pero el caso real más común es otro: un técnico
+crea una **segunda cotización por trabajo adicional** descubierto después
+en la misma OT (no reemplaza la primera, se suma). Encontrado en vivo con
+`OT-2026-0018` (Pablo Tapia): cotización de $300.000 (visita a terreno +
+programación GS) y otra de $150.000 (revisión en Santiago), ambas no
+anuladas, ambas trabajo real — pero `monto_cotizado` solo mostraba
+$150.000, perdiendo $300.000 de cobro real en silencio.
+
+**Corregido (`31-cotizacion-suma-todas.sql`): ahora se suman TODAS las
+cotizaciones no anuladas de la OT**, no solo la última. Recalculado en el
+momento para todas las OT existentes (Pablo Tapia quedó en $450.000, sin
+tocar ninguna fila a mano). El único caso donde una cotización nueva debe
+*reemplazar* en vez de sumar sigue siendo "Usar como base" — por eso ese
+flujo ahora anula la base automáticamente (ver arriba); crear una
+cotización nueva sin usar "base" siempre suma.
+
+**"Vigente" ya no significa "la única que cuenta".** El historial de
+cotizaciones ya no distingue Vigente/Anterior/Anulada — ahora es
+Activa/Anulada (todas las Activas suman), con "· más reciente" como dato
+de referencia nomás, no como el criterio de cobro.
 
 Al guardar bien, el formulario se limpia solo (un ítem vacío, validez 15) y
 avisa en verde con el número nuevo. Si falla, **no se limpia nada** para no
