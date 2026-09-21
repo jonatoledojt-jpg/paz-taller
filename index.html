@@ -89,6 +89,15 @@ main.con-navinf{padding-bottom:96px}
 .barra{display:flex;gap:10px;margin-bottom:16px}
 .barra .btn{padding:14px}
 
+/* Herramientas: un botón grande por herramienta, nada de listas de OT */
+.herramientas-grid{display:flex;flex-direction:column;gap:12px}
+.herramienta{
+  width:100%;padding:28px 16px;border:1px solid var(--linea);border-radius:10px;
+  background:var(--panel);color:var(--tinta);font-weight:700;font-size:17px;
+  text-align:center;cursor:pointer;position:relative
+}
+.herramienta:active{opacity:.85}
+
 /* Tarjetas OT */
 .lista{display:flex;flex-direction:column;gap:10px}
 .ot{
@@ -338,15 +347,15 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <span id="seccionSub"></span>
       </div>
 
-      <div id="agendaControles" class="oculto">
-        <!-- Casos que PAZ dejó listos y esperan que alguien los agende.
-             Van arriba de todo porque el coordinador abre acá. -->
-        <div class="seccion oculto" id="porAgendar"></div>
-        <!-- Módulos retirados en terreno que todavía no llegan al
-             laboratorio. Mismo criterio que "Casos por agendar": el
-             coordinador abre acá por defecto, así que es donde se
-             tiene que acordar de pedirlos. -->
-        <div class="seccion oculto" id="porRecepcionar"></div>
+      <!-- Herramientas: solo botones grandes, nada de listas de OT acá
+           (pedido de Jonatan, 21-09-2026: "solo las herramientas no las
+           OT"). Cada botón se ve u oculta según el rol -- mismo criterio
+           que ya usaba btnAsistencia, ahora aplicado parejo a los cuatro. -->
+      <div id="herramientasGrid" class="oculto herramientas-grid">
+        <button type="button" class="herramienta oculto" id="btnHerAgendar">Agendar visita</button>
+        <button type="button" class="herramienta oculto" id="btnHerAsistencia">Asistencia personal</button>
+        <button type="button" class="herramienta oculto" id="btnHerPendientes">Pendientes<span id="badgePendientes" class="badge oculto"></span></button>
+        <button type="button" class="herramienta" id="btnHerGastos">Gastos</button>
       </div>
 
       <div id="gastosControles" class="oculto">
@@ -369,12 +378,10 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div class="seccion oculto" id="gastosResumen"></div>
       </div>
 
-      <div class="barra">
+      <div class="barra" id="barraTablero">
         <button class="btn" id="btnNueva">Nueva OT</button>
-        <button class="btn oculto" id="btnAgendar">Agendar</button>
         <button class="btn oculto" id="btnNuevoGasto">+ Registrar gasto</button>
         <button class="btn claro oculto" id="btnVerCerradas" style="max-width:120px">Cerradas</button>
-        <button class="btn claro oculto" id="btnAsistencia" style="max-width:130px">Asistencia</button>
         <button class="btn claro" id="btnRecargar" style="max-width:110px">Recargar</button>
       </div>
       <div id="porCobrarAviso" class="oculto"></div>
@@ -395,6 +402,22 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div id="listaCerradas" class="lista"></div>
       <div style="height:10px"></div>
       <button class="btn claro" id="btnCerradasVolver">Volver</button>
+    </section>
+
+    <!-- Pendientes: casos que PAZ dejó listos para agendar y módulos
+         retirados en terreno que todavía no llegan al laboratorio. Antes
+         vivían siempre visibles arriba de la Agenda; ahora son una
+         herramienta más (con aviso de cuántos hay en el botón que abre
+         acá), para que Herramientas sea solo botones. -->
+    <section id="vPendientes" class="oculto">
+      <div class="seccion-tit">
+        <h2>Pendientes</h2>
+        <span>Solo tú y coordinación</span>
+      </div>
+      <div class="seccion oculto" id="porAgendar"></div>
+      <div class="seccion oculto" id="porRecepcionar"></div>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnPendientesVolver">Volver</button>
     </section>
 
     <!-- Nueva OT -->
@@ -1082,7 +1105,6 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     <button type="button" data-seccion="terreno">Terreno</button>
     <button type="button" data-seccion="laboratorio">Laboratorio</button>
     <button type="button" data-seccion="agenda">Herramientas</button>
-    <button type="button" data-seccion="gastos">Gastos</button>
   </nav>
 </div>
 
@@ -1100,7 +1122,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
-   "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas",
+   "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas","vPendientes",
    "vAsistencia","vPago","vComprobante"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
@@ -1316,7 +1338,7 @@ const SECCION_TIT = { terreno:"Terreno", laboratorio:"Laboratorio", agenda:"Herr
 const SECCION_SUB = {
   terreno:"OT en terreno",
   laboratorio:"OT en el laboratorio",
-  agenda:"Lo agendado esta semana",
+  agenda:"Para todo el equipo",
   gastos:"Lo gastado este mes"
 };
 
@@ -1329,20 +1351,31 @@ function cambiarSeccion(seccion) {
   semanaOffset = 0;
   mesOffset = 0;
   const esDueno = perfil?.rol === "dueno";
+  const esGestor = ["dueno","coordinador"].includes(perfil?.rol);
+  // Gastos ya no tiene su propia pestaña -- es una herramienta más
+  // dentro de "Herramientas", así que esa pestaña queda marcada como
+  // activa también mientras se está en Gastos.
   $("navInf").querySelectorAll("button").forEach(b => {
-    b.setAttribute("aria-current", b.dataset.seccion === seccion ? "true" : "false");
+    const activa = b.dataset.seccion === seccion || (b.dataset.seccion === "agenda" && seccion === "gastos");
+    b.setAttribute("aria-current", activa ? "true" : "false");
   });
   $("seccionTitulo").textContent = SECCION_TIT[seccion];
   $("seccionSub").textContent = SECCION_SUB[seccion];
   $("btnNueva").classList.toggle("oculto", seccion !== "terreno" && seccion !== "laboratorio");
   $("btnVerCerradas").classList.toggle("oculto",
     !esDueno || (seccion !== "terreno" && seccion !== "laboratorio"));
-  $("btnAgendar").classList.toggle("oculto", !(seccion === "agenda" && ["dueno","coordinador"].includes(perfil?.rol)));
-  // Asistencia vive en la Agenda: es donde el coordinador abre la app, y
-  // marcar el día tiene que tomar treinta segundos. Dueño y coordinador.
-  $("btnAsistencia").classList.toggle("oculto", !(seccion === "agenda" && ["dueno","coordinador"].includes(perfil?.rol)));
   $("btnNuevoGasto").classList.toggle("oculto", seccion !== "gastos");
-  $("agendaControles").classList.toggle("oculto", seccion !== "agenda");
+  // Herramientas no tiene barra de arriba ni lista de OT -- es solo la
+  // grilla de botones (pedido de Jonatan, 21-09-2026: "solo las
+  // herramientas no las OT"). Agendar/Asistencia/Pendientes son de
+  // dueño/coordinador; Gastos (la ex-pestaña de la barra inferior,
+  // ahora una herramienta más) es de todos, igual que siempre.
+  $("barraTablero").classList.toggle("oculto", seccion === "agenda");
+  $("listaOT").classList.toggle("oculto", seccion === "agenda");
+  $("herramientasGrid").classList.toggle("oculto", seccion !== "agenda");
+  $("btnHerAgendar").classList.toggle("oculto", !esGestor);
+  $("btnHerAsistencia").classList.toggle("oculto", !esGestor);
+  $("btnHerPendientes").classList.toggle("oculto", !esGestor);
   $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
   $("porCobrarAviso").classList.add("oculto");
   $("selGastoVista").classList.toggle("oculto", !(seccion === "gastos" && esDueno));
@@ -1358,18 +1391,20 @@ async function cargarSeccion() {
   return cargarOrdenes();
 }
 
-// Herramientas (antes "Agenda") ya no repite la lista semanal -- eso
-// ahora vive dentro de Terreno y Laboratorio, cada una con lo suyo, en
-// vez de una tercera pantalla que mostraba la misma OT dos veces
-// (pedido de Jonatan, 21-09-2026: "en agenda aparecen los mismos datos
-// que ya tenemos en las OT"). Este tab queda para avisos que cruzan
-// las dos secciones (casos por agendar, módulos por recepcionar) y
-// para las herramientas de la barra de arriba (Agendar, Asistencia),
-// que se ven o no según el rol -- visible para todos, no solo
-// dueño/coordinador, porque Luis también va a usar herramientas acá.
+// Herramientas es solo una grilla de botones -- nada de listas de OT acá
+// (pedido de Jonatan, 21-09-2026). "Casos por agendar" y "Módulos por
+// recepcionar" (antes siempre visibles arriba de la Agenda) pasaron a
+// ser la herramienta "Pendientes", con un contador en el botón para que
+// no se pierdan de vista del todo -- las funciones que arman esas listas
+// no cambiaron, solo que ahora escriben en #porAgendar/#porRecepcionar
+// dentro de la pantalla vPendientes en vez de en el tablero, y devuelven
+// cuántas encontraron para el badge.
 async function cargarHerramientas() {
-  cargarCasosPorAgendar();
-  cargarModulosPorRecepcionar();
+  if (!["dueno","coordinador"].includes(perfil?.rol)) return;
+  const [a, b] = await Promise.all([cargarCasosPorAgendar(), cargarModulosPorRecepcionar()]);
+  const total = a + b;
+  $("badgePendientes").textContent = total;
+  $("badgePendientes").classList.toggle("oculto", !total);
 }
 
 // Una sola tarjeta para OT en todas las listas (terreno, laboratorio, agenda).
@@ -1559,12 +1594,16 @@ async function moverOrdenRuta(lista, i, dir) {
   cargarOrdenes();
 }
 
-$("btnAgendar").onclick = () => {
+$("btnHerAgendar").onclick = () => {
   $("btnNueva").click();
   $("btnToggleAgendar").click();
   $("fFechaAgendada").value = isoFecha(lunesDeSemana(0));
-  $("selOrigen").querySelector(`[data-v="${seccionActiva === "laboratorio" ? "laboratorio" : "terreno"}"]`)?.click();
+  $("selOrigen").querySelector('[data-v="terreno"]')?.click();
 };
+
+$("btnHerGastos").onclick = () => { ver("vTablero"); cambiarSeccion("gastos"); };
+$("btnHerPendientes").onclick = () => ver("vPendientes");
+$("btnPendientesVolver").onclick = () => ver("vTablero");
 
 async function cargarClientes() {
   const { data } = await db.from("clientes").select("nombre").order("nombre");
@@ -3010,7 +3049,7 @@ let asisFecha = null, asisColabs = [];
 const hoyISO = () => isoFecha(new Date());
 const sumarDias = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return isoFecha(d); };
 
-$("btnAsistencia").onclick = () => { asisFecha = hoyISO(); ver("vAsistencia"); cargarAsistencia(); };
+$("btnHerAsistencia").onclick = () => { asisFecha = hoyISO(); ver("vAsistencia"); cargarAsistencia(); };
 $("btnAsisVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
 $("asisFecha").onchange = e => { asisFecha = e.target.value; cargarAsistencia(); };
 
@@ -4875,7 +4914,7 @@ async function cargarCasosPorAgendar() {
   const caja = $("porAgendar");
   if (!["dueno","coordinador"].includes(perfil?.rol)) {
     caja.classList.add("oculto");
-    return;
+    return 0;
   }
 
   // Modo aprendizaje: un caso de entrenamiento no puede aparecer acá
@@ -4887,7 +4926,7 @@ async function cargarCasosPorAgendar() {
   const idsProduccion = [...new Set((convProduccion ?? []).map(c => c.conversacion_id))];
   if (!idsProduccion.length) {
     caja.classList.add("oculto");
-    return;
+    return 0;
   }
 
   const { data, error } = await db.from("nexa_conversaciones")
@@ -4899,7 +4938,7 @@ async function cargarCasosPorAgendar() {
 
   if (error || !data?.length) {
     caja.classList.add("oculto");
-    return;
+    return 0;
   }
 
   caja.classList.remove("oculto");
@@ -4933,6 +4972,7 @@ async function cargarCasosPorAgendar() {
     div.querySelector(".agendar").onclick = () => llenarFormularioDesdeFicha(f, c.id);
     lista.appendChild(div);
   });
+  return data.length;
 }
 
 // ---------- Módulos por recepcionar (arriba de la Agenda) ----------
@@ -4947,7 +4987,7 @@ async function cargarModulosPorRecepcionar() {
   const caja = $("porRecepcionar");
   if (!["dueno","coordinador"].includes(perfil?.rol)) {
     caja.classList.add("oculto");
-    return;
+    return 0;
   }
   const { data, error } = await db.from("ordenes")
     .select("id,numero_ot,tipo_modulo,fecha_ingreso,clientes(nombre),vehiculos(patente)")
@@ -4956,7 +4996,7 @@ async function cargarModulosPorRecepcionar() {
 
   if (error || !data?.length) {
     caja.classList.add("oculto");
-    return;
+    return 0;
   }
 
   caja.classList.remove("oculto");
@@ -4987,6 +5027,7 @@ async function cargarModulosPorRecepcionar() {
     };
     lista.appendChild(div);
   });
+  return data.length;
 }
 
 

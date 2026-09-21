@@ -363,34 +363,46 @@ pantalla.** Esto se resolvió a nivel de base, no confiando en el front
 Cuando se agreguen pagos y asistencia, esas tablas van con RLS **restringido
 solo al dueño**.
 
-## Navegación en cuatro secciones
+## Navegación en tres pestañas + Herramientas como menú de botones
 
-Barra fija abajo, siempre visible dentro de la app:
+Barra fija abajo, siempre visible dentro de la app -- desde el
+21-09-2026 son **tres** pestañas, no cuatro:
 
 - **Terreno** — OT con `origen = terreno`.
 - **Laboratorio** — OT con `origen = laboratorio`.
-- **Herramientas** (antes "Agenda", renombrado el 21-09-2026) — casos
-  por agendar, módulos por recepcionar, y las herramientas de la barra
-  de arriba (Agendar, Asistencia). Visible para todos los roles, no
-  solo dueño/coordinador: Luis (técnico) también usa herramientas acá
-  — el acceso a cada una se limita ADENTRO según el rol (mismo patrón
-  que ya usaba `btnAsistencia`), no escondiendo el tab entero.
-- **Gastos** — gastos del mes. Para el dueño trae además las pestañas
-  Por persona, Global, Rentabilidad y Pagos (ver "Gastos y rentabilidad"
-  y "Asistencia, pagos y mano de obra real"). Ninguna de esas va en la
-  barra inferior: viven dentro de Gastos.
+- **Herramientas** (antes "Agenda") — **ya no muestra ninguna OT**, solo
+  una grilla de botones grandes, uno por herramienta (`#herramientasGrid`,
+  clase `.herramienta`). Pedido explícito de Jonatan, 21-09-2026: "solo
+  las herramientas no las OT". Cada botón se ve u oculta según el rol
+  (mismo patrón que ya usaba `btnAsistencia`) -- Luis (técnico) hoy solo
+  ve "Gastos"; el resto es dueño/coordinador. Botones de hoy:
+  - **Agendar visita** — abre "Nueva OT" con la sección de agenda ya
+    desplegada (antes vivía como botón `btnAgendar` en la barra de
+    arriba de la Agenda; misma función, movida).
+  - **Asistencia personal** — igual que antes (`btnAsistencia`), ahora
+    `btnHerAsistencia`.
+  - **Pendientes** — "Casos por agendar" + "Módulos por recepcionar",
+    que antes estaban SIEMPRE visibles arriba de la Agenda. Ahora viven
+    en una pantalla aparte (`vPendientes`) que se abre al tocar el
+    botón, con un contador en un badge (`#badgePendientes`) para que no
+    se pierdan de vista del todo aunque ya no salten solos a la pantalla.
+  - **Gastos** — ya no es una pestaña de la barra inferior, es una
+    herramienta más (`btnHerGastos` → `cambiarSeccion("gastos")`, misma
+    pantalla de siempre, nada cambió puertas adentro). Para el dueño
+    trae además las pestañas Por persona, Global, Rentabilidad y Pagos
+    (ver "Gastos y rentabilidad" y "Asistencia, pagos y mano de obra
+    real"). Sigue siendo de todos los roles, igual que siempre.
 
-**Lo agendado de la semana ya no es una pantalla aparte** (antes vivía
-en "Agenda", repitiendo las mismas OT que ya se ven en Terreno/Laboratorio
-— Jonatan, 21-09-2026: "en agenda aparecen los mismos datos que ya
-tenemos en las OT"). Ahora `cargarOrdenes()` arma la MISMA lista de cada
-pestaña con dos partes: lo agendado de esta semana agrupado por día
-arriba (con los botones Subir/Bajar de `orden_ruta`, igual que antes),
-y el resto como lista plana debajo — nada se duplica. El técnico solo ve
-sus propias visitas en el grupo de arriba (`tecnico_agendado = auth.uid()`).
-Una sola función, `tarjetaOT(o, opts)` en `index.html`, arma la tarjeta
-en todas las listas (con `opts.agenda` cambia qué línea de texto
-muestra, pero el estilo es siempre el mismo).
+**Lo agendado de la semana sigue viviendo dentro de Terreno y
+Laboratorio, no en Herramientas** (cambio hecho antes, la misma sesión,
+19-21-09-2026: "en agenda aparecen los mismos datos que ya tenemos en
+las OT"). `cargarOrdenes()` arma la MISMA lista de cada pestaña con dos
+partes: lo agendado de esta semana agrupado por día arriba (con los
+botones Subir/Bajar de `orden_ruta`), y el resto como lista plana
+debajo — nada se duplica. El técnico solo ve sus propias visitas en el
+grupo de arriba (`tecnico_agendado = auth.uid()`). Una sola función,
+`tarjetaOT(o, opts)` en `index.html`, arma la tarjeta en todas las
+listas.
 
 Cada rol abre por defecto en una sección (`coordinador` → Herramientas,
 el resto → Terreno) pero puede navegar a las otras — no se esconde
@@ -906,8 +918,9 @@ nueva, solo se usó lo que ya estaba.
 ## Estado actual — qué funciona
 
 - Login con correo y contraseña
-- Navegación en cuatro secciones (Terreno / Laboratorio / Agenda / Gastos)
-  con barra inferior, todas dentro de esta misma app
+- Navegación en tres pestañas (Terreno / Laboratorio / Herramientas) con
+  barra inferior; Herramientas es un menú de botones (Agendar visita,
+  Asistencia, Pendientes, Gastos), no una lista de OT
 - Crear OT: primero se elige tipo de trabajo (módulo o reparación en terreno),
   después cliente, RUT, patente, módulo/sistema según corresponda, síntoma,
   foto, y opcionalmente agendarla (fecha, franja, ubicación GPS, técnico)
