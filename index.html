@@ -339,15 +339,6 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
 
       <div id="agendaControles" class="oculto">
-        <div class="semana-nav">
-          <button type="button" id="btnSemanaAnt">◀</button>
-          <span class="lbl" id="semanaLabel"></span>
-          <button type="button" id="btnSemanaSig">▶</button>
-        </div>
-        <div class="opciones" id="selAgendaOrigen" style="margin-bottom:14px">
-          <button type="button" data-v="terreno" aria-pressed="true">Terreno</button>
-          <button type="button" data-v="laboratorio" aria-pressed="false">Laboratorio</button>
-        </div>
         <!-- Casos que PAZ dejó listos y esperan que alguien los agende.
              Van arriba de todo porque el coordinador abre acá. -->
         <div class="seccion oculto" id="porAgendar"></div>
@@ -1090,7 +1081,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   <nav class="navinf" id="navInf">
     <button type="button" data-seccion="terreno">Terreno</button>
     <button type="button" data-seccion="laboratorio">Laboratorio</button>
-    <button type="button" data-seccion="agenda">Agenda</button>
+    <button type="button" data-seccion="agenda">Herramientas</button>
     <button type="button" data-seccion="gastos">Gastos</button>
   </nav>
 </div>
@@ -1321,7 +1312,7 @@ async function cargarTecnicos() {
 }
 
 // ---------- Navegación (Terreno / Laboratorio / Agenda) ----------
-const SECCION_TIT = { terreno:"Terreno", laboratorio:"Laboratorio", agenda:"Agenda", gastos:"Gastos" };
+const SECCION_TIT = { terreno:"Terreno", laboratorio:"Laboratorio", agenda:"Herramientas", gastos:"Gastos" };
 const SECCION_SUB = {
   terreno:"OT en terreno",
   laboratorio:"OT en el laboratorio",
@@ -1362,9 +1353,23 @@ function cambiarSeccion(seccion) {
 $("btnRecargar").onclick = cargarSeccion;
 
 async function cargarSeccion() {
-  if (seccionActiva === "agenda") return cargarAgendaSemana();
+  if (seccionActiva === "agenda") return cargarHerramientas();
   if (seccionActiva === "gastos") return cargarGastos();
   return cargarOrdenes();
+}
+
+// Herramientas (antes "Agenda") ya no repite la lista semanal -- eso
+// ahora vive dentro de Terreno y Laboratorio, cada una con lo suyo, en
+// vez de una tercera pantalla que mostraba la misma OT dos veces
+// (pedido de Jonatan, 21-09-2026: "en agenda aparecen los mismos datos
+// que ya tenemos en las OT"). Este tab queda para avisos que cruzan
+// las dos secciones (casos por agendar, módulos por recepcionar) y
+// para las herramientas de la barra de arriba (Agendar, Asistencia),
+// que se ven o no según el rol -- visible para todos, no solo
+// dueño/coordinador, porque Luis también va a usar herramientas acá.
+async function cargarHerramientas() {
+  cargarCasosPorAgendar();
+  cargarModulosPorRecepcionar();
 }
 
 // Una sola tarjeta para OT en todas las listas (terreno, laboratorio, agenda).
@@ -1427,8 +1432,64 @@ async function cargarOrdenes() {
     $("listaOT").innerHTML = '<div class="vacio"><p>No hay órdenes abiertas en esta sección.</p></div>';
     return;
   }
+
+  // "Agendado esta semana", agrupado por día, dentro de la misma
+  // pestaña -- antes vivía en un tab "Agenda" aparte y repetía las
+  // mismas OT que ya se ven acá abajo (Jonatan, 21-09-2026: "en agenda
+  // aparecen los mismos datos que ya tenemos en las OT"). Ahora es la
+  // MISMA lista, solo que lo agendado de esta semana se muestra
+  // agrupado arriba y el resto sigue como lista plana debajo -- nada
+  // se duplica. El técnico solo ve sus propias visitas agendadas.
+  const { data: { user } } = await db.auth.getUser();
+  const lunes = lunesDeSemana(0);
+  const diasSemana = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + i);
+    return isoFecha(d);
+  });
+  const esMia = o => perfil?.rol !== "tecnico" || o.tecnico_agendado === user.id;
+  const agendadas = abiertas.filter(o => o.fecha_agendada && diasSemana.includes(o.fecha_agendada) && esMia(o));
+  const resto = abiertas.filter(o => !agendadas.includes(o));
+
   $("listaOT").innerHTML = "";
-  abiertas.forEach(o => $("listaOT").appendChild(tarjetaOT(o)));
+  if (agendadas.length) {
+    const puedeReordenar = ["dueno", "coordinador"].includes(perfil?.rol);
+    const tit = document.createElement("span");
+    tit.className = "rotulo sep";
+    tit.textContent = "Agendado esta semana";
+    $("listaOT").appendChild(tit);
+    diasSemana.forEach((isoDia, i) => {
+      const delDia = agendadas.filter(o => o.fecha_agendada === isoDia)
+        .sort((a, b) => (a.orden_ruta ?? 999) - (b.orden_ruta ?? 999));
+      if (!delDia.length) return;
+      const cab = document.createElement("div");
+      cab.className = "dia-grupo";
+      cab.innerHTML = `<span class="nombre">${DIAS_SEMANA[i]} ${new Date(isoDia + "T00:00:00").getDate()}</span>`;
+      $("listaOT").appendChild(cab);
+      delDia.forEach((o, idx) => {
+        const card = tarjetaOT(o, { agenda: true });
+        if (puedeReordenar) {
+          const reord = document.createElement("div");
+          reord.className = "reordenar";
+          const subir = document.createElement("button");
+          subir.type = "button"; subir.textContent = "↑ Subir"; subir.disabled = idx === 0;
+          subir.onclick = e => { e.stopPropagation(); moverOrdenRuta(delDia, idx, -1); };
+          const bajar = document.createElement("button");
+          bajar.type = "button"; bajar.textContent = "↓ Bajar"; bajar.disabled = idx === delDia.length - 1;
+          bajar.onclick = e => { e.stopPropagation(); moverOrdenRuta(delDia, idx, 1); };
+          reord.appendChild(subir); reord.appendChild(bajar);
+          card.appendChild(reord);
+        }
+        $("listaOT").appendChild(card);
+      });
+    });
+    if (resto.length) {
+      const tit2 = document.createElement("span");
+      tit2.className = "rotulo sep";
+      tit2.textContent = "El resto";
+      $("listaOT").appendChild(tit2);
+    }
+  }
+  resto.forEach(o => $("listaOT").appendChild(tarjetaOT(o)));
 }
 
 // ---------- Cerradas: solo dueño ----------
@@ -1486,115 +1547,23 @@ function lunesDeSemana(offset) {
   return lunes;
 }
 
-$("btnSemanaAnt").onclick = () => { semanaOffset--; cargarAgendaSemana(); };
-$("btnSemanaSig").onclick = () => { semanaOffset++; cargarAgendaSemana(); };
-
-$("selAgendaOrigen").querySelectorAll("button").forEach(b => {
-  b.onclick = () => {
-    $("selAgendaOrigen").querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", "false"));
-    b.setAttribute("aria-pressed", "true");
-    agendaOrigenActiva = b.dataset.v;
-    cargarAgendaSemana();
-  };
-});
-
-async function cargarAgendaSemana() {
-  $("listaOT").innerHTML = '<div class="cargando">Cargando agenda…</div>';
-  $("porCobrarAviso").classList.add("oculto");
-  cargarCasosPorAgendar();       // sin await: no atrasa la semana
-  cargarModulosPorRecepcionar(); // idem
-  const lunes = lunesDeSemana(semanaOffset);
-  const sabado = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + 5);
-  $("semanaLabel").textContent =
-    `${lunes.getDate()} ${MES_CORTO[lunes.getMonth()]} – ${sabado.getDate()} ${MES_CORTO[sabado.getMonth()]}`;
-
-  // Se traen las dos pestañas de una: así el contador de cada una dice
-  // cuántas hay, y no parece que la agenda está vacía cuando en realidad
-  // lo agendado está en la otra pestaña.
-  const { data:{ user } } = await db.auth.getUser();
-  let query = db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,fecha_agendada,franja,tecnico_agendado,orden_ruta,fecha_ingreso,vehiculo_id,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,clientes(nombre,rut),vehiculos(patente)")
-    .gte("fecha_agendada", isoFecha(lunes)).lte("fecha_agendada", isoFecha(sabado))
-    .order("fecha_agendada").order("orden_ruta", { nullsFirst: false });
-  if (perfil?.rol === "tecnico") query = query.eq("tecnico_agendado", user.id);
-  const { data, error } = await query;
-
-  if (error) {
-    $("listaOT").innerHTML = '<div class="aviso">No se pudo cargar la agenda. Revisa tu conexión.</div>';
-    return;
-  }
-
-  // Acá NO va seccionDe (esa es "de quién es el trabajo", para el
-  // tablero) -- va seccionAgendaDe ("¿a dónde hay que ir?"). Un módulo
-  // agendado para retiro que todavía no se retira es una visita real.
-  const cuenta = { terreno: 0, laboratorio: 0 };
-  data.forEach(o => { const s = seccionAgendaDe(o); if (cuenta[s] !== undefined) cuenta[s]++; });
-  $("selAgendaOrigen").querySelector('[data-v="terreno"]').textContent = `Terreno (${cuenta.terreno})`;
-  $("selAgendaOrigen").querySelector('[data-v="laboratorio"]').textContent = `Laboratorio (${cuenta.laboratorio})`;
-
-  const dePestana = data.filter(o => seccionAgendaDe(o) === agendaOrigenActiva);
-  if (!dePestana.length) {
-    const otra = agendaOrigenActiva === "terreno" ? "laboratorio" : "terreno";
-    const pista = cuenta[otra]
-      ? `<p>Hay ${cuenta[otra]} en ${otra === "terreno" ? "Terreno" : "Laboratorio"} — tócala arriba.</p>`
-      : "";
-    $("listaOT").innerHTML = `<div class="vacio"><p>No hay OT agendadas esta semana en ${SECCION_TIT[agendaOrigenActiva]}.</p>${pista}</div>`;
-    return;
-  }
-
-  const puedeReordenar = ["dueno","coordinador"].includes(perfil?.rol);
-  $("listaOT").innerHTML = "";
-  for (let i = 0; i < 6; i++) {
-    const dia = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + i);
-    const isoDia = isoFecha(dia);
-    const delDia = dePestana.filter(o => o.fecha_agendada === isoDia);
-
-    const cab = document.createElement("div");
-    cab.className = "dia-grupo";
-    cab.innerHTML = `<span class="nombre">${DIAS_SEMANA[i]} ${dia.getDate()}</span>`;
-    $("listaOT").appendChild(cab);
-
-    if (!delDia.length) {
-      const vacio = document.createElement("div");
-      vacio.className = "vacio";
-      vacio.style.padding = "14px";
-      vacio.innerHTML = "<p>Sin OT agendadas</p>";
-      $("listaOT").appendChild(vacio);
-      continue;
-    }
-    delDia.forEach((o, idx) => {
-      const card = tarjetaOT(o, { agenda: true });
-      if (puedeReordenar) {
-        const reord = document.createElement("div");
-        reord.className = "reordenar";
-        const subir = document.createElement("button");
-        subir.type = "button"; subir.textContent = "↑ Subir"; subir.disabled = idx === 0;
-        subir.onclick = e => { e.stopPropagation(); moverOrdenRuta(delDia, idx, -1); };
-        const bajar = document.createElement("button");
-        bajar.type = "button"; bajar.textContent = "↓ Bajar"; bajar.disabled = idx === delDia.length - 1;
-        bajar.onclick = e => { e.stopPropagation(); moverOrdenRuta(delDia, idx, 1); };
-        reord.appendChild(subir); reord.appendChild(bajar);
-        card.appendChild(reord);
-      }
-      $("listaOT").appendChild(card);
-    });
-  }
-}
-
+// Reordenar dentro de un día llama a cargarOrdenes -- el agrupado por
+// día ahora vive ahí (dentro de Terreno/Laboratorio), no en una
+// pantalla de Agenda aparte.
 async function moverOrdenRuta(lista, i, dir) {
   const j = i + dir;
   if (j < 0 || j >= lista.length) return;
   [lista[i], lista[j]] = [lista[j], lista[i]];
   const actualizaciones = lista.map((o, idx) => db.from("ordenes").update({ orden_ruta: idx + 1 }).eq("id", o.id));
   await Promise.all(actualizaciones);
-  cargarAgendaSemana();
+  cargarOrdenes();
 }
 
 $("btnAgendar").onclick = () => {
   $("btnNueva").click();
   $("btnToggleAgendar").click();
-  $("fFechaAgendada").value = isoFecha(lunesDeSemana(semanaOffset));
-  $("selOrigen").querySelector(`[data-v="${agendaOrigenActiva}"]`)?.click();
+  $("fFechaAgendada").value = isoFecha(lunesDeSemana(0));
+  $("selOrigen").querySelector(`[data-v="${seccionActiva === "laboratorio" ? "laboratorio" : "terreno"}"]`)?.click();
 };
 
 async function cargarClientes() {

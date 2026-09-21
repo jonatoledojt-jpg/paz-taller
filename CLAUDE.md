@@ -366,20 +366,32 @@ Barra fija abajo, siempre visible dentro de la app:
 
 - **Terreno** — OT con `origen = terreno`.
 - **Laboratorio** — OT con `origen = laboratorio`.
-- **Agenda** — OT con `fecha_agendada` puesta, vista semanal.
+- **Herramientas** (antes "Agenda", renombrado el 21-09-2026) — casos
+  por agendar, módulos por recepcionar, y las herramientas de la barra
+  de arriba (Agendar, Asistencia). Visible para todos los roles, no
+  solo dueño/coordinador: Luis (técnico) también usa herramientas acá
+  — el acceso a cada una se limita ADENTRO según el rol (mismo patrón
+  que ya usaba `btnAsistencia`), no escondiendo el tab entero.
 - **Gastos** — gastos del mes. Para el dueño trae además las pestañas
-  Por persona, Global y Rentabilidad (ver "Gastos y rentabilidad").
-  Rentabilidad **no** va en la barra inferior: vive dentro de Gastos.
+  Por persona, Global, Rentabilidad y Pagos (ver "Gastos y rentabilidad"
+  y "Asistencia, pagos y mano de obra real"). Ninguna de esas va en la
+  barra inferior: viven dentro de Gastos.
 
-Una misma OT puede aparecer en Agenda y también en Terreno o Laboratorio a
-la vez — no se duplica la tarjeta, es la misma fila de `ordenes` filtrada
-de dos formas distintas. Una sola función, `tarjetaOT(o, opts)` en
-`index.html`, arma la tarjeta en las tres listas (con `opts.agenda` cambia
-qué línea de texto muestra, pero el estilo es siempre el mismo).
+**Lo agendado de la semana ya no es una pantalla aparte** (antes vivía
+en "Agenda", repitiendo las mismas OT que ya se ven en Terreno/Laboratorio
+— Jonatan, 21-09-2026: "en agenda aparecen los mismos datos que ya
+tenemos en las OT"). Ahora `cargarOrdenes()` arma la MISMA lista de cada
+pestaña con dos partes: lo agendado de esta semana agrupado por día
+arriba (con los botones Subir/Bajar de `orden_ruta`, igual que antes),
+y el resto como lista plana debajo — nada se duplica. El técnico solo ve
+sus propias visitas en el grupo de arriba (`tecnico_agendado = auth.uid()`).
+Una sola función, `tarjetaOT(o, opts)` en `index.html`, arma la tarjeta
+en todas las listas (con `opts.agenda` cambia qué línea de texto
+muestra, pero el estilo es siempre el mismo).
 
-Cada rol abre por defecto en una sección (`coordinador` → Agenda, el resto
-→ Terreno) pero puede navegar a las otras — no se esconde nada, es
-navegación, no permiso.
+Cada rol abre por defecto en una sección (`coordinador` → Herramientas,
+el resto → Terreno) pero puede navegar a las otras — no se esconde
+nada, es navegación, no permiso.
 
 **Importante:** el esquema de roles no distingue "mecánico de terreno" de
 "técnico de laboratorio" — ambos son `rol = 'tecnico'`. Si algún día hace
