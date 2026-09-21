@@ -221,6 +221,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 /* ---------- Agenda ---------- */
 .semana-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
 .semana-nav button{flex:0 0 auto;width:auto;padding:11px 18px;border:1px solid var(--linea);border-radius:8px;background:var(--panel);cursor:pointer;font-size:17px}
+.semana-nav button[disabled]{opacity:.4;cursor:default}
 .semana-nav .lbl{font-size:14.5px;font-weight:500;text-align:center}
 .dia-grupo{display:flex;justify-content:space-between;align-items:baseline;margin:18px 0 8px}
 .dia-grupo:first-child{margin-top:0}
@@ -774,7 +775,14 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     <section id="vAsistencia" class="oculto">
       <h2>Asistencia</h2>
       <div id="asisError" class="aviso oculto"></div>
-      <div class="campo"><label for="asisFecha">Día</label><input id="asisFecha" type="date"></div>
+      <div class="campo">
+        <label for="asisFecha">Día</label>
+        <div class="semana-nav">
+          <button type="button" id="btnAsisDiaAnt">◀</button>
+          <input id="asisFecha" type="date" style="flex:1;min-width:0;text-align:center">
+          <button type="button" id="btnAsisDiaSig">▶</button>
+        </div>
+      </div>
       <div id="asisAviso" class="aviso oculto"></div>
       <div id="asisLista"></div>
       <div style="height:10px"></div>
@@ -3086,11 +3094,27 @@ const sumarDias = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate
 $("btnHerAsistencia").onclick = () => { asisFecha = hoyISO(); ver("vAsistencia"); cargarAsistencia(); };
 $("btnAsisVolver").onclick = () => { ver("vTablero"); cargarSeccion(); };
 $("asisFecha").onchange = e => { asisFecha = e.target.value; cargarAsistencia(); };
+// Flechas para moverse día a día sin tener que abrir el selector de
+// fecha nativo cada vez -- respetan el mismo rango que ya tenía el
+// campo (hasta 7 días atrás, nunca a futuro).
+$("btnAsisDiaAnt").onclick = () => {
+  const min = sumarDias(hoyISO(), -7);
+  if (asisFecha <= min) return;
+  asisFecha = sumarDias(asisFecha, -1);
+  cargarAsistencia();
+};
+$("btnAsisDiaSig").onclick = () => {
+  if (asisFecha >= hoyISO()) return;
+  asisFecha = sumarDias(asisFecha, 1);
+  cargarAsistencia();
+};
 
 async function cargarAsistencia() {
   msg("asisError", "");
   const f = $("asisFecha");
   f.value = asisFecha; f.max = hoyISO(); f.min = sumarDias(hoyISO(), -7);   // hasta 7 días atrás
+  $("btnAsisDiaAnt").disabled = asisFecha <= f.min;
+  $("btnAsisDiaSig").disabled = asisFecha >= f.max;
   $("asisLista").innerHTML = '<div class="cargando">Cargando…</div>';
   const [{ data: colabs, error: e1 }, { data: marcas, error: e2 }] = await Promise.all([
     db.from("colaboradores").select("id,nombre,cargo").eq("activo", true).order("nombre"),
