@@ -521,6 +521,19 @@ ve los gastos de los demás, así que para él el margen saldría incompleto —
 y un margen incompleto engaña más que no mostrarlo. Si la OT no tiene gastos
 asociados dice "sin gastos registrados", no `$0`: no es lo mismo.
 
+**No asociar gastos compartidos entre varias visitas a una sola OT
+(21-09-2026).** Duda real de Jonatan: el petróleo de una salida que
+visita a varios clientes no se puede repartir entre ellos sin inventar
+un criterio arbitrario (¿por tiempo? ¿por distancia? — calcular rutas
+quedó fuera de la app a propósito, ver "Agenda"). Se sacó el `orden_id`
+de los 5 gastos "Petroleo" que lo tenían puesto — siguen restando del
+**mes** completo igual que siempre (`resumen_rentabilidad` suma todos
+los gastos del mes, tengan o no `orden_id`), solo que ya no inflan ni
+desinflan injustamente el margen de una OT puntual. Criterio para
+adelante: un gasto solo se asocia a una OT cuando es de verdad
+exclusivo de ese trabajo (un repuesto, por ejemplo) — si sirvió para
+varias visitas o no se puede atribuir a una sola, se deja sin asociar.
+
 **Categorías:** campo libre con `datalist`, sin tabla propia. Antes de
 guardar se hace trim, se colapsan espacios dobles, y si ya existe una
 categoría parecida ignorando tildes y mayúsculas **se reusa esa** — así
