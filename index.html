@@ -77,6 +77,8 @@ main.con-navinf{padding-bottom:96px}
 .btn:active{opacity:.85}
 .btn[disabled]{opacity:.5}
 .btn.claro{background:var(--panel);color:var(--tinta);border:1px solid var(--linea)}
+.mejorar-ia{display:block;margin-top:6px;background:none;border:none;color:var(--humo);font-size:13px;text-decoration:underline;cursor:pointer;padding:2px 0}
+.mejorar-ia[disabled]{opacity:.5;cursor:default}
 
 .aviso{
   padding:12px 14px;border-radius:8px;font-size:14px;margin-bottom:14px;
@@ -651,6 +653,16 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     <section id="vCierre" class="oculto">
       <h2 id="cieTitulo"></h2>
       <div id="cieError" class="aviso oculto"></div>
+
+      <!-- Redactar con IA: toma el historial de la OT y redacta profesional
+           SOLO "Trabajos realizados" y "Causa de la falla". No diagnostica,
+           no inventa. Manual (nunca al abrir), con tope de frecuencia. -->
+      <div class="seccion" id="cieIA">
+        <button class="btn claro" id="btnRedactarIA">Redactar con IA desde el historial</button>
+        <div class="pista" style="margin-top:8px">Ordena y corrige lo que técnicos ya escribieron en la OT. No agrega hechos ni conclusiones. Igual lo revisas tú antes de enviarlo al cliente.</div>
+        <div id="cAdvertencias" class="aviso info oculto" style="margin-top:10px"></div>
+      </div>
+
       <div class="seccion">
         <div class="campo">
           <label for="cModelo">Vehículo (marca y modelo)</label>
@@ -667,6 +679,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div class="campo">
           <label for="cSolucion">Resultado final</label>
           <textarea id="cSolucion" placeholder="Cómo quedó el módulo"></textarea>
+          <button type="button" class="mejorar-ia" data-campo="cSolucion">Mejorar redacción con IA</button>
         </div>
         <div class="campo" id="campoMonto">
           <label for="cMonto">Valor neto del servicio</label>
@@ -676,6 +689,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div class="campo">
           <label for="cObs">Observaciones para el cliente</label>
           <textarea id="cObs" placeholder="Recomendaciones, garantía, advertencias"></textarea>
+          <button type="button" class="mejorar-ia" data-campo="cObs">Mejorar redacción con IA</button>
         </div>
       </div>
       <button class="btn" id="btnGenerar">Guardar y ver informe</button>
@@ -5158,13 +5172,23 @@ $("cMonto").oninput = e => {
     : "";
 };
 
+// Rastro del último borrador de IA para esta OT: al Guardar, se completa
+// su texto_final/aprobado_por para poder auditar si la persona cambió lo
+// que la IA propuso.
+let informeIaActual = null;
+
 $("btnCierre").onclick = async () => {
   msg("cieError", "");
+  informeIaActual = null;
+  $("cAdvertencias").classList.add("oculto");
   $("cieTitulo").textContent = "Informe " + (ordenActual.numero_ot ?? "");
   $("campoMonto").classList.toggle("oculto", perfil?.rol === "tecnico");
+  // Redactar con IA es solo de dueño/coordinador (cada llamada cuesta, y la
+  // función lo bloquea igual del lado del servidor).
+  $("cieIA").classList.toggle("oculto", perfil?.rol === "tecnico");
 
   const { data: o } = await db.from("ordenes")
-    .select("observaciones,vehiculo_id,vehiculos(modelo)")
+    .select("observaciones,vehiculo_id,vehiculos(marca,modelo,anio)")
     .eq("id", ordenActual.id).single();
   const { data: m } = await db.rpc("ordenes_montos", { p_orden_id: ordenActual.id });
   const { data: d } = await db.from("diagnosticos")
@@ -5172,7 +5196,10 @@ $("btnCierre").onclick = async () => {
     .eq("orden_id", ordenActual.id).order("id").limit(1);
 
   const dg = (d && d[0]) || {};
-  $("cModelo").value   = o?.vehiculos?.modelo ?? "";
+  const v = o?.vehiculos || {};
+  // Precargar el vehículo desde la ficha: marca + modelo + año. Si el dato
+  // existe, el campo no queda vacío por defecto (editable igual).
+  $("cModelo").value   = [v.modelo || v.marca, v.anio].filter(Boolean).join(" ");
   $("cPruebas").value  = dg.pruebas_realizadas ?? "";
   $("cCausa").value    = dg.causa_raiz ?? "";
   $("cSolucion").value = dg.solucion ?? "";
@@ -5183,6 +5210,147 @@ $("btnCierre").onclick = async () => {
 };
 
 $("btnCieCancelar").onclick = () => abrirDetalle(ordenActual);
+
+// Puente a la Edge Function `informe` (llave de la IA en Supabase, nunca
+// en el front). La función verifica sesión y rol dueño/coordinador.
+async function llamarInforme(cuerpo) {
+  const { data:{ session } } = await db.auth.getSession();
+  if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/informe`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON,
+      Authorization: `Bearer ${session.access_token}`
+    },
+    body: JSON.stringify(cuerpo)
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `La IA respondió con error ${r.status}.`);
+  return data;
+}
+
+// Hash simple y estable del historial: para no regenerar si no cambió nada
+// desde la última vez (dedup barato, ahorra llamadas a la IA).
+function hashTexto(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+// Arma el historial de la OT en orden cronológico para mandárselo a la IA.
+// Solo datos que YA existen: síntoma, observaciones del técnico, diagnósticos,
+// y los cambios de estado con fecha. La IA redacta desde esto, no completa.
+async function armarFuenteInforme() {
+  const partes = [];
+  const [{ data: o }, { data: diags }, { data: movs }] = await Promise.all([
+    db.from("ordenes").select("numero_ot,sintoma_cliente,notas_internas,fecha_ingreso,tipo_modulo,sistema,tipo_trabajo,vehiculos(marca,modelo,anio,patente)").eq("id", ordenActual.id).single(),
+    db.from("diagnosticos").select("pruebas_realizadas,causa_raiz,solucion,codigos_falla,creado_en").eq("orden_id", ordenActual.id).order("creado_en"),
+    db.from("movimientos_estado").select("estado_previo,estado_nuevo,ocurrido_en").eq("orden_id", ordenActual.id).order("ocurrido_en"),
+  ]);
+  if (!o) return { fuente: "", suficiente: false };
+
+  const v = o.vehiculos || {};
+  partes.push(`OT ${o.numero_ot} · Vehículo: ${[v.marca, v.modelo, v.anio].filter(Boolean).join(" ") || "no especificado"} · Patente: ${v.patente || "no especificada"}`);
+  partes.push(`Módulo/sistema: ${o.tipo_trabajo === "servicio" ? (o.sistema || "no especificado") : (o.tipo_modulo || "no especificado")}`);
+  if (o.sintoma_cliente) partes.push(`Síntoma reportado por el cliente (${fechaCL(o.fecha_ingreso)}): ${o.sintoma_cliente}`);
+
+  // Observaciones cargadas por el equipo en el detalle (fecha y autor ya
+  // vienen embebidos en cada línea de notas_internas).
+  let cuerpoTecnico = 0;
+  if (o.notas_internas) {
+    partes.push("Observaciones del equipo (en orden):\n" + o.notas_internas);
+    cuerpoTecnico += o.notas_internas.length;
+  }
+  (diags || []).forEach(d => {
+    const bloque = [];
+    if (d.pruebas_realizadas) bloque.push(`Trabajos/pruebas: ${d.pruebas_realizadas}`);
+    if (d.causa_raiz) bloque.push(`Causa registrada: ${d.causa_raiz}`);
+    if (d.solucion) bloque.push(`Resultado: ${d.solucion}`);
+    if (d.codigos_falla?.length) bloque.push(`Códigos de falla: ${d.codigos_falla.join(", ")}`);
+    if (bloque.length) {
+      partes.push(`Diagnóstico registrado (${fechaCL(d.creado_en)}):\n` + bloque.join("\n"));
+      cuerpoTecnico += bloque.join("").length;
+    }
+  });
+  if (movs && movs.length) {
+    partes.push("Cronología de estados:\n" + movs.map(m =>
+      `${fechaCL(m.ocurrido_en)}: ${ETIQUETA_LEGADO[m.estado_previo] ?? "—"} → ${ETIQUETA_LEGADO[m.estado_nuevo] ?? m.estado_nuevo}`
+    ).join("\n"));
+  }
+
+  const fuente = partes.join("\n\n");
+  // "Suficiente" = hay contenido técnico real (observaciones o diagnósticos),
+  // no solo el síntoma y los cambios de estado. Sin esto la IA no tiene de
+  // dónde redactar y no hay que llamar a la API.
+  return { fuente, suficiente: cuerpoTecnico >= 40 };
+}
+
+$("btnRedactarIA").onclick = async () => {
+  msg("cieError", "");
+  $("cAdvertencias").classList.add("oculto");
+  const btn = $("btnRedactarIA");
+  btn.disabled = true; btn.textContent = "Leyendo el historial…";
+  try {
+    const { fuente, suficiente } = await armarFuenteInforme();
+    if (!suficiente) {
+      msg("cieError", "No hay información técnica suficiente en el historial para redactar el informe con IA. Escríbelo a mano.");
+      return;
+    }
+    const hash = hashTexto(fuente);
+
+    // ¿Ya se generó antes con el mismo historial? No gastar otra llamada
+    // salvo que la persona lo pida explícitamente.
+    const { data: previo } = await db.from("informes_ia")
+      .select("fuente_hash").eq("orden_id", ordenActual.id)
+      .order("generado_en", { ascending: false }).limit(1);
+    if (previo?.[0]?.fuente_hash === hash &&
+        !confirm("Ya existe una versión generada con este mismo historial. ¿Quieres regenerarla igual?")) {
+      return;
+    }
+
+    btn.textContent = "Redactando con IA…";
+    const { borrador, informe_id } = await llamarInforme({
+      accion: "redactar", orden_id: ordenActual.id, fuente, fuente_hash: hash
+    });
+    informeIaActual = informe_id;
+    $("cPruebas").value = borrador.trabajos_realizados || "";
+    $("cCausa").value   = borrador.causa_falla || "";
+
+    // Advertencias internas: NO van en el informe, solo ayudan a revisar.
+    const adv = $("cAdvertencias");
+    if (borrador.advertencias_internas?.length) {
+      adv.innerHTML = "<strong>Revisa antes de enviar (no sale en el informe):</strong><ul style='margin:6px 0 0;padding-left:18px'>" +
+        borrador.advertencias_internas.map(a => `<li>${escapar(a)}</li>`).join("") + "</ul>";
+      adv.classList.remove("oculto");
+    }
+  } catch (e) {
+    msg("cieError", e.message || "No se pudo redactar con IA.");
+  } finally {
+    btn.disabled = false; btn.textContent = "Redactar con IA desde el historial";
+  }
+};
+
+// "Mejorar redacción": solo pule ortografía/claridad/tono de un borrador que
+// la persona ya escribió. No agrega contenido. Para Resultado final y
+// Observaciones al cliente (decisiones humanas, no las redacta la IA sola).
+document.querySelectorAll(".mejorar-ia").forEach(btn => {
+  btn.onclick = async () => {
+    const campo = $(btn.dataset.campo);
+    const texto = campo.value.trim();
+    if (!texto) { msg("cieError", "Escribe algo primero: la IA solo mejora lo que ya escribiste."); return; }
+    msg("cieError", "");
+    btn.disabled = true; const original = btn.textContent; btn.textContent = "Mejorando…";
+    try {
+      const { texto: mejorado } = await llamarInforme({ accion: "mejorar", texto });
+      if (mejorado) campo.value = mejorado;
+    } catch (e) {
+      msg("cieError", e.message || "No se pudo mejorar la redacción.");
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+    }
+  };
+});
 
 $("btnGenerar").onclick = async () => {
   msg("cieError", "");
@@ -5223,6 +5391,22 @@ $("btnGenerar").onclick = async () => {
       ? await db.from("diagnosticos").update(campos).eq("id", ex[0].id)
       : await db.from("diagnosticos").insert(campos);
     if (e2) throw e2;
+
+    // Si este informe se redactó con IA, registrar quién aprobó, cuándo, y
+    // el texto FINAL (para poder auditar si cambió lo que la IA propuso).
+    if (informeIaActual) {
+      await db.from("informes_ia").update({
+        texto_final: {
+          trabajos_realizados: pruebas,
+          causa_falla: $("cCausa").value.trim() || null,
+          resultado_final: solucion,
+          observaciones: $("cObs").value.trim() || null,
+          monto_neto: monto || null
+        },
+        aprobado_por: user.id,
+        aprobado_en: new Date().toISOString()
+      }).eq("id", informeIaActual);
+    }
 
     await mostrarInforme();
   } catch (e) {

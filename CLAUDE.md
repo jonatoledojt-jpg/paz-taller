@@ -82,6 +82,7 @@ sw.js                   service worker
 30-asistencia.sql            asistencia, pagos de colaboradores y mano de obra real en rentabilidad
 31-cotizacion-suma-todas.sql monto_cotizado suma TODAS las cotizaciones no anuladas, no solo la última
 32-perfiles-area.sql         perfiles.area (reusa area_gasto) -- distingue a Diego de Jonatan Osores
+33-informe-ia.sql            tabla informes_ia: rastro de auditoria del informe redactado con IA
 25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
@@ -90,6 +91,7 @@ sw.js                   service worker
 30-asistencia.sql            asistencia diaria, pagos con comprobante, auditoría, mano de obra en rentabilidad
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
+supabase/functions/informe/index.ts    Edge Function que redacta el informe tecnico con IA
 ```
 
 **De la 01 a la 30 están todas aplicadas en la base real** (verificado el
@@ -1980,6 +1982,72 @@ sin abrir el selector nativo. Tope hacia adelante: hoy (mes actual) o
 el último día del mes (meses pasados); no se puede navegar a meses
 futuros. Al entrar por "Registro de asistencia" siempre parte en el mes
 actual con hoy seleccionado.
+
+## Informe técnico redactado con IA (25-09-2026)
+
+Ver `33-informe-ia.sql` y `supabase/functions/informe/index.ts`. Generar un
+informe tomaba 15-20 min: se repedían datos que ya están en la OT y las
+observaciones de los técnicos venían en lenguaje coloquial, con faltas y sin
+estructura. La IA **solo ordena y redacta lo que ya existe** — no
+diagnostica, no agrega hechos, no cambia la conclusión. El informe queda
+editable y lo revisa una persona antes de enviarlo.
+
+**Qué redacta la IA y qué no:**
+- **Sí redacta** (botón "Redactar con IA" en la pantalla de informe, `vCierre`):
+  "Trabajos realizados" (`cPruebas`) y "Causa de la falla" (`cCausa`). La causa
+  solo si hay una conclusión clara en el historial; si no, deja el texto "No hay
+  conclusión técnica suficiente...".
+- **NO redacta** (decisión humana, quedan en blanco/como estaban): "Resultado
+  final" (`cSolucion`) y "Observaciones para el cliente" (`cObs`). Esos dos
+  tienen un enlace "Mejorar redacción con IA" (`.mejorar-ia`) que solo pule
+  ortografía/claridad/tono de lo que la persona ya escribió, sin agregar nada.
+- El **valor neto** se precarga del monto_final/cotización, editable; la IA
+  nunca define valores.
+- El **vehículo** (marca/modelo/año) se precarga de `vehiculos`.
+
+**La fuente** (`armarFuenteInforme()` en `index.html`): síntoma del cliente,
+`ordenes.notas_internas` (las observaciones que el equipo carga en el detalle,
+con fecha y autor embebidos), todos los `diagnosticos` de la OT, y la
+cronología de `movimientos_estado` — todo ordenado y mandado a la Edge
+Function. Si no hay contenido técnico real (solo síntoma y cambios de estado),
+`suficiente` es false: **no se llama a la API**, se avisa "No hay información
+técnica suficiente..." y se escribe a mano.
+
+**Advertencias internas**: la IA devuelve una lista de datos ambiguos o
+contradictorios que la persona debería revisar. Se muestran en `#cAdvertencias`
+(caja info) pero **NUNCA salen en el informe** — solo ayudan a revisar.
+
+**Auditoría** (`informes_ia`): cada generación guarda `borrador_ia` (lo que
+propuso la IA), `fuente_hash` (hash del historial), `generado_por`/`generado_en`.
+Al Guardar, se completa `texto_final` (lo que quedó de verdad), `aprobado_por` y
+`aprobado_en` — así se puede comparar si la persona cambió lo que la IA propuso.
+Solo dueño y coordinador (RLS); sin delete (es auditoría). El texto editable
+sigue viviendo en `diagnosticos` (que es lo que lee el informe imprimible);
+`informes_ia` es solo el rastro.
+
+**Costo y límites** (cada llamada cuesta):
+- Botón manual, **nunca automático** al abrir la pantalla.
+- Tope de 25 redacciones por usuario por hora en la Edge Function (`TOPE_POR_HORA`),
+  devuelve 429 si se pasa.
+- Dedup por hash: si ya se generó con el **mismo historial**, pregunta "Ya
+  existe una versión generada... ¿regenerarla?" antes de gastar otra llamada.
+
+**La Edge Function `informe` va aparte de `nexa`** a propósito: es independiente
+del chat con clientes, no debe romperse ni depender de que PAZ esté activa.
+Comparte el secreto `OPENAI_API_KEY` (es del proyecto) y el modelo de
+`nexa_config.modelo` (hoy gpt-5.5, con fallback). Verifica sesión + rol
+dueño/coordinador igual que `nexa`. Desplegar:
+`.\.tools\supabase.exe functions deploy informe --use-api`.
+
+**El formato del informe imprimible no cambió** — sigue leyendo de
+`diagnosticos`/`ordenes` como siempre (ver "Formato del informe técnico"). Esto
+solo cambia cómo se **rellenan** los campos antes de generarlo.
+
+**Pendiente**: la prueba de punta a punta con sesión real (Jonatan) — una OT
+con observaciones de tacógrafo/vector/aguja del GP y conclusión de falla de
+caja, confirmando que la IA no agrega visitas/fechas/piezas que no estén, que
+mejora la redacción sin cambiar hechos, y que una OT sin historial avisa y no
+llama a la API.
 
 ## Contexto de negocio que importa
 
