@@ -675,38 +675,42 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
 
       <div class="seccion">
-        <div class="campo">
-          <label for="cModelo">Vehículo (marca y modelo)</label>
-          <input id="cModelo" autocomplete="on" placeholder="Mercedes Benz Actros 2045">
-        </div>
-        <div class="campo">
-          <label for="cAntecedentes">Antecedentes</label>
-          <textarea id="cAntecedentes" placeholder="Falla inicial o motivo por el que se atendió el vehículo"></textarea>
-          <button type="button" class="mejorar-ia" data-campo="cAntecedentes">Mejorar redacción con IA</button>
-        </div>
-        <div class="campo">
-          <label for="cPruebas">Trabajos realizados</label>
-          <textarea id="cPruebas" placeholder="Qué se revisó y qué se hizo"></textarea>
-        </div>
-        <div class="campo">
-          <label for="cSolucion">Resultado final</label>
-          <textarea id="cSolucion" placeholder="Qué ocurrió después de las intervenciones y pruebas"></textarea>
-          <button type="button" class="mejorar-ia" data-campo="cSolucion">Mejorar redacción con IA</button>
-        </div>
-        <div class="campo">
-          <label for="cCausa">Conclusión técnica</label>
-          <textarea id="cCausa" placeholder="Causa determinada y explicación técnica"></textarea>
-          <button type="button" class="mejorar-ia" data-campo="cCausa">Mejorar redacción con IA</button>
-        </div>
+        <!-- El valor sí queda visible y editable: se trae de la OT, y se
+             ajusta a mano cuando el trabajo es a crédito. -->
         <div class="campo" id="campoMonto">
           <label for="cMonto">Valor neto del servicio</label>
           <input id="cMonto" inputmode="numeric" placeholder="250000">
           <div class="pista" id="pistaMonto"></div>
         </div>
-        <div class="campo">
-          <label for="cObs">Observaciones para el cliente</label>
-          <textarea id="cObs" placeholder="Recomendaciones, garantía, advertencias"></textarea>
-          <button type="button" class="mejorar-ia" data-campo="cObs">Mejorar redacción con IA</button>
+        <!-- Las secciones del informe las redacta la IA y quedan guardadas
+             solas: no se muestran como cajas sueltas (pedido de Jonatan,
+             25-09-2026). Para corregir, se edita el detalle y se redacta de
+             nuevo. Siguen en el DOM para el guardado y el informe impreso. -->
+        <div id="cieCampos" class="oculto">
+          <div class="campo">
+            <label for="cModelo">Vehículo (marca y modelo)</label>
+            <input id="cModelo" autocomplete="on" placeholder="Mercedes Benz Actros 2045">
+          </div>
+          <div class="campo">
+            <label for="cAntecedentes">Antecedentes</label>
+            <textarea id="cAntecedentes"></textarea>
+          </div>
+          <div class="campo">
+            <label for="cPruebas">Trabajos realizados</label>
+            <textarea id="cPruebas"></textarea>
+          </div>
+          <div class="campo">
+            <label for="cSolucion">Resultado final</label>
+            <textarea id="cSolucion"></textarea>
+          </div>
+          <div class="campo">
+            <label for="cCausa">Conclusión técnica</label>
+            <textarea id="cCausa"></textarea>
+          </div>
+          <div class="campo">
+            <label for="cObs">Observaciones para el cliente</label>
+            <textarea id="cObs"></textarea>
+          </div>
         </div>
       </div>
       <button class="btn" id="btnGenerar">Guardar y ver informe</button>
@@ -5224,7 +5228,9 @@ $("btnCierre").onclick = async () => {
   $("cPruebas").value      = dg.pruebas_realizadas ?? "";
   $("cCausa").value        = dg.causa_raiz ?? "";
   $("cSolucion").value     = dg.solucion ?? "";
-  $("cMonto").value        = m?.[0]?.monto_final ?? "";
+  // Valor traído de la OT: lo ya facturado, o lo cotizado si aún no se cobró.
+  // Editable a mano (p. ej. cuando el trabajo es a crédito y se aumenta).
+  $("cMonto").value        = m?.[0]?.monto_final ?? m?.[0]?.monto_cotizado ?? "";
   $("cObs").value          = o?.observaciones ?? "";
   $("cMonto").dispatchEvent(new Event("input"));
   ver("vCierre");
@@ -5362,6 +5368,10 @@ $("btnRedactarIA").onclick = async () => {
     $("cCausa").value        = borrador.causa_conclusion || "";    // Conclusión técnica
     $("cObs").value          = borrador.observaciones || "";       // Observaciones
     pintarDatosFaltantes(borrador.datos_faltantes);
+    // El informe redactado queda guardado solo. La persona ajusta el valor
+    // si corresponde y toca "Guardar y ver informe" para verlo.
+    await guardarInforme();
+    msg("cieError", "Informe redactado y guardado. Ajusta el valor si corresponde y toca “Guardar y ver informe”.", true);
   } catch (e) {
     msg("cieError", e.message || "No se pudo redactar el informe.");
   } finally {
@@ -5390,64 +5400,51 @@ document.querySelectorAll(".mejorar-ia").forEach(btn => {
   };
 });
 
-$("btnGenerar").onclick = async () => {
-  msg("cieError", "");
+// Guarda el informe (diagnósticos + monto + observaciones + aprobación IA).
+// No navega; devuelve true si guardó. La usan el guardado automático al
+// Redactar y el botón "Guardar y ver informe".
+async function guardarInforme() {
   const monto = parseInt($("cMonto").value || "0", 10);
   const pruebas = $("cPruebas").value.trim();
   const solucion = $("cSolucion").value.trim();
-  if (!pruebas)  return msg("cieError", "Escribe los trabajos realizados.");
-  if (!solucion) return msg("cieError", "Escribe el resultado final.");
+  if (!pruebas) { msg("cieError", "Redacta el informe primero."); return false; }
+  const { data:{ user } } = await db.auth.getUser();
+  if (ordenActual.vehiculo_id && $("cModelo").value.trim())
+    await db.from("vehiculos").update({ modelo: $("cModelo").value.trim() }).eq("id", ordenActual.vehiculo_id);
+  const { error: e1 } = await db.from("ordenes").update({
+    monto_final: monto || null, observaciones: $("cObs").value.trim() || null
+  }).eq("id", ordenActual.id);
+  if (e1) throw e1;
+  const campos = {
+    orden_id: ordenActual.id, tipo_modulo: ordenActual.tipo_modulo,
+    sintoma: $("cAntecedentes").value.trim() || ordenActual.sintoma_cliente || "Sin detalle",
+    pruebas_realizadas: pruebas, causa_raiz: $("cCausa").value.trim() || null,
+    solucion: solucion || null, resuelto: true, tecnico_id: user.id
+  };
+  const { data: ex } = await db.from("diagnosticos").select("id").eq("orden_id", ordenActual.id).order("id").limit(1);
+  const { error: e2 } = (ex && ex.length)
+    ? await db.from("diagnosticos").update(campos).eq("id", ex[0].id)
+    : await db.from("diagnosticos").insert(campos);
+  if (e2) throw e2;
+  if (informeIaActual) {
+    await db.from("informes_ia").update({
+      texto_final: {
+        antecedentes: $("cAntecedentes").value.trim() || null, detalle_diagnostico: pruebas,
+        resultado_pruebas: solucion || null, causa_conclusion: $("cCausa").value.trim() || null,
+        observaciones: $("cObs").value.trim() || null, monto_neto: monto || null
+      },
+      aprobado_por: user.id, aprobado_en: new Date().toISOString()
+    }).eq("id", informeIaActual);
+  }
+  return true;
+}
 
+$("btnGenerar").onclick = async () => {
+  msg("cieError", "");
   $("btnGenerar").disabled = true;
   $("btnGenerar").textContent = "Guardando\u2026";
   try {
-    const { data:{ user } } = await db.auth.getUser();
-
-    if (ordenActual.vehiculo_id && $("cModelo").value.trim())
-      await db.from("vehiculos").update({ modelo: $("cModelo").value.trim() })
-        .eq("id", ordenActual.vehiculo_id);
-
-    const { error: e1 } = await db.from("ordenes").update({
-      monto_final: monto || null,
-      observaciones: $("cObs").value.trim() || null
-    }).eq("id", ordenActual.id);
-    if (e1) throw e1;
-
-    const campos = {
-      orden_id: ordenActual.id,
-      tipo_modulo: ordenActual.tipo_modulo,
-      sintoma: $("cAntecedentes").value.trim() || ordenActual.sintoma_cliente || "Sin detalle",
-      pruebas_realizadas: pruebas,
-      causa_raiz: $("cCausa").value.trim() || null,
-      solucion: solucion,
-      resuelto: true,
-      tecnico_id: user.id
-    };
-    const { data: ex } = await db.from("diagnosticos").select("id")
-      .eq("orden_id", ordenActual.id).order("id").limit(1);
-    const { error: e2 } = (ex && ex.length)
-      ? await db.from("diagnosticos").update(campos).eq("id", ex[0].id)
-      : await db.from("diagnosticos").insert(campos);
-    if (e2) throw e2;
-
-    // Si este informe se redactó con IA, registrar quién aprobó, cuándo, y
-    // el texto FINAL (para poder auditar si cambió lo que la IA propuso).
-    if (informeIaActual) {
-      await db.from("informes_ia").update({
-        texto_final: {
-          antecedentes: $("cAntecedentes").value.trim() || null,
-          detalle_diagnostico: pruebas,
-          resultado_pruebas: solucion,
-          causa_conclusion: $("cCausa").value.trim() || null,
-          observaciones: $("cObs").value.trim() || null,
-          monto_neto: monto || null
-        },
-        aprobado_por: user.id,
-        aprobado_en: new Date().toISOString()
-      }).eq("id", informeIaActual);
-    }
-
-    await mostrarInforme();
+    if (await guardarInforme()) await mostrarInforme();
   } catch (e) {
     msg("cieError", "No se pudo guardar: " + (e.message || "error desconocido"));
   } finally {

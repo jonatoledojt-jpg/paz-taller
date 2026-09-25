@@ -2048,10 +2048,20 @@ salen en el informe**). `Redactar informe` (`btnRedactarIA`, acción
 - `observaciones` → `cObs` (recomendación final SOLO técnica; nada comercial)
 Todo editable; revisión humana; recién ahí el informe/PDF.
 
-El **valor neto** se precarga (editable), la IA no define valores. El
-**vehículo** (marca/modelo/año) se precarga. Los enlaces "Mejorar redacción
-con IA" (`.mejorar-ia`, acción `mejorar`) en Resultado final y Observaciones
-solo pulen lo que la persona escribió.
+El **valor neto** se precarga de la OT (`monto_final`, o `monto_cotizado` si
+aún no se cobró) y **queda visible y editable** — se ajusta a mano cuando el
+trabajo es a crédito. La IA no define valores.
+
+**Pantalla simplificada (25-09-2026, pedido de Jonatan).** Las cajas por
+sección (Vehículo, Antecedentes, Trabajos, Resultado, Conclusión,
+Observaciones) **ya no se muestran**: quedan escondidas en `#cieCampos`
+(siguen en el DOM para el guardado y el informe impreso). En pantalla solo se
+ve el **Detalle técnico** (`#cManual`) y el **Valor**. Para corregir, se edita
+el detalle y se redacta de nuevo (no hay edición por sección; se quitaron los
+enlaces "Mejorar redacción"). **Al Redactar, el informe queda guardado solo**
+(`guardarInforme()` corre automáticamente y persiste en `diagnosticos` +
+`informes_ia`); la persona ajusta el valor si corresponde y toca "Guardar y
+ver informe" para verlo.
 
 **Auditoría** (`informes_ia`): guarda la **cadena completa** para que un
 auditor pueda verificar que la IA redactó fiel (no inventó, no distorsionó):
