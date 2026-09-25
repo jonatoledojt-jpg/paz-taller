@@ -1435,8 +1435,15 @@ async function iniciar() {
 }
 
 async function cargarTecnicos() {
-  const { data } = await db.from("perfiles").select("id,nombre").eq("rol", "tecnico").order("nombre");
-  tecnicos = data || [];
+  const { data } = await db.from("perfiles")
+    .select("id,nombre,rol,area").eq("activo", true).order("nombre");
+  // Quiénes salen a terreno a las visitas: el dueño (Jonatan Toledo), el
+  // coordinador general (Jonatan Osores, area != laboratorio) y cualquier
+  // técnico activo. NO aparecen el encargado de laboratorio (Diego) ni la
+  // gente inactiva (Luis Gonzales, despedido) -- 25-09-2026.
+  tecnicos = (data || []).filter(p =>
+    p.rol === "dueno" || p.rol === "tecnico" ||
+    (p.rol === "coordinador" && p.area !== "laboratorio"));
   const opciones = '<option value="">Sin asignar</option>' +
     tecnicos.map(t => `<option value="${t.id}">${escapar(t.nombre)}</option>`).join("");
   $("fTecnicoAgendado").innerHTML = opciones;
