@@ -5535,6 +5535,10 @@ async function mostrarBotonVerInforme(ordenId) {
   const hay = !!(data && data.length);
   $("btnVerInforme").classList.toggle("oculto", !hay);
   $("sepVerInforme").classList.toggle("oculto", !hay);
+  // Si ya hay informe guardado, "Informe técnico" sobra: para editar se usa
+  // "Ver informe guardado" → "Editar informe". Solo se muestra para crear el
+  // primero (cuando aún no hay informe y la OT se puede editar).
+  if (hay) $("btnCierre").classList.add("oculto");
 }
 $("btnVerInforme").onclick = () => mostrarInforme();
 
