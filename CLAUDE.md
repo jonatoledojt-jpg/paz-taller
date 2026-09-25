@@ -1983,14 +1983,23 @@ el último día del mes (meses pasados); no se puede navegar a meses
 futuros. Al entrar por "Registro de asistencia" siempre parte en el mes
 actual con hoy seleccionado.
 
-## Informe técnico redactado con IA (25-09-2026)
+## Redactor IA — informe técnico desde el historial (25-09-2026)
 
-Ver `33-informe-ia.sql` y `supabase/functions/informe/index.ts`. Generar un
-informe tomaba 15-20 min: se repedían datos que ya están en la OT y las
-observaciones de los técnicos venían en lenguaje coloquial, con faltas y sin
-estructura. La IA **solo ordena y redacta lo que ya existe** — no
-diagnostica, no agrega hechos, no cambia la conclusión. El informe queda
-editable y lo revisa una persona antes de enviarlo.
+Ver `33-informe-ia.sql` y `supabase/functions/informe/index.ts`. Módulo
+interno llamado **"Redactor IA"** (o "Agente Redactor de Informes").
+
+**ESTO NO ES PAZ (WhatsApp).** Es un módulo distinto, a propósito: NO
+conversa con clientes, NO envía mensajes, NO agenda, NO cambia estados de OT
+y NO toma decisiones técnicas. Vive en su propia Edge Function (`informe`,
+no `nexa`), con su propio prompt separado, y no depende de que PAZ esté
+activa. Lo único que comparte con PAZ es el secreto `OPENAI_API_KEY` (es del
+proyecto) y el modelo de `nexa_config.modelo`.
+
+Generar un informe tomaba 15-20 min: se repedían datos que ya están en la OT
+y las observaciones de los técnicos venían en lenguaje coloquial, con faltas
+y sin estructura. El Redactor IA **solo ordena y redacta lo que ya existe** —
+no diagnostica, no agrega hechos, no cambia la conclusión. El borrador queda
+editable y lo revisa una persona antes de generar o enviar el informe.
 
 **Qué redacta la IA y qué no:**
 - **Sí redacta** (botón "Redactar con IA" en la pantalla de informe, `vCierre`):

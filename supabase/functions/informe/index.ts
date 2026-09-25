@@ -1,13 +1,17 @@
-// Informe — redacta el informe técnico desde el historial de la OT.
+// Redactor IA (Agente Redactor de Informes) — módulo interno.
 //
-// La IA SOLO ordena y redacta lo que YA existe en la OT: no diagnostica,
-// no agrega hechos, no cambia la conclusión técnica. El texto vuelve a la
-// app en campos editables y una persona lo revisa antes de enviarlo al
-// cliente (ver sección "INFORME AUTOMÁTICO" en CLAUDE.md).
+// ESTO NO ES PAZ (el agente de WhatsApp). Es un módulo distinto: NO
+// conversa con clientes, NO envía mensajes, NO agenda, NO cambia estados
+// de OT y NO toma decisiones técnicas. SOLO transforma el historial de una
+// OT en un borrador profesional de informe técnico: ordena y redacta lo
+// que YA existe, sin diagnosticar ni agregar hechos. El texto vuelve a la
+// app en campos editables y una persona lo revisa antes de generar o
+// enviar el informe (ver "Informe técnico redactado con IA" en CLAUDE.md).
 //
-// Va aparte de la función `nexa` a propósito: es un feature independiente
-// del chat con clientes, y no debe romperse ni depender de que PAZ esté
-// activa. Comparte el mismo secreto OPENAI_API_KEY (es del proyecto).
+// Va en una función aparte de `nexa` a propósito: es independiente del chat
+// con clientes y no debe romperse ni depender de que PAZ esté activa.
+// Comparte solo el secreto OPENAI_API_KEY (es del proyecto), con su propio
+// prompt separado (REGLAS, abajo).
 //
 // Desplegar:  .\.tools\supabase.exe functions deploy informe --use-api
 

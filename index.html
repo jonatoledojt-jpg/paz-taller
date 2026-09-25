@@ -654,12 +654,16 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <h2 id="cieTitulo"></h2>
       <div id="cieError" class="aviso oculto"></div>
 
-      <!-- Redactar con IA: toma el historial de la OT y redacta profesional
-           SOLO "Trabajos realizados" y "Causa de la falla". No diagnostica,
-           no inventa. Manual (nunca al abrir), con tope de frecuencia. -->
+      <!-- Redactor IA: módulo interno, SEPARADO de PAZ (WhatsApp). No
+           conversa, no envía mensajes, no agenda, no cambia estados de OT
+           ni toma decisiones técnicas. Solo transforma el historial de
+           ESTA OT en un borrador profesional, redactando SOLO "Trabajos
+           realizados" y "Causa de la falla". Manual, con tope de frecuencia.
+           Todo queda editable y lo revisa una persona. -->
       <div class="seccion" id="cieIA">
-        <button class="btn claro" id="btnRedactarIA">Redactar con IA desde el historial</button>
-        <div class="pista" style="margin-top:8px">Ordena y corrige lo que técnicos ya escribieron en la OT. No agrega hechos ni conclusiones. Igual lo revisas tú antes de enviarlo al cliente.</div>
+        <div style="font-weight:600;margin-bottom:2px">Redactor IA</div>
+        <div class="pista" style="margin-bottom:10px">Ordena y corrige lo que el equipo ya escribió en esta OT. No diagnostica, no inventa hechos ni conclusiones, no toma decisiones técnicas. El borrador queda editable y lo revisas tú antes de generar el informe.</div>
+        <button class="btn claro" id="btnRedactarIA">Redactar borrador desde el historial</button>
         <div id="cAdvertencias" class="aviso info oculto" style="margin-top:10px"></div>
       </div>
 
@@ -5327,7 +5331,7 @@ $("btnRedactarIA").onclick = async () => {
   } catch (e) {
     msg("cieError", e.message || "No se pudo redactar con IA.");
   } finally {
-    btn.disabled = false; btn.textContent = "Redactar con IA desde el historial";
+    btn.disabled = false; btn.textContent = "Redactar borrador desde el historial";
   }
 };
 
