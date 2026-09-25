@@ -1995,36 +1995,49 @@ no `nexa`), con su propio prompt separado, y no depende de que PAZ esté
 activa. Lo único que comparte con PAZ es el secreto `OPENAI_API_KEY` (es del
 proyecto) y el modelo de `nexa_config.modelo`.
 
-Generar un informe tomaba 15-20 min: se repedían datos que ya están en la OT
-y las observaciones de los técnicos venían en lenguaje coloquial, con faltas
-y sin estructura. El Redactor IA **solo ordena y redacta lo que ya existe** —
-no diagnostica, no agrega hechos, no cambia la conclusión. El borrador queda
-editable y lo revisa una persona antes de generar o enviar el informe.
+Generar un informe tomaba 15-20 min. El Redactor IA redacta un **informe
+técnico PROFESIONAL** (estilo diagnóstico/reparación Mercedes-Benz: "Se
+realizó diagnóstico en terreno...", "Se retiró...", "Se efectuó prueba de
+ruta...", "La falla persiste..."), **no una bitácora** día por día ni un
+resumen del historial. Nunca usa lenguaje interno de la app ("la OT pasa a
+terreno", "según historial", "se cambia el estado"). Solo ordena y redacta
+lo que ya existe — no diagnostica, no inventa, no cambia la conclusión.
 
-**Qué redacta la IA y qué no:**
-- **Sí redacta** (botón "Redactar con IA" en la pantalla de informe, `vCierre`):
-  "Trabajos realizados" (`cPruebas`) y "Causa de la falla" (`cCausa`). La causa
-  solo si hay una conclusión clara en el historial; si no, deja el texto "No hay
-  conclusión técnica suficiente...".
-- **NO redacta** (decisión humana, quedan en blanco/como estaban): "Resultado
-  final" (`cSolucion`) y "Observaciones para el cliente" (`cObs`). Esos dos
-  tienen un enlace "Mejorar redacción con IA" (`.mejorar-ia`) que solo pule
-  ortografía/claridad/tono de lo que la persona ya escribió, sin agregar nada.
-- El **valor neto** se precarga del monto_final/cotización, editable; la IA
-  nunca define valores.
-- El **vehículo** (marca/modelo/año) se precarga de `vehiculos`.
+**Flujo de dos pasos** (spec 25-09-2026):
+1. **Analizar historial** (`btnAnalizarIA`, acción `analizar`): detecta
+   datos faltantes ANTES de gastar en la redacción completa. Muestra una
+   caja interna "Datos faltantes para completar el informe" (`#cFaltantesLista`)
+   con preguntas concretas (¿la falla quedó resuelta o solo mejora parcial?
+   ¿qué prueba confirmó la causa? ¿se probó en ruta? ¿el componente se
+   reemplazó, reparó o solo revisó? etc.). **Estas preguntas NUNCA salen en
+   el informe.**
+2. La persona responde en `#cRespuestas` (opcional) — la IA las toma como
+   hechos confirmados — o redacta igual.
+3. **Redactar informe** (`btnRedactarIA`, acción `redactar`): devuelve **4
+   secciones** que se mapean a los campos del informe:
+   - `detalle_diagnostico` → `cPruebas` (Trabajos realizados)
+   - `resultado_pruebas` → `cSolucion` (Resultado final) — dice explícito si
+     la falla persiste total/parcial; nunca oculta que sigue fallando.
+   - `causa_conclusion` → `cCausa` (Causa de la falla) — si no hay causa
+     clara: "No se establece una causa definitiva con los antecedentes
+     disponibles".
+   - `observaciones` → `cObs` — recomendaciones/limitaciones/pendientes
+     **solo técnicas**; NUNCA garantía, cobros, condiciones comerciales ni
+     promesas (eso queda en blanco, es decisión humana).
+4. Todo editable; revisión humana; recién ahí se genera el informe/PDF.
+
+El **valor neto** se precarga (monto_final/cotización), editable, la IA no
+define valores. El **vehículo** (marca/modelo/año) se precarga de `vehiculos`.
+Los enlaces "Mejorar redacción con IA" (`.mejorar-ia`, acción `mejorar`) en
+Resultado final y Observaciones solo pulen ortografía/claridad/tono de lo
+que la persona escribió, sin agregar contenido.
 
 **La fuente** (`armarFuenteInforme()` en `index.html`): síntoma del cliente,
-`ordenes.notas_internas` (las observaciones que el equipo carga en el detalle,
-con fecha y autor embebidos), todos los `diagnosticos` de la OT, y la
-cronología de `movimientos_estado` — todo ordenado y mandado a la Edge
-Function. Si no hay contenido técnico real (solo síntoma y cambios de estado),
-`suficiente` es false: **no se llama a la API**, se avisa "No hay información
-técnica suficiente..." y se escribe a mano.
-
-**Advertencias internas**: la IA devuelve una lista de datos ambiguos o
-contradictorios que la persona debería revisar. Se muestran en `#cAdvertencias`
-(caja info) pero **NUNCA salen en el informe** — solo ayudan a revisar.
+`ordenes.notas_internas` (observaciones del equipo con fecha y autor), todos
+los `diagnosticos` (con `codigos_falla`) y la cronología de
+`movimientos_estado` — ordenado cronológicamente. Si no hay contenido técnico
+real, `suficiente` es false: **no se llama a la API**, se avisa y se escribe
+a mano.
 
 **Auditoría** (`informes_ia`): cada generación guarda `borrador_ia` (lo que
 propuso la IA), `fuente_hash` (hash del historial), `generado_por`/`generado_en`.
@@ -2035,11 +2048,12 @@ sigue viviendo en `diagnosticos` (que es lo que lee el informe imprimible);
 `informes_ia` es solo el rastro.
 
 **Costo y límites** (cada llamada cuesta):
-- Botón manual, **nunca automático** al abrir la pantalla.
-- Tope de 25 redacciones por usuario por hora en la Edge Function (`TOPE_POR_HORA`),
-  devuelve 429 si se pasa.
-- Dedup por hash: si ya se generó con el **mismo historial**, pregunta "Ya
-  existe una versión generada... ¿regenerarla?" antes de gastar otra llamada.
+- Botones manuales, **nunca automático** al abrir la pantalla.
+- Tope de 25 generaciones por usuario por hora en la Edge Function
+  (`TOPE_POR_HORA`, cubre analizar + redactar), devuelve 429 si se pasa.
+- Dedup por hash (incluye las respuestas): si ya se generó con el **mismo
+  historial + respuestas**, pregunta "Ya existe una versión generada...
+  ¿regenerarla?" antes de gastar otra llamada.
 
 **La Edge Function `informe` va aparte de `nexa`** a propósito: es independiente
 del chat con clientes, no debe romperse ni depender de que PAZ esté activa.

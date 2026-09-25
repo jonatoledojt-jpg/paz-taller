@@ -2,11 +2,12 @@
 //
 // ESTO NO ES PAZ (el agente de WhatsApp). Es un módulo distinto: NO
 // conversa con clientes, NO envía mensajes, NO agenda, NO cambia estados
-// de OT y NO toma decisiones técnicas. SOLO transforma el historial de una
-// OT en un borrador profesional de informe técnico: ordena y redacta lo
-// que YA existe, sin diagnosticar ni agregar hechos. El texto vuelve a la
-// app en campos editables y una persona lo revisa antes de generar o
-// enviar el informe (ver "Informe técnico redactado con IA" en CLAUDE.md).
+// de OT, NO crea cobros y NO toma decisiones técnicas. SOLO transforma el
+// historial de una OT en un borrador PROFESIONAL de informe técnico
+// (redacción de diagnóstico/reparación Mercedes-Benz), ordenando y
+// redactando lo que YA existe, sin inventar. El texto vuelve a la app en
+// campos editables y una persona lo revisa antes de generar PDF o enviar
+// (ver "Redactor IA" en CLAUDE.md).
 //
 // Va en una función aparte de `nexa` a propósito: es independiente del chat
 // con clientes y no debe romperse ni depender de que PAZ esté activa.
@@ -33,10 +34,9 @@ const URL_SUPABASE = Deno.env.get("SUPABASE_URL")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-// Tope de llamadas por usuario por hora. Cada llamada a la IA cuesta; esto
-// es la red de seguridad contra un reintento masivo o un botón apretado en
-// loop. El dedup real ("no regenerar si el historial no cambió") lo hace el
-// front con el hash antes de llegar acá.
+// Tope de llamadas por usuario por hora (cost guard). Cubre "analizar" y
+// "redactar" juntas. El dedup real ("no regenerar si el historial no
+// cambió") lo hace el front con el hash antes de llegar acá.
 const TOPE_POR_HORA = 25;
 
 function extraerTexto(data: any): string {
@@ -67,24 +67,68 @@ async function llamarIA(apiKey: string, modelo: string, instrucciones: string, e
   return extraerTexto(await r.json());
 }
 
-// Reglas duras de redacción, iguales para "redactar" y "mejorar": la IA
-// nunca inventa. Van en el propio prompt, no confían en el modelo.
+function leerJSON(salida: string): any {
+  const limpio = salida.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  return JSON.parse(limpio);
+}
+
+// Identidad + reglas duras, comunes a todas las acciones. Van en el prompt,
+// no confían en el modelo.
 const REGLAS = [
-  "Eres un redactor técnico de Paz Services, taller de reparación de módulos",
-  "electrónicos de camiones Mercedes-Benz en Talca, Chile.",
+  "Eres el Redactor de Informes Técnicos de Paz Services, taller de",
+  "reparación de módulos electrónicos y sistemas de camiones Mercedes-Benz",
+  "en Talca, Chile. Redactas informes PROFESIONALES de diagnóstico/reparación",
+  "automotriz, del estilo que se le entrega a un cliente.",
   "",
-  "TU ÚNICO TRABAJO es ordenar y redactar profesionalmente información que YA",
-  "existe. NO diagnosticas, NO agregas hechos nuevos, NO cambias la conclusión",
-  "técnica. Reglas que no puedes romper:",
-  "- Redacta en español técnico correcto, con terminología de diagnóstico",
-  "  automotriz Mercedes-Benz (módulos, tacógrafo, vector, GS, ADM, MR, caja,",
-  "  sensores, etc. — usa solo las que aparezcan en el historial).",
-  "- Corrige ortografía y ordena las ideas de forma clara y cronológica.",
-  "- Mantén los hechos EXACTAMENTE como están. No agregues piezas, pruebas,",
-  "  fechas, módulos, visitas, valores ni conclusiones que no estén en el texto.",
-  "- Si algo no está claro, déjalo como 'no especificado' o no lo incluyas.",
-  "- NO transformes sospechas en conclusiones. NO conviertas una observación",
-  "  preliminar en diagnóstico final.",
+  "ESTILO: técnico, formal, directo y claro. Usa expresiones como: 'Se",
+  "realizó diagnóstico en terreno', 'Se verificó', 'Se inspeccionó', 'Se",
+  "retiró', 'Se corrigió', 'Se reemplazó', 'Se efectuó prueba de ruta', 'Se",
+  "realizó prueba en banco', 'Se constató', 'La falla persiste', 'El sistema",
+  "requiere revisión adicional'. Cuando hay varias visitas, NO narres cada",
+  "fecha como bitácora: usa 'En una primera intervención...', 'Posteriormente...',",
+  "'En una nueva revisión...', 'Durante la prueba final...'.",
+  "",
+  "NUNCA uses lenguaje interno de la app ni de gestión, como: 'la OT pasa a",
+  "terreno', 'queda resuelto en terreno', 'ingresa a reparación', 'se agenda",
+  "una visita', 'estado actual', 'según historial', 'se registra', 'se cambia",
+  "el estado', 'la app indica'. El informe habla del vehículo y del trabajo,",
+  "no del sistema.",
+  "",
+  "NO es un resumen narrativo del historial día por día: es un informe",
+  "técnico que explica la falla, el diagnóstico, los trabajos, las pruebas,",
+  "el resultado y la condición final.",
+  "",
+  "REGLAS CRÍTICAS (no las rompas nunca):",
+  "- No inventes piezas, pruebas, fechas, diagnósticos ni valores.",
+  "- No digas que algo fue REEMPLAZADO si solo fue revisado; ni REPARADO si",
+  "  solo fue diagnosticado.",
+  "- No digas que el vehículo quedó operativo ni que un módulo quedó reparado",
+  "  si el historial no lo afirma.",
+  "- Si la falla persiste (total o parcial), déjalo EXPLÍCITO. Nunca lo",
+  "  ocultes con redacción bonita.",
+  "- No agregues garantía, condiciones comerciales, cobros, promesas al",
+  "  cliente, fechas de entrega ni compromisos de nueva visita si no están",
+  "  en el historial.",
+  "- No transformes una sospecha en certeza ni cambies una conclusión técnica.",
+  "- Si algo no está en el historial, no lo incluyas. Nunca rellenes vacíos",
+  "  técnicos inventando.",
+].join("\n");
+
+// Las preguntas que el Redactor debe saber detectar cuando faltan datos
+// críticos para un informe certero (sección "DATOS FALTANTES").
+const GUIA_FALTANTES = [
+  "Revisa si falta información crítica para un informe certero: síntoma",
+  "inicial claro; pruebas realizadas y su resultado; componentes",
+  "intervenidos; si la falla quedó resuelta, parcial o persistente; causa",
+  "técnica definitiva o solo sospecha; condición final del vehículo; si hubo",
+  "prueba de ruta / banco / laboratorio; si el módulo se instaló, entregó o",
+  "quedó pendiente; recomendaciones o pasos siguientes.",
+  "Devuelve preguntas CONCRETAS para que la persona complete, por ejemplo:",
+  "'¿La falla quedó completamente resuelta o solo hubo mejora parcial?',",
+  "'¿Qué prueba confirmó la causa?', '¿El vehículo fue probado en ruta?',",
+  "'¿Qué componente fue reemplazado, reparado o solo revisado?', '¿El módulo",
+  "fue instalado o entregado?', '¿Quedó alguna revisión pendiente?'.",
+  "Estas preguntas NO salen en el informe del cliente: son solo para revisar.",
 ].join("\n");
 
 Deno.serve(async (req) => {
@@ -103,105 +147,118 @@ Deno.serve(async (req) => {
     const { data: perfil } = await comoUsuario
       .from("perfiles").select("rol").eq("id", user.id).single();
     if (!perfil || !["dueno", "coordinador"].includes(perfil.rol)) {
-      return json({ error: "No tienes permiso para redactar informes con IA." }, 403);
+      return json({ error: "No tienes permiso para usar el Redactor IA." }, 403);
     }
 
     const apiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!apiKey) {
-      return json({ error: "Falta configurar OPENAI_API_KEY." }, 503);
-    }
+    if (!apiKey) return json({ error: "Falta configurar OPENAI_API_KEY." }, 503);
 
-    // El modelo vive en nexa_config (mismo que usa PAZ). Se lee con service
-    // role. Si por alguna razón no está, un modelo por defecto sensato.
     const admin = createClient(URL_SUPABASE, SERVICE);
     const { data: cfg } = await admin.from("nexa_config").select("modelo").eq("id", 1).single();
     const modelo = cfg?.modelo?.trim() || "gpt-5.5";
 
-    const { accion = "redactar", orden_id, fuente = "", fuente_hash = "", texto = "" } =
+    const { accion = "redactar", orden_id, fuente = "", fuente_hash = "", respuestas = "", texto = "" } =
       await req.json();
 
-    // Tope de frecuencia por usuario (cost guard), común a las dos acciones.
+    // Tope de frecuencia por usuario, común a todas las acciones.
     const hace1h = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await comoUsuario
-      .from("informes_ia")
-      .select("id", { count: "exact", head: true })
-      .eq("generado_por", user.id)
-      .gte("generado_en", hace1h);
+      .from("informes_ia").select("id", { count: "exact", head: true })
+      .eq("generado_por", user.id).gte("generado_en", hace1h);
     if ((count ?? 0) >= TOPE_POR_HORA) {
-      return json({
-        error: "Llegaste al tope de redacciones por hora. Espera un rato antes de generar más.",
-      }, 429);
+      return json({ error: "Llegaste al tope de generaciones por hora. Espera un rato." }, 429);
     }
 
-    // ── Redactar el informe desde el historial ──
+    // ── Analizar historial: detecta datos faltantes ANTES de redactar ──
+    if (accion === "analizar") {
+      if (!fuente.trim()) return json({ error: "No hay historial que analizar." }, 400);
+      const instrucciones = [
+        REGLAS, "",
+        "Recibes el HISTORIAL de una OT. NO redactes el informe todavía.",
+        GUIA_FALTANTES, "",
+        "Devuelve EXCLUSIVAMENTE un JSON válido, sin texto fuera del JSON:",
+        '{ "datos_faltantes": ["pregunta concreta", "..."] }',
+        "Si no falta nada crítico, devuelve una lista vacía.",
+      ].join("\n");
+      const salida = await llamarIA(apiKey, modelo, instrucciones, fuente);
+      let out: any;
+      try { out = leerJSON(salida); } catch {
+        return json({ error: "La IA no devolvió un análisis legible. Reintenta." }, 502);
+      }
+      const faltantes = Array.isArray(out?.datos_faltantes)
+        ? out.datos_faltantes.map((x: unknown) => String(x)).filter(Boolean) : [];
+      return json({ datos_faltantes: faltantes });
+    }
+
+    // ── Redactar el informe profesional en 4 secciones ──
     if (accion === "redactar") {
       if (!orden_id) return json({ error: "Falta la OT." }, 400);
       if (!fuente.trim()) return json({ error: "No hay historial que redactar." }, 400);
 
+      const entrada = respuestas.trim()
+        ? `${fuente}\n\nRESPUESTAS DE LA PERSONA A LOS DATOS FALTANTES (úsalas como hechos confirmados):\n${respuestas}`
+        : fuente;
+
       const instrucciones = [
-        REGLAS,
-        "",
-        "Recibes el HISTORIAL COMPLETO de una OT, en orden cronológico:",
-        "observaciones cargadas por técnicos (pueden venir mal escritas o en",
-        "lenguaje coloquial), diagnósticos, trabajos y estados. Tu salida debe",
-        "ser EXCLUSIVAMENTE un objeto JSON válido, sin texto fuera del JSON, con",
-        "esta forma exacta:",
-        '{',
-        '  "trabajos_realizados": "Qué se hizo, qué se revisó, qué se probó y en',
-        '     qué etapa. Redactado profesional y cronológico. Solo lo que está',
-        '     en el historial.",',
-        '  "causa_falla": "Solo si existe una conclusión técnica CLARA en el',
-        '     historial. Si no existe, deja exactamente el texto: No hay',
-        '     conclusión técnica suficiente en el historial para redactar esta',
-        '     sección.",',
-        '  "advertencias_internas": ["lista breve de datos ambiguos,',
-        '     contradictorios o insuficientes que la persona debería revisar.',
-        '     Esta lista NO sale en el informe final, solo ayuda a revisar.",',
-        '     "una advertencia por elemento; [] si no hay ninguna."]',
-        '}',
+        REGLAS, "",
+        "Redacta el informe PROFESIONAL de esta OT en cuatro secciones.",
+        "Devuelve EXCLUSIVAMENTE un JSON válido, sin texto fuera del JSON, con",
+        "esta forma exacta (cada valor es texto redactado, en párrafos):",
+        "{",
+        '  "detalle_diagnostico": "DETALLE DE DIAGNÓSTICO Y TRABAJOS REALIZADOS:',
+        '     la falla inicial (síntoma del cliente, códigos relevantes) y lo que',
+        '     se hizo — pruebas, componentes revisados/retirados/reparados/',
+        '     reemplazados, intervención en terreno o laboratorio, pruebas',
+        '     posteriores. Solo lo que está en el historial.",',
+        '  "resultado_pruebas": "RESULTADO DE LAS PRUEBAS: qué cambió después del',
+        '     trabajo. Di claramente si hubo mejora, si quedó operativo, si la',
+        '     falla persiste total o parcialmente, si la prueba fue limitada, y',
+        '     qué condición se observó al final. Si mejoró pero sigue fallando,',
+        '     dilo: \'Se observa una mejora parcial, sin embargo la falla',
+        '     persiste.\'",',
+        '  "causa_conclusion": "CAUSA DE LA FALLA / CONCLUSIÓN TÉCNICA: solo si',
+        '     está claramente indicada. Si no hay causa definitiva, escribe',
+        '     exactamente: No se establece una causa definitiva con los',
+        '     antecedentes disponibles. Nunca conviertas una sospecha en',
+        '     diagnóstico final ni digas que quedó resuelto si la falla persiste.",',
+        '  "observaciones": "OBSERVACIONES: recomendaciones TÉCNICAS,',
+        '     limitaciones o puntos pendientes (ej: continuar revisión del',
+        '     sistema GP; validar en ruta; no considerar la falla resuelta hasta',
+        '     validar). SOLO técnico: nada de garantía, cobros, condiciones',
+        '     comerciales ni promesas. Deja \'\' si no hay nada que observar.",',
+        '  "datos_faltantes": ["si aún ves vacíos importantes, pregúntalos acá.',
+        '     No salen en el informe del cliente. [] si no hay."]',
+        "}",
       ].join("\n");
 
-      const salida = await llamarIA(apiKey, modelo, instrucciones, fuente);
-      const limpio = salida.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
-      let borrador: any;
-      try {
-        borrador = JSON.parse(limpio);
-      } catch {
-        return json({ error: "La IA no devolvió un informe legible. Reintenta.", crudo: limpio }, 502);
+      const salida = await llamarIA(apiKey, modelo, instrucciones, entrada);
+      let b: any;
+      try { b = leerJSON(salida); } catch {
+        return json({ error: "La IA no devolvió un informe legible. Reintenta.", crudo: salida.slice(0, 400) }, 502);
       }
-      const normal = {
-        trabajos_realizados: String(borrador?.trabajos_realizados ?? "").trim(),
-        causa_falla: String(borrador?.causa_falla ?? "").trim(),
-        advertencias_internas: Array.isArray(borrador?.advertencias_internas)
-          ? borrador.advertencias_internas.map((x: unknown) => String(x)).filter(Boolean)
-          : [],
+      const borrador = {
+        detalle_diagnostico: String(b?.detalle_diagnostico ?? "").trim(),
+        resultado_pruebas: String(b?.resultado_pruebas ?? "").trim(),
+        causa_conclusion: String(b?.causa_conclusion ?? "").trim(),
+        observaciones: String(b?.observaciones ?? "").trim(),
+        datos_faltantes: Array.isArray(b?.datos_faltantes)
+          ? b.datos_faltantes.map((x: unknown) => String(x)).filter(Boolean) : [],
       };
 
-      // Rastro de auditoría: qué generó la IA, con qué historial (hash) y
-      // quién. La aprobación (texto final + quién + cuándo) la agrega el
-      // front al guardar el informe.
       const { data: fila, error: eIns } = await comoUsuario
         .from("informes_ia")
-        .insert({
-          orden_id,
-          fuente_hash,
-          borrador_ia: normal,
-          generado_por: user.id,
-        })
-        .select("id")
-        .single();
+        .insert({ orden_id, fuente_hash, borrador_ia: borrador, generado_por: user.id })
+        .select("id").single();
       if (eIns) return json({ error: "No se pudo guardar el borrador: " + eIns.message }, 500);
 
-      return json({ borrador: normal, informe_id: fila.id });
+      return json({ borrador, informe_id: fila.id });
     }
 
     // ── Mejorar la redacción de un borrador escrito por la persona ──
-    // Solo mejora ortografía, claridad y tono. No agrega contenido.
     if (accion === "mejorar") {
       if (!texto.trim()) return json({ error: "No hay texto que mejorar." }, 400);
       const instrucciones = [
-        REGLAS,
-        "",
+        REGLAS, "",
         "Recibes un borrador escrito por una persona del equipo. Devuelve el",
         "MISMO texto con mejor ortografía, claridad y tono profesional. No",
         "agregues ninguna idea, dato ni frase que no esté en el borrador.",

@@ -662,9 +662,16 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
            Todo queda editable y lo revisa una persona. -->
       <div class="seccion" id="cieIA">
         <div style="font-weight:600;margin-bottom:2px">Redactor IA</div>
-        <div class="pista" style="margin-bottom:10px">Ordena y corrige lo que el equipo ya escribió en esta OT. No diagnostica, no inventa hechos ni conclusiones, no toma decisiones técnicas. El borrador queda editable y lo revisas tú antes de generar el informe.</div>
-        <button class="btn claro" id="btnRedactarIA">Redactar borrador desde el historial</button>
-        <div id="cAdvertencias" class="aviso info oculto" style="margin-top:10px"></div>
+        <div class="pista" style="margin-bottom:10px">Redacta un informe técnico profesional desde lo que el equipo ya escribió en esta OT. No diagnostica, no inventa, no toma decisiones. El borrador queda editable y lo revisas tú antes de generar el PDF.</div>
+        <button class="btn claro" id="btnAnalizarIA">Analizar historial</button>
+        <div id="cDatosFaltantes" class="oculto" style="margin-top:10px">
+          <div class="aviso info" id="cFaltantesLista"></div>
+          <div class="campo" style="margin-top:8px">
+            <label for="cRespuestas">Tus respuestas o correcciones (opcional)</label>
+            <textarea id="cRespuestas" placeholder="Responde lo que puedas de arriba. La IA lo tomará como dato confirmado. No sale en el informe."></textarea>
+          </div>
+          <button class="btn" id="btnRedactarIA">Redactar informe</button>
+        </div>
       </div>
 
       <div class="seccion">
@@ -5184,7 +5191,8 @@ let informeIaActual = null;
 $("btnCierre").onclick = async () => {
   msg("cieError", "");
   informeIaActual = null;
-  $("cAdvertencias").classList.add("oculto");
+  $("cDatosFaltantes").classList.add("oculto");
+  $("cRespuestas").value = "";
   $("cieTitulo").textContent = "Informe " + (ordenActual.numero_ot ?? "");
   $("campoMonto").classList.toggle("oculto", perfil?.rol === "tecnico");
   // Redactar con IA es solo de dueño/coordinador (cada llamada cuesta, y la
@@ -5290,21 +5298,61 @@ async function armarFuenteInforme() {
   return { fuente, suficiente: cuerpoTecnico >= 40 };
 }
 
+// Muestra la caja de "Datos faltantes" con las preguntas internas (no salen
+// en el informe) y deja visible el botón "Redactar informe".
+function pintarDatosFaltantes(preguntas) {
+  const caja = $("cFaltantesLista");
+  if (preguntas?.length) {
+    caja.innerHTML = "<strong>Datos faltantes para completar el informe</strong>" +
+      "<div style='font-size:12px;margin:2px 0 6px'>Respóndelos abajo para un informe más certero (no salen en el informe del cliente), o redacta igual dejando explícito lo que no se puede afirmar.</div>" +
+      "<ul style='margin:0;padding-left:18px'>" +
+      preguntas.map(p => `<li>${escapar(p)}</li>`).join("") + "</ul>";
+  } else {
+    caja.innerHTML = "<strong>El historial se ve completo.</strong> Puedes redactar el informe.";
+  }
+  $("cDatosFaltantes").classList.remove("oculto");
+}
+
+// Paso 1: analizar el historial y detectar qué falta ANTES de redactar.
+$("btnAnalizarIA").onclick = async () => {
+  msg("cieError", "");
+  const btn = $("btnAnalizarIA");
+  btn.disabled = true; btn.textContent = "Analizando el historial…";
+  try {
+    const { fuente, suficiente } = await armarFuenteInforme();
+    if (!suficiente) {
+      msg("cieError", "No hay información técnica suficiente en el historial para redactar el informe. Complétalo a mano o carga observaciones en la OT.");
+      $("cDatosFaltantes").classList.add("oculto");
+      return;
+    }
+    const { datos_faltantes } = await llamarInforme({
+      accion: "analizar", orden_id: ordenActual.id, fuente
+    });
+    pintarDatosFaltantes(datos_faltantes);
+  } catch (e) {
+    msg("cieError", e.message || "No se pudo analizar el historial.");
+  } finally {
+    btn.disabled = false; btn.textContent = "Analizar historial";
+  }
+};
+
+// Paso 2: redactar el informe profesional (4 secciones) usando el historial
+// + las respuestas que la persona haya escrito. Todo queda editable.
 $("btnRedactarIA").onclick = async () => {
   msg("cieError", "");
-  $("cAdvertencias").classList.add("oculto");
   const btn = $("btnRedactarIA");
   btn.disabled = true; btn.textContent = "Leyendo el historial…";
   try {
     const { fuente, suficiente } = await armarFuenteInforme();
     if (!suficiente) {
-      msg("cieError", "No hay información técnica suficiente en el historial para redactar el informe con IA. Escríbelo a mano.");
+      msg("cieError", "No hay información técnica suficiente para redactar. Escríbelo a mano.");
       return;
     }
-    const hash = hashTexto(fuente);
+    const respuestas = $("cRespuestas").value.trim();
+    // El hash incluye las respuestas: si el historial no cambió pero la
+    // persona agregó respuestas, es una redacción distinta y sí conviene.
+    const hash = hashTexto(fuente + "\n" + respuestas);
 
-    // ¿Ya se generó antes con el mismo historial? No gastar otra llamada
-    // salvo que la persona lo pida explícitamente.
     const { data: previo } = await db.from("informes_ia")
       .select("fuente_hash").eq("orden_id", ordenActual.id)
       .order("generado_en", { ascending: false }).limit(1);
@@ -5313,25 +5361,23 @@ $("btnRedactarIA").onclick = async () => {
       return;
     }
 
-    btn.textContent = "Redactando con IA…";
+    btn.textContent = "Redactando informe…";
     const { borrador, informe_id } = await llamarInforme({
-      accion: "redactar", orden_id: ordenActual.id, fuente, fuente_hash: hash
+      accion: "redactar", orden_id: ordenActual.id, fuente, fuente_hash: hash, respuestas
     });
     informeIaActual = informe_id;
-    $("cPruebas").value = borrador.trabajos_realizados || "";
-    $("cCausa").value   = borrador.causa_falla || "";
+    // Mapea las 4 secciones a los campos del informe.
+    $("cPruebas").value  = borrador.detalle_diagnostico || "";  // Trabajos realizados
+    $("cSolucion").value = borrador.resultado_pruebas || "";    // Resultado final
+    $("cCausa").value    = borrador.causa_conclusion || "";     // Causa de la falla
+    $("cObs").value      = borrador.observaciones || "";        // Observaciones (solo técnicas)
 
-    // Advertencias internas: NO van en el informe, solo ayudan a revisar.
-    const adv = $("cAdvertencias");
-    if (borrador.advertencias_internas?.length) {
-      adv.innerHTML = "<strong>Revisa antes de enviar (no sale en el informe):</strong><ul style='margin:6px 0 0;padding-left:18px'>" +
-        borrador.advertencias_internas.map(a => `<li>${escapar(a)}</li>`).join("") + "</ul>";
-      adv.classList.remove("oculto");
-    }
+    // Datos faltantes que la IA todavía ve: refrescar la caja interna.
+    pintarDatosFaltantes(borrador.datos_faltantes);
   } catch (e) {
-    msg("cieError", e.message || "No se pudo redactar con IA.");
+    msg("cieError", e.message || "No se pudo redactar el informe.");
   } finally {
-    btn.disabled = false; btn.textContent = "Redactar borrador desde el historial";
+    btn.disabled = false; btn.textContent = "Redactar informe";
   }
 };
 
@@ -5401,9 +5447,9 @@ $("btnGenerar").onclick = async () => {
     if (informeIaActual) {
       await db.from("informes_ia").update({
         texto_final: {
-          trabajos_realizados: pruebas,
-          causa_falla: $("cCausa").value.trim() || null,
-          resultado_final: solucion,
+          detalle_diagnostico: pruebas,
+          resultado_pruebas: solucion,
+          causa_conclusion: $("cCausa").value.trim() || null,
           observaciones: $("cObs").value.trim() || null,
           monto_neto: monto || null
         },
