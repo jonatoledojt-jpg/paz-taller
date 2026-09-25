@@ -1036,8 +1036,16 @@ nueva, solo se usó lo que ya estaba.
 Encabezado `PAZ SERVICES | INFORME TÉCNICO` → tabla de datos (cliente, RUT,
 vehículo, patente, módulo, fecha) → secciones numeradas: 1. Antecedentes,
 2. Trabajos realizados, 3. Resultado final, 4. Conclusión técnica, 5. Valor
-del servicio (neto + IVA 19% + total), 6. Observaciones → firmas de Jonatan
-Daniel Toledo Orellana y recepción conforme del cliente.
+del servicio (neto + IVA 19% + total), 6. Observaciones → al final, un texto
+**"Técnicos responsables"** con Jonatan Daniel Toledo Orellana y Jonatan
+Osores (clase `.responsables`).
+
+**Sin espacios de firma en el informe (25-09-2026).** Jonatan: es un
+documento que casi nunca se imprime, así que se quitaron los recuadros de
+firma y quedó solo el texto de técnicos responsables. Ojo: la clase `.firmas`
+**sigue en uso** por el comprobante de pago y la cotización formal — esos sí
+llevan firma, no tocarlos. Además, al imprimir/PDF ahora también se esconde
+la barra inferior (`.navinf`) que antes salía en la hoja.
 
 **Resultado final y Conclusión técnica son secciones SEPARADAS (25-09-2026)**,
 a pedido de Jonatan: antes "Resultado final" juntaba `causa_raiz + solucion` y

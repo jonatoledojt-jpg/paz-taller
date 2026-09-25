@@ -321,10 +321,11 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 .hoja table.valor tr.total td{font-weight:700;border-bottom:none;border-top:2px solid var(--tinta)}
 .hoja .firmas{display:flex;gap:26px;margin-top:52px;font-size:12.5px;text-align:center}
 .hoja .firmas div{flex:1;border-top:1px solid var(--tinta);padding-top:7px}
+.hoja .responsables{margin-top:44px;padding-top:12px;border-top:1px solid var(--tinta);font-size:12.5px;line-height:1.6}
 
 @media print{
   body{background:#fff}
-  header,.noimprimir{display:none !important}
+  header,.navinf,.noimprimir{display:none !important}
   main{padding:0;max-width:none}
   .hoja{border:none;border-radius:0;padding:0}
 }
@@ -5512,9 +5513,10 @@ async function mostrarInforme() {
     <h3>6. Observaciones</h3>
     <p>${escapar(o.observaciones ?? "Sin observaciones.")}</p>
 
-    <div class="firmas">
-      <div>Jonatan Daniel Toledo Orellana<br>Paz Services LTDA.</div>
-      <div>Recepci\u00f3n conforme<br>Cliente</div>
+    <div class="responsables">
+      <strong>T\u00e9cnicos responsables</strong><br>
+      Jonatan Daniel Toledo Orellana &middot; Jonatan Osores<br>
+      Paz Services LTDA.
     </div>
   </div>`;
   ver("vInforme");
