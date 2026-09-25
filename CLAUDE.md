@@ -1995,49 +1995,49 @@ no `nexa`), con su propio prompt separado, y no depende de que PAZ esté
 activa. Lo único que comparte con PAZ es el secreto `OPENAI_API_KEY` (es del
 proyecto) y el modelo de `nexa_config.modelo`.
 
-Generar un informe tomaba 15-20 min. El Redactor IA redacta un **informe
-técnico PROFESIONAL** (estilo diagnóstico/reparación Mercedes-Benz: "Se
-realizó diagnóstico en terreno...", "Se retiró...", "Se efectuó prueba de
-ruta...", "La falla persiste..."), **no una bitácora** día por día ni un
-resumen del historial. Nunca usa lenguaje interno de la app ("la OT pasa a
-terreno", "según historial", "se cambia el estado"). Solo ordena y redacta
-lo que ya existe — no diagnostica, no inventa, no cambia la conclusión.
+El Redactor IA escribe el **INFORME FINAL PROFESIONAL** para el cliente
+(modo documento, estilo diagnóstico/reparación MB: "El vehículo fue atendido
+por...", "Se corrigió...", "No obstante...", "Se determina que..."). **No es
+un resumen, ni bitácora, ni checklist, ni copia corregida** del texto crudo:
+entiende la secuencia, separa problemas distintos y **redacta de nuevo** en
+párrafos fluidos. Nunca usa lenguaje de sistema ("la OT pasa a terreno",
+"según historial"). No inventa, no cambia la conclusión.
 
-**Flujo de dos pasos** (spec 25-09-2026):
-1. **Analizar historial** (`btnAnalizarIA`, acción `analizar`): detecta
-   datos faltantes ANTES de gastar en la redacción completa. Muestra una
-   caja interna "Datos faltantes para completar el informe" (`#cFaltantesLista`)
-   con preguntas concretas (¿la falla quedó resuelta o solo mejora parcial?
-   ¿qué prueba confirmó la causa? ¿se probó en ruta? ¿el componente se
-   reemplazó, reparó o solo revisó? etc.). **Estas preguntas NUNCA salen en
-   el informe.**
-2. La persona responde en `#cRespuestas` (opcional) — la IA las toma como
-   hechos confirmados — o redacta igual.
-3. **Redactar informe** (`btnRedactarIA`, acción `redactar`): devuelve **4
-   secciones** que se mapean a los campos del informe:
-   - `detalle_diagnostico` → `cPruebas` (Trabajos realizados)
-   - `resultado_pruebas` → `cSolucion` (Resultado final) — dice explícito si
-     la falla persiste total/parcial; nunca oculta que sigue fallando.
-   - `causa_conclusion` → `cCausa` (Causa de la falla) — si no hay causa
-     clara: "No se establece una causa definitiva con los antecedentes
-     disponibles".
-   - `observaciones` → `cObs` — recomendaciones/limitaciones/pendientes
-     **solo técnicas**; NUNCA garantía, cobros, condiciones comerciales ni
-     promesas (eso queda en blanco, es decisión humana).
-4. Todo editable; revisión humana; recién ahí se genera el informe/PDF.
+**Ajuste clave (25-09-2026):** al principio devolvía un resumen plano, con
+los títulos de sección metidos DENTRO del texto y frases de historial.
+Causas y arreglos:
+- El prompt le hacía escribir "DETALLE DE DIAGNÓSTICO...:" dentro del
+  contenido → ahora devuelve **texto limpio, sin títulos** (los títulos los
+  pone la interfaz).
+- `armarFuenteInforme()` incluía la **cronología de `movimientos_estado`**
+  (lenguaje interno: "agendado → en_terreno") → **se eliminó**; la fuente es
+  solo síntoma + `notas_internas` + `diagnosticos`.
+- El prompt trae ahora un **ejemplo few-shot** (la entrada/salida real del
+  caso GS17/tacógrafo/GP) que ancla el estilo esperado, y reglas explícitas
+  de frases permitidas/prohibidas y de **separar falla corregida de falla
+  persistente**.
 
-El **valor neto** se precarga (monto_final/cotización), editable, la IA no
-define valores. El **vehículo** (marca/modelo/año) se precarga de `vehiculos`.
-Los enlaces "Mejorar redacción con IA" (`.mejorar-ia`, acción `mejorar`) en
-Resultado final y Observaciones solo pulen ortografía/claridad/tono de lo
-que la persona escribió, sin agregar contenido.
+**Entrada — el detalle manual es lo principal.** En `vCierre` hay un campo
+**"Detalle técnico del trabajo"** (`#cManual`, siempre visible) donde el
+equipo escribe en lenguaje de taller lo que se hizo; el Redactor lo trata
+como **declaración técnica en bruto** y lo transforma. Se combina con el
+registro de la OT (`armarFuenteInforme()`). Basta con que haya detalle manual
+O contenido técnico en la OT; si no hay nada, se avisa y no se llama a la API.
 
-**La fuente** (`armarFuenteInforme()` en `index.html`): síntoma del cliente,
-`ordenes.notas_internas` (observaciones del equipo con fecha y autor), todos
-los `diagnosticos` (con `codigos_falla`) y la cronología de
-`movimientos_estado` — ordenado cronológicamente. Si no hay contenido técnico
-real, `suficiente` es false: **no se llama a la API**, se avisa y se escribe
-a mano.
+**Flujo:** `Analizar` (`btnAnalizarIA`, acción `analizar`) detecta datos
+faltantes y los muestra en `#cFaltantesLista` (preguntas internas que **no
+salen en el informe**). `Redactar informe` (`btnRedactarIA`, acción
+`redactar`) devuelve **4 secciones de texto limpio** que mapean a los campos:
+- `detalle_diagnostico` → `cPruebas` (antecedente + diagnóstico + trabajos)
+- `resultado_pruebas` → `cSolucion` (qué se validó / si la falla persiste)
+- `causa_conclusion` → `cCausa` (o "No se establece una causa definitiva...")
+- `observaciones` → `cObs` (recomendación final SOLO técnica; nada comercial)
+Todo editable; revisión humana; recién ahí el informe/PDF.
+
+El **valor neto** se precarga (editable), la IA no define valores. El
+**vehículo** (marca/modelo/año) se precarga. Los enlaces "Mejorar redacción
+con IA" (`.mejorar-ia`, acción `mejorar`) en Resultado final y Observaciones
+solo pulen lo que la persona escribió.
 
 **Auditoría** (`informes_ia`): guarda la **cadena completa** para que un
 auditor pueda verificar que la IA redactó fiel (no inventó, no distorsionó):

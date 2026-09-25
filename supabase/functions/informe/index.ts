@@ -2,17 +2,16 @@
 //
 // ESTO NO ES PAZ (el agente de WhatsApp). Es un módulo distinto: NO
 // conversa con clientes, NO envía mensajes, NO agenda, NO cambia estados
-// de OT, NO crea cobros y NO toma decisiones técnicas. SOLO transforma el
-// historial de una OT en un borrador PROFESIONAL de informe técnico
-// (redacción de diagnóstico/reparación Mercedes-Benz), ordenando y
-// redactando lo que YA existe, sin inventar. El texto vuelve a la app en
-// campos editables y una persona lo revisa antes de generar PDF o enviar
-// (ver "Redactor IA" en CLAUDE.md).
+// de OT, NO crea cobros y NO toma decisiones técnicas. SOLO transforma un
+// detalle técnico (escrito por el equipo) + el historial de la OT en un
+// INFORME FINAL PROFESIONAL, listo para el cliente. Ordena y redacta lo que
+// YA existe, sin inventar. El texto vuelve a la app en campos editables y
+// una persona lo revisa antes de generar PDF o enviar (ver "Redactor IA"
+// en CLAUDE.md).
 //
 // Va en una función aparte de `nexa` a propósito: es independiente del chat
-// con clientes y no debe romperse ni depender de que PAZ esté activa.
-// Comparte solo el secreto OPENAI_API_KEY (es del proyecto), con su propio
-// prompt separado (REGLAS, abajo).
+// con clientes y no depende de que PAZ esté activa. Comparte solo el secreto
+// OPENAI_API_KEY (del proyecto), con su propio prompt separado (REGLAS).
 //
 // Desplegar:  .\.tools\supabase.exe functions deploy informe --use-api
 
@@ -34,9 +33,6 @@ const URL_SUPABASE = Deno.env.get("SUPABASE_URL")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-// Tope de llamadas por usuario por hora (cost guard). Cubre "analizar" y
-// "redactar" juntas. El dedup real ("no regenerar si el historial no
-// cambió") lo hace el front con el hash antes de llegar acá.
 const TOPE_POR_HORA = 25;
 
 function extraerTexto(data: any): string {
@@ -72,63 +68,98 @@ function leerJSON(salida: string): any {
   return JSON.parse(limpio);
 }
 
-// Identidad + reglas duras, comunes a todas las acciones. Van en el prompt,
-// no confían en el modelo.
+// Junta el detalle técnico manual (la declaración del equipo, es lo principal)
+// con el registro de la OT.
+function armarEntrada(fuente: string, respuestas: string): string {
+  const p: string[] = [];
+  if (respuestas.trim()) {
+    p.push("DECLARACIÓN TÉCNICA DEL EQUIPO (esto es lo principal: es el detalle en bruto del trabajo, en lenguaje de taller; transfórmalo en el informe):\n" + respuestas.trim());
+  }
+  if (fuente.trim()) {
+    p.push("REGISTRO DE LA OT (contexto de apoyo; úsalo solo si aporta hechos técnicos reales):\n" + fuente.trim());
+  }
+  return p.join("\n\n");
+}
+
+// Identidad + reglas de estilo + reglas duras. Van en el prompt, no confían
+// en el modelo.
 const REGLAS = [
   "Eres el Redactor de Informes Técnicos de Paz Services, taller de",
   "reparación de módulos electrónicos y sistemas de camiones Mercedes-Benz",
-  "en Talca, Chile. Redactas informes PROFESIONALES de diagnóstico/reparación",
-  "automotriz, del estilo que se le entrega a un cliente.",
+  "en Talca, Chile. Escribes el INFORME FINAL que se le entrega al cliente.",
   "",
-  "ESTILO: técnico, formal, directo y claro. Usa expresiones como: 'Se",
-  "realizó diagnóstico en terreno', 'Se verificó', 'Se inspeccionó', 'Se",
-  "retiró', 'Se corrigió', 'Se reemplazó', 'Se efectuó prueba de ruta', 'Se",
-  "realizó prueba en banco', 'Se constató', 'La falla persiste', 'El sistema",
-  "requiere revisión adicional'. Cuando hay varias visitas, NO narres cada",
-  "fecha como bitácora: usa 'En una primera intervención...', 'Posteriormente...',",
-  "'En una nueva revisión...', 'Durante la prueba final...'.",
+  "MODO DOCUMENTO FINAL: el resultado debe sonar como un informe técnico",
+  "profesional escrito por Paz Services para un cliente — técnico, claro,",
+  "formal, fluido, explicativo y defendible ante el cliente. NO es un resumen",
+  "automático, NO es una bitácora, NO es un checklist, NO es un historial de",
+  "OT, NO es una copia corregida del texto del usuario. Trata el detalle que",
+  "recibes como una DECLARACIÓN TÉCNICA EN BRUTO: entiende la secuencia,",
+  "ordena los hechos, separa problemas distintos y redáctalo de nuevo en",
+  "párrafos profesionales fluidos.",
   "",
-  "NUNCA uses lenguaje interno de la app ni de gestión, como: 'la OT pasa a",
-  "terreno', 'queda resuelto en terreno', 'ingresa a reparación', 'se agenda",
-  "una visita', 'estado actual', 'según historial', 'se registra', 'se cambia",
-  "el estado', 'la app indica'. El informe habla del vehículo y del trabajo,",
-  "no del sistema.",
+  "ESTILO — usa expresiones como: 'El vehículo fue atendido por...', 'Durante",
+  "el diagnóstico inicial se detectó...', 'Una vez corregida esta condición...',",
+  "'Posteriormente, durante la prueba de ruta...', 'En una nueva intervención",
+  "se verificó...', 'Se corrigió...', 'Se reemplazó...', 'Se validó...', 'No",
+  "obstante...', 'Debido a que la falla persistió...', 'Se determina que...',",
+  "'Se recomienda...'.",
   "",
-  "NO es un resumen narrativo del historial día por día: es un informe",
-  "técnico que explica la falla, el diagnóstico, los trabajos, las pruebas,",
-  "el resultado y la condición final.",
+  "PROHIBIDO — nunca uses lenguaje de sistema ni frases pobres: 'Se registra',",
+  "'Se informa', 'Según historial', 'La OT pasa', 'queda resuelto en terreno',",
+  "'ingresa a reparación', 'se agenda', 'estado actual', 'se cambia el estado',",
+  "'la app indica', ni 'Durante el proceso' de forma repetitiva. Tampoco",
+  "devuelvas listas ni copies la estructura del texto del usuario.",
   "",
-  "REGLAS CRÍTICAS (no las rompas nunca):",
-  "- No inventes piezas, pruebas, fechas, diagnósticos ni valores.",
-  "- No digas que algo fue REEMPLAZADO si solo fue revisado; ni REPARADO si",
-  "  solo fue diagnosticado.",
-  "- No digas que el vehículo quedó operativo ni que un módulo quedó reparado",
-  "  si el historial no lo afirma.",
-  "- Si la falla persiste (total o parcial), déjalo EXPLÍCITO. Nunca lo",
-  "  ocultes con redacción bonita.",
-  "- No agregues garantía, condiciones comerciales, cobros, promesas al",
-  "  cliente, fechas de entrega ni compromisos de nueva visita si no están",
-  "  en el historial.",
-  "- No transformes una sospecha en certeza ni cambies una conclusión técnica.",
-  "- Si algo no está en el historial, no lo incluyas. Nunca rellenes vacíos",
-  "  técnicos inventando.",
+  "SEPARAR PROBLEMAS: si hay varias fallas (programación GS, sensor de recorrido",
+  "del servo embrague, vector de giro/tacógrafo, falla mecánica de caja/GP),",
+  "sepáralas conceptualmente y deja CLARO cuál fue corregida y cuál quedó",
+  "pendiente. Nunca mezcles una falla corregida con una persistente como si",
+  "fueran una sola. Si algo mejoró pero sigue fallando, dilo explícito.",
+  "",
+  "NO INVENTAR (mejora la forma, nunca los hechos): no inventes pruebas,",
+  "componentes, valores ni fechas; no digas REEMPLAZADO si solo se revisó, ni",
+  "REPARADO si solo se diagnosticó; no digas que quedó operativo si no lo",
+  "afirma el detalle; no ocultes que una falla persiste; no transformes",
+  "sospechas en conclusiones; no agregues garantía, cobros ni compromisos",
+  "comerciales si no fueron indicados. Repite literal solo códigos, piezas o",
+  "conclusiones técnicas; el resto, redáctalo de nuevo.",
 ].join("\n");
 
-// Las preguntas que el Redactor debe saber detectar cuando faltan datos
-// críticos para un informe certero (sección "DATOS FALTANTES").
-const GUIA_FALTANTES = [
-  "Revisa si falta información crítica para un informe certero: síntoma",
-  "inicial claro; pruebas realizadas y su resultado; componentes",
-  "intervenidos; si la falla quedó resuelta, parcial o persistente; causa",
-  "técnica definitiva o solo sospecha; condición final del vehículo; si hubo",
-  "prueba de ruta / banco / laboratorio; si el módulo se instaló, entregó o",
-  "quedó pendiente; recomendaciones o pasos siguientes.",
-  "Devuelve preguntas CONCRETAS para que la persona complete, por ejemplo:",
-  "'¿La falla quedó completamente resuelta o solo hubo mejora parcial?',",
-  "'¿Qué prueba confirmó la causa?', '¿El vehículo fue probado en ruta?',",
-  "'¿Qué componente fue reemplazado, reparado o solo revisado?', '¿El módulo",
-  "fue instalado o entregado?', '¿Quedó alguna revisión pendiente?'.",
-  "Estas preguntas NO salen en el informe del cliente: son solo para revisar.",
+// Ejemplo de estilo (few-shot): ancla la forma esperada. Contenido LIMPIO,
+// sin títulos de sección adentro (los títulos los pone la interfaz).
+const EJEMPLO = [
+  "EJEMPLO. Para esta declaración del equipo:",
+  '"En la primera visita Talca Viña del Mar se revisa con equipo de',
+  "diagnóstico y se encuentra que el conector X2 del GS está mal conectado.",
+  "Al conectarlo bien se logra poner la caja en modo programación y da GS31",
+  "que hace mención al sensor de recorrido. Se reemplaza y la caja logra pasar",
+  "la programación del servo embrague. Luego se deja el diagnóstico hasta ahí",
+  "porque las calles estaban cerradas para pruebas de ruta. El cliente sale a",
+  "prueba de ruta y la pasada de 4ta a 5ta se traba y la 8 no pasa a 8va alta.",
+  "Se cita a patio en Santiago. Se detecta falla en el vector de giro mal",
+  "calibrado, por eso se limita antes de la 8 alta. Se soluciona cambiando la",
+  "limitación de velocidad y se destraba esa marcha, pero lo del cambio de 4 a",
+  "5 sigue. Tercera visita: cambio de aguja del GP, se retira tacógrafo y",
+  "sensor para ajustar vector. Se cambia la aguja, se instala el tacógrafo",
+  "calibrado, se corrige el límite a 95 km/h y prueba en ruta. La velocidad se",
+  'valida con GPS, pero la pasada del GP sigue con fallo. Se determina falla',
+  'mecánica interna de la caja y se recomienda contactar mecánico de transmisión."',
+  "",
+  "La salida correcta es (nota: SIN títulos dentro del texto, párrafos fluidos):",
+  JSON.stringify({
+    detalle_diagnostico:
+      "El vehículo fue atendido por falla asociada al sistema GS, dificultad de programación de la caja y problemas de paso de marchas, específicamente entre 4ª y 5ª, además de limitación para alcanzar 8ª alta.\n\n" +
+      "En la primera visita, realizada en ruta Talca - Viña del Mar, se efectuó diagnóstico con equipo especializado. Durante la revisión se detectó que el conector X2 del módulo GS se encontraba mal conectado. Una vez corregida la conexión, fue posible ingresar la caja en modo programación. Posteriormente se presentó código GS31, asociado al sensor de recorrido del servo embrague. Se reemplazó dicho sensor y, luego de la intervención, la caja logró completar correctamente la programación del servo embrague. En esa oportunidad no fue posible continuar con pruebas de ruta debido a que las calles se encontraban cerradas.\n\n" +
+      "Luego de la prueba realizada por el cliente, se informó que el vehículo presentaba dificultad en el paso de 4ª a 5ª marcha, con sensación de trabamiento, y que no lograba pasar a 8ª alta. Por este motivo se coordinó una nueva revisión en patio en Santiago. Durante la segunda intervención se detectó una condición asociada al vector de giro del tacógrafo, el cual se encontraba mal calibrado. Se corrigió la limitación de velocidad, logrando destrabar el paso a dicha marcha. Debido a que la falla entre 4ª y 5ª continuó presente, se retiró el tacógrafo y su sensor asociado para ajuste y calibración del vector de giro, y se coordinó una tercera intervención para reemplazar la aguja del GP.\n\n" +
+      "En la tercera visita se reemplazó la aguja del GP, se instaló nuevamente el tacógrafo calibrado junto a su sensor, se corrigió el límite de velocidad a 95 km/h y se efectuó prueba de ruta.",
+    resultado_pruebas:
+      "Durante la prueba de ruta final, la velocidad fue validada contra GPS, confirmando que el vector de giro quedó corregido. No obstante, la falla en la pasada donde actúa el GP continuó presente, tanto al subir como al bajar cambios.",
+    causa_conclusion:
+      "Debido a que la corrección del tacógrafo, el ajuste del vector de giro y el reemplazo de la aguja del GP no eliminaron la condición de trabamiento entre 4ª y 5ª marcha, se determina que la falla corresponde a una condición mecánica interna de la caja de cambios.",
+    observaciones:
+      "Se recomienda al cliente contactar a su mecánico especialista en transmisión para realizar la revisión y reparación mecánica correspondiente de la caja de cambios.",
+    datos_faltantes: [],
+  }, null, 0),
 ].join("\n");
 
 Deno.serve(async (req) => {
@@ -160,7 +191,6 @@ Deno.serve(async (req) => {
     const { accion = "redactar", orden_id, fuente = "", fuente_hash = "", respuestas = "", texto = "" } =
       await req.json();
 
-    // Tope de frecuencia por usuario, común a todas las acciones.
     const hace1h = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await comoUsuario
       .from("informes_ia").select("id", { count: "exact", head: true })
@@ -169,18 +199,24 @@ Deno.serve(async (req) => {
       return json({ error: "Llegaste al tope de generaciones por hora. Espera un rato." }, 429);
     }
 
-    // ── Analizar historial: detecta datos faltantes ANTES de redactar ──
+    const entrada = armarEntrada(fuente, respuestas);
+
+    // ── Analizar: detecta datos faltantes ANTES de redactar ──
     if (accion === "analizar") {
-      if (!fuente.trim()) return json({ error: "No hay historial que analizar." }, 400);
+      if (!entrada.trim()) return json({ error: "No hay detalle que analizar." }, 400);
       const instrucciones = [
         REGLAS, "",
-        "Recibes el HISTORIAL de una OT. NO redactes el informe todavía.",
-        GUIA_FALTANTES, "",
+        "NO redactes el informe todavía. Revisa si falta información crítica",
+        "para un informe certero: síntoma inicial claro; pruebas realizadas y su",
+        "resultado; componentes intervenidos; si la falla quedó resuelta, parcial",
+        "o persistente; causa técnica definitiva o solo sospecha; condición final;",
+        "si hubo prueba de ruta / banco / laboratorio; si el módulo se instaló,",
+        "entregó o quedó pendiente; recomendaciones o pasos siguientes.",
         "Devuelve EXCLUSIVAMENTE un JSON válido, sin texto fuera del JSON:",
         '{ "datos_faltantes": ["pregunta concreta", "..."] }',
-        "Si no falta nada crítico, devuelve una lista vacía.",
+        "Preguntas concretas y accionables. Lista vacía si no falta nada crítico.",
       ].join("\n");
-      const salida = await llamarIA(apiKey, modelo, instrucciones, fuente);
+      const salida = await llamarIA(apiKey, modelo, instrucciones, entrada);
       let out: any;
       try { out = leerJSON(salida); } catch {
         return json({ error: "La IA no devolvió un análisis legible. Reintenta." }, 502);
@@ -190,45 +226,32 @@ Deno.serve(async (req) => {
       return json({ datos_faltantes: faltantes });
     }
 
-    // ── Redactar el informe profesional en 4 secciones ──
+    // ── Redactar el informe FINAL profesional ──
     if (accion === "redactar") {
       if (!orden_id) return json({ error: "Falta la OT." }, 400);
-      if (!fuente.trim()) return json({ error: "No hay historial que redactar." }, 400);
-
-      const entrada = respuestas.trim()
-        ? `${fuente}\n\nRESPUESTAS DE LA PERSONA A LOS DATOS FALTANTES (úsalas como hechos confirmados):\n${respuestas}`
-        : fuente;
+      if (!entrada.trim()) return json({ error: "No hay detalle que redactar." }, 400);
 
       const instrucciones = [
         REGLAS, "",
-        "Redacta el informe PROFESIONAL de esta OT en cuatro secciones.",
-        "Devuelve EXCLUSIVAMENTE un JSON válido, sin texto fuera del JSON, con",
-        "esta forma exacta (cada valor es texto redactado, en párrafos):",
-        "{",
-        '  "detalle_diagnostico": "DETALLE DE DIAGNÓSTICO Y TRABAJOS REALIZADOS:',
-        '     la falla inicial (síntoma del cliente, códigos relevantes) y lo que',
-        '     se hizo — pruebas, componentes revisados/retirados/reparados/',
-        '     reemplazados, intervención en terreno o laboratorio, pruebas',
-        '     posteriores. Solo lo que está en el historial.",',
-        '  "resultado_pruebas": "RESULTADO DE LAS PRUEBAS: qué cambió después del',
-        '     trabajo. Di claramente si hubo mejora, si quedó operativo, si la',
-        '     falla persiste total o parcialmente, si la prueba fue limitada, y',
-        '     qué condición se observó al final. Si mejoró pero sigue fallando,',
-        '     dilo: \'Se observa una mejora parcial, sin embargo la falla',
-        '     persiste.\'",',
-        '  "causa_conclusion": "CAUSA DE LA FALLA / CONCLUSIÓN TÉCNICA: solo si',
-        '     está claramente indicada. Si no hay causa definitiva, escribe',
-        '     exactamente: No se establece una causa definitiva con los',
-        '     antecedentes disponibles. Nunca conviertas una sospecha en',
-        '     diagnóstico final ni digas que quedó resuelto si la falla persiste.",',
-        '  "observaciones": "OBSERVACIONES: recomendaciones TÉCNICAS,',
-        '     limitaciones o puntos pendientes (ej: continuar revisión del',
-        '     sistema GP; validar en ruta; no considerar la falla resuelta hasta',
-        '     validar). SOLO técnico: nada de garantía, cobros, condiciones',
-        '     comerciales ni promesas. Deja \'\' si no hay nada que observar.",',
-        '  "datos_faltantes": ["si aún ves vacíos importantes, pregúntalos acá.',
-        '     No salen en el informe del cliente. [] si no hay."]',
-        "}",
+        "Redacta el INFORME FINAL de esta OT y devuélvelo EXCLUSIVAMENTE como un",
+        "JSON válido (sin texto fuera del JSON). Cada valor es TEXTO LIMPIO en",
+        "párrafos, SIN títulos de sección adentro (la interfaz ya pone los",
+        "títulos). Reparte el informe así:",
+        '- "detalle_diagnostico": antecedente de la falla + diagnóstico inicial +',
+        "  todos los trabajos realizados, en secuencia profesional (una o varias",
+        "  intervenciones). Es el cuerpo principal del informe.",
+        '- "resultado_pruebas": qué se validó y qué cambió tras el trabajo; di',
+        "  explícito si la falla persiste total o parcialmente.",
+        '- "causa_conclusion": la conclusión técnica. Si no hay causa clara,',
+        '  escribe exactamente: No se establece una causa definitiva con los',
+        "  antecedentes disponibles.",
+        '- "observaciones": recomendación/observación final SOLO técnica (nada de',
+        '  garantía, cobros ni promesas). "" si no hay.',
+        '- "datos_faltantes": preguntas internas si aún ves vacíos (no salen en el',
+        "  informe del cliente). [] si no hay.",
+        "Forma exacta:",
+        '{ "detalle_diagnostico": "...", "resultado_pruebas": "...", "causa_conclusion": "...", "observaciones": "...", "datos_faltantes": [] }',
+        "", EJEMPLO,
       ].join("\n");
 
       const salida = await llamarIA(apiKey, modelo, instrucciones, entrada);
@@ -245,9 +268,8 @@ Deno.serve(async (req) => {
           ? b.datos_faltantes.map((x: unknown) => String(x)).filter(Boolean) : [],
       };
 
-      // Se guarda la FUENTE exacta (y las respuestas) que se le mandó a la
-      // IA: así nunca se pierde lo que la persona escribió, aunque después
-      // borre sus observaciones de la OT.
+      // Se guarda la FUENTE y las RESPUESTAS exactas: así nunca se pierde lo
+      // que la persona escribió, y un auditor puede comparar entrada vs salida.
       const { data: fila, error: eIns } = await comoUsuario
         .from("informes_ia")
         .insert({
