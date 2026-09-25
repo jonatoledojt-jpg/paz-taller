@@ -68,15 +68,16 @@ function leerJSON(salida: string): any {
   return JSON.parse(limpio);
 }
 
-// Junta el detalle técnico manual (la declaración del equipo, es lo principal)
-// con el registro de la OT.
+// La DECLARACIÓN TÉCNICA (lo que escribe la persona) es la ÚNICA fuente de
+// hechos. El registro de la OT es solo para identificar el vehículo: NO se
+// sacan de ahí síntomas, códigos ni fallas.
 function armarEntrada(fuente: string, respuestas: string): string {
   const p: string[] = [];
   if (respuestas.trim()) {
-    p.push("DECLARACIÓN TÉCNICA DEL EQUIPO (esto es lo principal: es el detalle en bruto del trabajo, en lenguaje de taller; transfórmalo en el informe):\n" + respuestas.trim());
+    p.push("DECLARACIÓN TÉCNICA DEL EQUIPO — es lo ÚNICO que describe el trabajo. Redacta el informe SOLO con lo que dice acá:\n" + respuestas.trim());
   }
   if (fuente.trim()) {
-    p.push("REGISTRO DE LA OT (contexto de apoyo; úsalo solo si aporta hechos técnicos reales):\n" + fuente.trim());
+    p.push("DATOS DEL VEHÍCULO (solo para identificarlo; NO agregues síntomas, códigos ni fallas que no estén en la declaración de arriba):\n" + fuente.trim());
   }
   return p.join("\n\n");
 }
@@ -147,8 +148,9 @@ const EJEMPLO = [
   "",
   "La salida correcta es (nota: SIN títulos dentro del texto, párrafos fluidos):",
   JSON.stringify({
+    antecedentes:
+      "El vehículo fue atendido por dificultad de programación de la caja y problemas de paso de marchas, específicamente entre 4ª y 5ª, además de limitación para alcanzar 8ª alta.",
     detalle_diagnostico:
-      "El vehículo fue atendido por falla asociada al sistema GS, dificultad de programación de la caja y problemas de paso de marchas, específicamente entre 4ª y 5ª, además de limitación para alcanzar 8ª alta.\n\n" +
       "En la primera visita, realizada en ruta Talca - Viña del Mar, se efectuó diagnóstico con equipo especializado. Durante la revisión se detectó que el conector X2 del módulo GS se encontraba mal conectado. Una vez corregida la conexión, fue posible ingresar la caja en modo programación. Posteriormente se presentó código GS31, asociado al sensor de recorrido del servo embrague. Se reemplazó dicho sensor y, luego de la intervención, la caja logró completar correctamente la programación del servo embrague. En esa oportunidad no fue posible continuar con pruebas de ruta debido a que las calles se encontraban cerradas.\n\n" +
       "Luego de la prueba realizada por el cliente, se informó que el vehículo presentaba dificultad en el paso de 4ª a 5ª marcha, con sensación de trabamiento, y que no lograba pasar a 8ª alta. Por este motivo se coordinó una nueva revisión en patio en Santiago. Durante la segunda intervención se detectó una condición asociada al vector de giro del tacógrafo, el cual se encontraba mal calibrado. Se corrigió la limitación de velocidad, logrando destrabar el paso a dicha marcha. Debido a que la falla entre 4ª y 5ª continuó presente, se retiró el tacógrafo y su sensor asociado para ajuste y calibración del vector de giro, y se coordinó una tercera intervención para reemplazar la aguja del GP.\n\n" +
       "En la tercera visita se reemplazó la aguja del GP, se instaló nuevamente el tacógrafo calibrado junto a su sensor, se corrigió el límite de velocidad a 95 km/h y se efectuó prueba de ruta.",
@@ -237,9 +239,12 @@ Deno.serve(async (req) => {
         "JSON válido (sin texto fuera del JSON). Cada valor es TEXTO LIMPIO en",
         "párrafos, SIN títulos de sección adentro (la interfaz ya pone los",
         "títulos). Reparte el informe así:",
-        '- "detalle_diagnostico": antecedente de la falla + diagnóstico inicial +',
-        "  todos los trabajos realizados, en secuencia profesional (una o varias",
-        "  intervenciones). Es el cuerpo principal del informe.",
+        '- "antecedentes": la falla inicial o el motivo por el que se atendió el',
+        "  vehículo, breve. SOLO lo que diga la declaración; si no menciona un",
+        "  síntoma, no lo inventes ni lo saques de los datos del vehículo.",
+        '- "detalle_diagnostico": diagnóstico inicial + todos los trabajos',
+        "  realizados, en secuencia profesional (una o varias intervenciones). NO",
+        "  repitas acá el antecedente. Es el cuerpo principal del informe.",
         '- "resultado_pruebas": SOLO qué ocurrió DESPUÉS de las intervenciones y',
         "  pruebas — qué se validó, qué mejoró, qué quedó corregido y qué falla",
         "  sigue presente (total o parcial). Son los hechos observados. NO",
@@ -257,7 +262,7 @@ Deno.serve(async (req) => {
         '- "datos_faltantes": preguntas internas si aún ves vacíos (no salen en el',
         "  informe del cliente). [] si no hay.",
         "Forma exacta:",
-        '{ "detalle_diagnostico": "...", "resultado_pruebas": "...", "causa_conclusion": "...", "observaciones": "...", "datos_faltantes": [] }',
+        '{ "antecedentes": "...", "detalle_diagnostico": "...", "resultado_pruebas": "...", "causa_conclusion": "...", "observaciones": "...", "datos_faltantes": [] }',
         "", EJEMPLO,
       ].join("\n");
 
@@ -267,6 +272,7 @@ Deno.serve(async (req) => {
         return json({ error: "La IA no devolvió un informe legible. Reintenta.", crudo: salida.slice(0, 400) }, 502);
       }
       const borrador = {
+        antecedentes: String(b?.antecedentes ?? "").trim(),
         detalle_diagnostico: String(b?.detalle_diagnostico ?? "").trim(),
         resultado_pruebas: String(b?.resultado_pruebas ?? "").trim(),
         causa_conclusion: String(b?.causa_conclusion ?? "").trim(),

@@ -680,6 +680,11 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <input id="cModelo" autocomplete="on" placeholder="Mercedes Benz Actros 2045">
         </div>
         <div class="campo">
+          <label for="cAntecedentes">Antecedentes</label>
+          <textarea id="cAntecedentes" placeholder="Falla inicial o motivo por el que se atendió el vehículo"></textarea>
+          <button type="button" class="mejorar-ia" data-campo="cAntecedentes">Mejorar redacción con IA</button>
+        </div>
+        <div class="campo">
           <label for="cPruebas">Trabajos realizados</label>
           <textarea id="cPruebas" placeholder="Qué se revisó y qué se hizo"></textarea>
         </div>
@@ -5201,23 +5206,26 @@ $("btnCierre").onclick = async () => {
   $("cieIA").classList.toggle("oculto", perfil?.rol === "tecnico");
 
   const { data: o } = await db.from("ordenes")
-    .select("observaciones,vehiculo_id,vehiculos(marca,modelo,anio)")
+    .select("observaciones,sintoma_cliente,vehiculo_id,vehiculos(marca,modelo,anio)")
     .eq("id", ordenActual.id).single();
   const { data: m } = await db.rpc("ordenes_montos", { p_orden_id: ordenActual.id });
   const { data: d } = await db.from("diagnosticos")
-    .select("id,pruebas_realizadas,causa_raiz,solucion")
+    .select("id,sintoma,pruebas_realizadas,causa_raiz,solucion")
     .eq("orden_id", ordenActual.id).order("id").limit(1);
 
   const dg = (d && d[0]) || {};
   const v = o?.vehiculos || {};
   // Precargar el vehículo desde la ficha: marca + modelo + año. Si el dato
   // existe, el campo no queda vacío por defecto (editable igual).
-  $("cModelo").value   = [v.modelo || v.marca, v.anio].filter(Boolean).join(" ");
-  $("cPruebas").value  = dg.pruebas_realizadas ?? "";
-  $("cCausa").value    = dg.causa_raiz ?? "";
-  $("cSolucion").value = dg.solucion ?? "";
-  $("cMonto").value    = m?.[0]?.monto_final ?? "";
-  $("cObs").value      = o?.observaciones ?? "";
+  $("cModelo").value       = [v.modelo || v.marca, v.anio].filter(Boolean).join(" ");
+  // Antecedentes: lo ya redactado (dg.sintoma), o el síntoma original del
+  // cliente como punto de partida editable.
+  $("cAntecedentes").value = dg.sintoma ?? o?.sintoma_cliente ?? "";
+  $("cPruebas").value      = dg.pruebas_realizadas ?? "";
+  $("cCausa").value        = dg.causa_raiz ?? "";
+  $("cSolucion").value     = dg.solucion ?? "";
+  $("cMonto").value        = m?.[0]?.monto_final ?? "";
+  $("cObs").value          = o?.observaciones ?? "";
   $("cMonto").dispatchEvent(new Event("input"));
   ver("vCierre");
 };
@@ -5251,37 +5259,28 @@ function hashTexto(s) {
   return (h >>> 0).toString(36);
 }
 
-// Arma la fuente de la OT para el Redactor IA. SOLO contexto técnico real:
-// datos del vehículo, síntoma del cliente y diagnósticos guardados.
-// - NO incluye la cronología de estados (movimientos_estado): es lenguaje
-//   interno de la app ("agendado → en_terreno").
-// - NO incluye `notas_internas` (las observaciones de la OT): son un
-//   recordatorio para el mecánico, no material para la IA (pedido de Jonatan,
-//   25-09-2026). El detalle del trabajo lo escribe la persona en #cManual.
+// Contexto de la OT para el Redactor IA -- SOLO para identificar el vehículo.
+// La IA redacta desde la DECLARACIÓN TÉCNICA que escribe la persona (#cManual),
+// no desde la OT. A propósito NO se incluye:
+// - la cronología de estados (movimientos_estado): lenguaje interno de la app.
+// - `notas_internas` (observaciones de la OT): recordatorio del mecánico.
+// - `sintoma_cliente`: el "Gs17..." guardado hacía que la IA metiera GS17
+//   aunque la persona no lo mencionara (pedido de Jonatan, 25-09-2026).
+// - los `diagnosticos` guardados: son el INFORME ANTERIOR de la IA; re-mandarlo
+//   como fuente hacía que se repitiera a sí misma (bucle). El antecedente lo
+//   redacta la IA desde la declaración, no desde el síntoma guardado.
 async function armarFuenteInforme() {
-  const partes = [];
-  const [{ data: o }, { data: diags }] = await Promise.all([
-    db.from("ordenes").select("numero_ot,sintoma_cliente,tipo_modulo,sistema,tipo_trabajo,vehiculos(marca,modelo,anio,patente)").eq("id", ordenActual.id).single(),
-    db.from("diagnosticos").select("pruebas_realizadas,causa_raiz,solucion,codigos_falla,creado_en").eq("orden_id", ordenActual.id).order("creado_en"),
-  ]);
-  if (!o) return { fuente: "", cuerpoTecnico: 0 };
-
+  const { data: o } = await db.from("ordenes")
+    .select("tipo_modulo,sistema,tipo_trabajo,vehiculos(marca,modelo,anio,patente)")
+    .eq("id", ordenActual.id).single();
+  if (!o) return { fuente: "" };
   const v = o.vehiculos || {};
-  partes.push(`Vehículo: ${[v.marca, v.modelo, v.anio].filter(Boolean).join(" ") || "no especificado"} · Patente: ${v.patente || "no especificada"}`);
-  partes.push(`Módulo/sistema: ${o.tipo_trabajo === "servicio" ? (o.sistema || "no especificado") : (o.tipo_modulo || "no especificado")}`);
-  if (o.sintoma_cliente) partes.push(`Síntoma reportado por el cliente: ${o.sintoma_cliente}`);
-
-  let cuerpoTecnico = 0;
-  (diags || []).forEach(d => {
-    const bloque = [];
-    if (d.pruebas_realizadas) bloque.push(`Trabajos/pruebas: ${d.pruebas_realizadas}`);
-    if (d.causa_raiz) bloque.push(`Causa registrada: ${d.causa_raiz}`);
-    if (d.solucion) bloque.push(`Resultado: ${d.solucion}`);
-    if (d.codigos_falla?.length) bloque.push(`Códigos de falla: ${d.codigos_falla.join(", ")}`);
-    if (bloque.length) { partes.push(bloque.join("\n")); cuerpoTecnico += bloque.join("").length; }
-  });
-
-  return { fuente: partes.join("\n\n"), cuerpoTecnico };
+  const fuente =
+    `Vehículo: ${[v.marca, v.modelo, v.anio].filter(Boolean).join(" ") || "no especificado"} · ` +
+    `Patente: ${v.patente || "no especificada"} · ` +
+    `${o.tipo_trabajo === "servicio" ? "Sistema" : "Módulo"}: ` +
+    `${(o.tipo_trabajo === "servicio" ? o.sistema : o.tipo_modulo) || "no especificado"}`;
+  return { fuente };
 }
 
 // Caja interna de "Datos faltantes" (preguntas que NO salen en el informe).
@@ -5299,13 +5298,12 @@ function pintarDatosFaltantes(preguntas) {
   }
 }
 
-// Junta la fuente de la OT con el detalle manual que la persona escribió.
+// El detalle manual es la ÚNICA fuente de contenido: la OT solo identifica
+// el vehículo. Sin detalle manual no hay nada que redactar.
 async function fuenteInformeCompleta() {
-  const { fuente, cuerpoTecnico } = await armarFuenteInforme();
+  const { fuente } = await armarFuenteInforme();
   const manual = $("cManual").value.trim();
-  // Alcanza con que haya detalle manual O contenido técnico en la OT.
-  const suficiente = manual.length >= 40 || (cuerpoTecnico ?? 0) >= 40;
-  return { fuente, manual, suficiente };
+  return { fuente, manual, suficiente: manual.length >= 40 };
 }
 
 // Analizar: detecta qué falta ANTES de redactar. Considera el detalle manual.
@@ -5316,7 +5314,7 @@ $("btnAnalizarIA").onclick = async () => {
   try {
     const { fuente, manual, suficiente } = await fuenteInformeCompleta();
     if (!suficiente) {
-      msg("cieError", "Escribe el detalle técnico del trabajo arriba, o carga observaciones en la OT, antes de analizar.");
+      msg("cieError", "Escribe el detalle técnico del trabajo arriba antes de analizar.");
       $("cFaltantesLista").classList.add("oculto");
       return;
     }
@@ -5340,7 +5338,7 @@ $("btnRedactarIA").onclick = async () => {
   try {
     const { fuente, manual, suficiente } = await fuenteInformeCompleta();
     if (!suficiente) {
-      msg("cieError", "Escribe el detalle técnico del trabajo arriba, o carga observaciones en la OT, antes de redactar.");
+      msg("cieError", "Escribe el detalle técnico del trabajo arriba antes de redactar.");
       return;
     }
     const hash = hashTexto(fuente + "\n" + manual);
@@ -5356,12 +5354,13 @@ $("btnRedactarIA").onclick = async () => {
       accion: "redactar", orden_id: ordenActual.id, fuente, fuente_hash: hash, respuestas: manual
     });
     informeIaActual = informe_id;
-    // Las 4 secciones ya vienen como texto limpio (sin títulos): la interfaz
+    // Las secciones ya vienen como texto limpio (sin títulos): la interfaz
     // pone los títulos. Se mapean a los campos del informe.
-    $("cPruebas").value  = borrador.detalle_diagnostico || "";  // Trabajos realizados
-    $("cSolucion").value = borrador.resultado_pruebas || "";    // Resultado final
-    $("cCausa").value    = borrador.causa_conclusion || "";     // Causa de la falla
-    $("cObs").value      = borrador.observaciones || "";        // Observaciones
+    $("cAntecedentes").value = borrador.antecedentes || "";      // Antecedentes
+    $("cPruebas").value      = borrador.detalle_diagnostico || ""; // Trabajos realizados
+    $("cSolucion").value     = borrador.resultado_pruebas || "";   // Resultado final
+    $("cCausa").value        = borrador.causa_conclusion || "";    // Conclusión técnica
+    $("cObs").value          = borrador.observaciones || "";       // Observaciones
     pintarDatosFaltantes(borrador.datos_faltantes);
   } catch (e) {
     msg("cieError", e.message || "No se pudo redactar el informe.");
@@ -5417,7 +5416,7 @@ $("btnGenerar").onclick = async () => {
     const campos = {
       orden_id: ordenActual.id,
       tipo_modulo: ordenActual.tipo_modulo,
-      sintoma: ordenActual.sintoma_cliente || "Sin detalle",
+      sintoma: $("cAntecedentes").value.trim() || ordenActual.sintoma_cliente || "Sin detalle",
       pruebas_realizadas: pruebas,
       causa_raiz: $("cCausa").value.trim() || null,
       solucion: solucion,
@@ -5436,6 +5435,7 @@ $("btnGenerar").onclick = async () => {
     if (informeIaActual) {
       await db.from("informes_ia").update({
         texto_final: {
+          antecedentes: $("cAntecedentes").value.trim() || null,
           detalle_diagnostico: pruebas,
           resultado_pruebas: solucion,
           causa_conclusion: $("cCausa").value.trim() || null,
@@ -5462,7 +5462,7 @@ async function mostrarInforme() {
     .eq("id", ordenActual.id).single();
   const { data: m } = await db.rpc("ordenes_montos", { p_orden_id: ordenActual.id });
   const { data: d } = await db.from("diagnosticos")
-    .select("pruebas_realizadas,causa_raiz,solucion")
+    .select("sintoma,pruebas_realizadas,causa_raiz,solucion")
     .eq("orden_id", ordenActual.id).order("id").limit(1);
   const dg = (d && d[0]) || {};
 
@@ -5486,7 +5486,7 @@ async function mostrarInforme() {
     </table>
 
     <h3>1. Antecedentes</h3>
-    <p>${escapar(o.sintoma_cliente)}</p>
+    <p>${escapar(dg.sintoma || o.sintoma_cliente || "—")}</p>
 
     <h3>2. Trabajos realizados</h3>
     <p>${escapar(dg.pruebas_realizadas)}</p>
