@@ -684,13 +684,14 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <textarea id="cPruebas" placeholder="Qué se revisó y qué se hizo"></textarea>
         </div>
         <div class="campo">
-          <label for="cCausa">Causa de la falla</label>
-          <textarea id="cCausa" placeholder="Qué estaba fallando en realidad"></textarea>
+          <label for="cSolucion">Resultado final</label>
+          <textarea id="cSolucion" placeholder="Qué ocurrió después de las intervenciones y pruebas"></textarea>
+          <button type="button" class="mejorar-ia" data-campo="cSolucion">Mejorar redacción con IA</button>
         </div>
         <div class="campo">
-          <label for="cSolucion">Resultado final</label>
-          <textarea id="cSolucion" placeholder="Cómo quedó el módulo"></textarea>
-          <button type="button" class="mejorar-ia" data-campo="cSolucion">Mejorar redacción con IA</button>
+          <label for="cCausa">Conclusión técnica</label>
+          <textarea id="cCausa" placeholder="Causa determinada y explicación técnica"></textarea>
+          <button type="button" class="mejorar-ia" data-campo="cCausa">Mejorar redacción con IA</button>
         </div>
         <div class="campo" id="campoMonto">
           <label for="cMonto">Valor neto del servicio</label>
@@ -5250,18 +5251,20 @@ function hashTexto(s) {
   return (h >>> 0).toString(36);
 }
 
-// Arma la fuente de la OT para el Redactor IA. SOLO contenido técnico real:
-// síntoma del cliente, observaciones del equipo y diagnósticos. NO se incluye
-// la cronología de estados (movimientos_estado) a propósito: es lenguaje
-// interno de la app ("agendado → en_terreno") que ensuciaba el informe y hacía
-// que la IA escribiera "la OT pasa a terreno" (falla real, 25-09-2026).
+// Arma la fuente de la OT para el Redactor IA. SOLO contexto técnico real:
+// datos del vehículo, síntoma del cliente y diagnósticos guardados.
+// - NO incluye la cronología de estados (movimientos_estado): es lenguaje
+//   interno de la app ("agendado → en_terreno").
+// - NO incluye `notas_internas` (las observaciones de la OT): son un
+//   recordatorio para el mecánico, no material para la IA (pedido de Jonatan,
+//   25-09-2026). El detalle del trabajo lo escribe la persona en #cManual.
 async function armarFuenteInforme() {
   const partes = [];
   const [{ data: o }, { data: diags }] = await Promise.all([
-    db.from("ordenes").select("numero_ot,sintoma_cliente,notas_internas,fecha_ingreso,tipo_modulo,sistema,tipo_trabajo,vehiculos(marca,modelo,anio,patente)").eq("id", ordenActual.id).single(),
+    db.from("ordenes").select("numero_ot,sintoma_cliente,tipo_modulo,sistema,tipo_trabajo,vehiculos(marca,modelo,anio,patente)").eq("id", ordenActual.id).single(),
     db.from("diagnosticos").select("pruebas_realizadas,causa_raiz,solucion,codigos_falla,creado_en").eq("orden_id", ordenActual.id).order("creado_en"),
   ]);
-  if (!o) return { fuente: "", suficiente: false };
+  if (!o) return { fuente: "", cuerpoTecnico: 0 };
 
   const v = o.vehiculos || {};
   partes.push(`Vehículo: ${[v.marca, v.modelo, v.anio].filter(Boolean).join(" ") || "no especificado"} · Patente: ${v.patente || "no especificada"}`);
@@ -5269,10 +5272,6 @@ async function armarFuenteInforme() {
   if (o.sintoma_cliente) partes.push(`Síntoma reportado por el cliente: ${o.sintoma_cliente}`);
 
   let cuerpoTecnico = 0;
-  if (o.notas_internas) {
-    partes.push("Observaciones del equipo (en orden):\n" + o.notas_internas);
-    cuerpoTecnico += o.notas_internas.length;
-  }
   (diags || []).forEach(d => {
     const bloque = [];
     if (d.pruebas_realizadas) bloque.push(`Trabajos/pruebas: ${d.pruebas_realizadas}`);
@@ -5486,8 +5485,6 @@ async function mostrarInforme() {
       <tr><td class="et">Fecha</td><td>${fechaCL(o.fecha_cierre || Date.now())}</td></tr>
     </table>
 
-    <div class="resultado">${escapar(dg.solucion)}</div>
-
     <h3>1. Antecedentes</h3>
     <p>${escapar(o.sintoma_cliente)}</p>
 
@@ -5495,16 +5492,19 @@ async function mostrarInforme() {
     <p>${escapar(dg.pruebas_realizadas)}</p>
 
     <h3>3. Resultado final</h3>
-    <p>${escapar(dg.causa_raiz ? dg.causa_raiz + "\n\n" + dg.solucion : dg.solucion)}</p>
+    <p>${escapar(dg.solucion || "—")}</p>
 
-    <h3>4. Valor del servicio</h3>
+    <h3>4. Conclusión técnica</h3>
+    <p>${escapar(dg.causa_raiz || "—")}</p>
+
+    <h3>5. Valor del servicio</h3>
     <table class="valor">
       <tr><td>Neto</td><td>$${miles(neto)}</td></tr>
       <tr><td>IVA 19%</td><td>$${miles(iva)}</td></tr>
       <tr class="total"><td>Total</td><td>$${miles(neto + iva)}</td></tr>
     </table>
 
-    <h3>5. Observaciones</h3>
+    <h3>6. Observaciones</h3>
     <p>${escapar(o.observaciones ?? "Sin observaciones.")}</p>
 
     <div class="firmas">

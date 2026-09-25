@@ -1034,10 +1034,19 @@ nueva, solo se usó lo que ya estaba.
 ## Formato del informe técnico (no cambiar sin preguntar)
 
 Encabezado `PAZ SERVICES | INFORME TÉCNICO` → tabla de datos (cliente, RUT,
-vehículo, patente, módulo, fecha) → recuadro de resultado técnico → secciones
-numeradas: 1. Antecedentes, 2. Trabajos realizados, 3. Resultado final,
-4. Valor del servicio (neto + IVA 19% + total), 5. Observaciones → firmas de
-Jonatan Daniel Toledo Orellana y recepción conforme del cliente.
+vehículo, patente, módulo, fecha) → secciones numeradas: 1. Antecedentes,
+2. Trabajos realizados, 3. Resultado final, 4. Conclusión técnica, 5. Valor
+del servicio (neto + IVA 19% + total), 6. Observaciones → firmas de Jonatan
+Daniel Toledo Orellana y recepción conforme del cliente.
+
+**Resultado final y Conclusión técnica son secciones SEPARADAS (25-09-2026)**,
+a pedido de Jonatan: antes "Resultado final" juntaba `causa_raiz + solucion` y
+se repetía. Ahora "Resultado final" = `diagnosticos.solucion` (qué ocurrió tras
+las pruebas) y "Conclusión técnica" = `diagnosticos.causa_raiz` (causa
+determinada). Cada una aporta algo distinto, no se repiten. Se quitó el
+"recuadro de resultado técnico" del encabezado porque duplicaba la solución.
+En el formulario (`vCierre`) el orden es Trabajos realizados → Resultado final
+→ Conclusión técnica → Observaciones.
 
 Única variación permitida: la línea bajo el encabezado dice "Reparación de
 módulos electrónicos" o "Servicio técnico en terreno" según `tipo_trabajo`,
@@ -2010,8 +2019,13 @@ Causas y arreglos:
   contenido → ahora devuelve **texto limpio, sin títulos** (los títulos los
   pone la interfaz).
 - `armarFuenteInforme()` incluía la **cronología de `movimientos_estado`**
-  (lenguaje interno: "agendado → en_terreno") → **se eliminó**; la fuente es
-  solo síntoma + `notas_internas` + `diagnosticos`.
+  (lenguaje interno: "agendado → en_terreno") → **se eliminó**. También se
+  **excluye `notas_internas`** (las observaciones de la OT): son un recordatorio
+  para el mecánico, no material para la IA (pedido de Jonatan). La fuente es
+  solo datos del vehículo + síntoma + `diagnosticos`; el detalle del trabajo lo
+  escribe la persona en `#cManual`.
+- "Resultado final" y "Conclusión técnica" son campos/secciones **separados**,
+  el prompt prohíbe repetir información entre ellos (ver "Formato del informe").
 - El prompt trae ahora un **ejemplo few-shot** (la entrada/salida real del
   caso GS17/tacógrafo/GP) que ancla el estilo esperado, y reglas explícitas
   de frases permitidas/prohibidas y de **separar falla corregida de falla
