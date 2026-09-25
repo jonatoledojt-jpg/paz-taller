@@ -2063,6 +2063,14 @@ enlaces "Mejorar redacción"). **Al Redactar, el informe queda guardado solo**
 `informes_ia`); la persona ajusta el valor si corresponde y toca "Guardar y
 ver informe" para verlo.
 
+**Ver un informe ya guardado.** El detalle de la OT muestra un botón **"Ver
+informe guardado"** (`btnVerInforme`) solo si la OT ya tiene un informe
+redactado (`diagnosticos` con `pruebas_realizadas` — lo chequea
+`mostrarBotonVerInforme()`). Abre el informe formateado directo (`mostrarInforme()`),
+sin pasar por el formulario. Desde esa vista, "Editar informe"
+(`btnInfEditar`) vuelve al formulario precargado (`btnCierre`) por si hay que
+redactar de nuevo o ajustar el valor.
+
 **Auditoría** (`informes_ia`): guarda la **cadena completa** para que un
 auditor pueda verificar que la IA redactó fiel (no inventó, no distorsionó):
 - `fuente` + `respuestas` — **el texto EXACTO que recibió la IA** (el historial

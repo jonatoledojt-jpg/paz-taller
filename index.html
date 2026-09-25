@@ -598,6 +598,8 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         </div>
         <div class="miniaturas" id="detFotos"></div>
       </div>
+      <button class="btn claro oculto" id="btnVerInforme">Ver informe guardado</button>
+      <div style="height:10px" id="sepVerInforme" class="oculto"></div>
       <button class="btn" id="btnCierre">Informe técnico</button>
       <div style="height:10px"></div>
       <button class="btn claro" id="btnVolver">Volver al tablero</button>
@@ -897,6 +899,8 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div id="hojaInforme"></div>
       <div class="noimprimir">
         <button class="btn" id="btnImprimir">Imprimir o guardar PDF</button>
+        <div style="height:10px"></div>
+        <button class="btn claro" id="btnInfEditar">Editar informe</button>
         <div style="height:10px"></div>
         <button class="btn claro" id="btnInfVolver">Volver</button>
       </div>
@@ -2322,6 +2326,10 @@ async function abrirDetalle(o) {
   // generarlo -- si ya se cobró, eso puede pisar sin querer el monto
   // que ya se facturó de verdad.
   $("btnCierre").classList.toggle("oculto", noSeEdita(o));
+  // "Ver informe guardado" solo si esta OT ya tiene un informe redactado
+  // (diagnósticos con trabajos). Abre el informe formateado directo, sin
+  // pasar por el formulario.
+  mostrarBotonVerInforme(o.id);
   // Registrar un gasto de esta OT sí tiene sentido aunque ya esté
   // cerrada -- un costo puede llegar después de facturar (garantía, una
   // factura de repuestos atrasada), y antes no había forma de asociarlo
@@ -5514,6 +5522,21 @@ async function mostrarInforme() {
 
 $("btnImprimir").onclick = () => window.print();
 $("btnInfVolver").onclick = () => abrirDetalle(ordenActual);
+// "Editar informe": vuelve al formulario precargado, por si hay que
+// redactar de nuevo o ajustar el valor.
+$("btnInfEditar").onclick = () => $("btnCierre").click();
+
+// Muestra "Ver informe guardado" en el detalle solo si la OT ya tiene un
+// informe redactado (un diagnóstico con trabajos). Barato: una consulta.
+async function mostrarBotonVerInforme(ordenId) {
+  const { data } = await db.from("diagnosticos")
+    .select("pruebas_realizadas").eq("orden_id", ordenId)
+    .not("pruebas_realizadas", "is", null).limit(1);
+  const hay = !!(data && data.length);
+  $("btnVerInforme").classList.toggle("oculto", !hay);
+  $("sepVerInforme").classList.toggle("oculto", !hay);
+}
+$("btnVerInforme").onclick = () => mostrarInforme();
 
 // ---------- Utilidades ----------
 async function subirFoto(orden_id, blob, categoria) {
