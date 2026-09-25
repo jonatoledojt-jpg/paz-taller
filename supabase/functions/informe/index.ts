@@ -149,7 +149,7 @@ const EJEMPLO = [
   "La salida correcta es (nota: SIN títulos dentro del texto, párrafos fluidos):",
   JSON.stringify({
     antecedentes:
-      "El vehículo fue atendido por dificultad de programación de la caja y problemas de paso de marchas, específicamente entre 4ª y 5ª, además de limitación para alcanzar 8ª alta.",
+      "Vehículo atendido por falla asociada al sistema GS, programación de la caja, diferencia de señal de tacógrafo y dificultad en el paso de marchas. El cliente reporta limitación para alcanzar 8ª alta y trabamiento entre 4ª y 5ª marcha.",
     detalle_diagnostico:
       "En la primera visita, realizada en ruta Talca - Viña del Mar, se efectuó diagnóstico con equipo especializado. Durante la revisión se detectó que el conector X2 del módulo GS se encontraba mal conectado. Una vez corregida la conexión, fue posible ingresar la caja en modo programación. Posteriormente se presentó código GS31, asociado al sensor de recorrido del servo embrague. Se reemplazó dicho sensor y, luego de la intervención, la caja logró completar correctamente la programación del servo embrague. En esa oportunidad no fue posible continuar con pruebas de ruta debido a que las calles se encontraban cerradas.\n\n" +
       "Luego de la prueba realizada por el cliente, se informó que el vehículo presentaba dificultad en el paso de 4ª a 5ª marcha, con sensación de trabamiento, y que no lograba pasar a 8ª alta. Por este motivo se coordinó una nueva revisión en patio en Santiago. Durante la segunda intervención se detectó una condición asociada al vector de giro del tacógrafo, el cual se encontraba mal calibrado. Se corrigió la limitación de velocidad, logrando destrabar el paso a dicha marcha. Debido a que la falla entre 4ª y 5ª continuó presente, se retiró el tacógrafo y su sensor asociado para ajuste y calibración del vector de giro, y se coordinó una tercera intervención para reemplazar la aguja del GP.\n\n" +
@@ -239,12 +239,18 @@ Deno.serve(async (req) => {
         "JSON válido (sin texto fuera del JSON). Cada valor es TEXTO LIMPIO en",
         "párrafos, SIN títulos de sección adentro (la interfaz ya pone los",
         "títulos). Reparte el informe así:",
-        '- "antecedentes": resume en una o dos frases el MOTIVO por el que se',
-        "  atendió el vehículo, derivándolo de los problemas que describe la",
-        "  declaración (ej: dificultad de programación de la caja, problemas de",
-        "  paso de marchas, limitación de velocidad). NO lo dejes vacío si la",
-        "  declaración describe fallas; pero NO inventes códigos ni síntomas",
-        "  específicos que la declaración no mencione, ni los saques del vehículo.",
+        '- "antecedentes": SIEMPRE constrúyelos desde la información técnica del',
+        "  informe (trabajos, resultado, conclusión). NUNCA los dejes vacíos si",
+        "  hay algo de información técnica. Resume brevemente: sistema afectado,",
+        "  síntoma inicial, condición reportada por el cliente y motivo de la",
+        "  atención. Ejemplo de estilo: 'Vehículo atendido por falla asociada al",
+        "  sistema GS, programación de caja, diferencia de señal de tacógrafo y",
+        "  dificultad en el paso de marchas. El cliente reporta limitación para",
+        "  alcanzar 8ª alta y trabamiento entre 4ª y 5ª marcha.' NO inventes",
+        "  códigos ni síntomas que la declaración no mencione. SOLO si no existe",
+        "  ninguna información técnica en todo el informe, deja antecedentes en \"\"",
+        '  y agrega a datos_faltantes: "No hay antecedentes suficientes para',
+        '  generar el informe."',
         '- "detalle_diagnostico": diagnóstico inicial + todos los trabajos',
         "  realizados, en secuencia profesional (una o varias intervenciones). NO",
         "  repitas acá el antecedente. Es el cuerpo principal del informe.",
