@@ -245,9 +245,15 @@ Deno.serve(async (req) => {
           ? b.datos_faltantes.map((x: unknown) => String(x)).filter(Boolean) : [],
       };
 
+      // Se guarda la FUENTE exacta (y las respuestas) que se le mandó a la
+      // IA: así nunca se pierde lo que la persona escribió, aunque después
+      // borre sus observaciones de la OT.
       const { data: fila, error: eIns } = await comoUsuario
         .from("informes_ia")
-        .insert({ orden_id, fuente_hash, borrador_ia: borrador, generado_por: user.id })
+        .insert({
+          orden_id, fuente_hash, borrador_ia: borrador, generado_por: user.id,
+          fuente, respuestas: respuestas.trim() || null,
+        })
         .select("id").single();
       if (eIns) return json({ error: "No se pudo guardar el borrador: " + eIns.message }, 500);
 

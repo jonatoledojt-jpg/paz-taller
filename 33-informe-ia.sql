@@ -14,13 +14,23 @@ create table if not exists informes_ia (
   id            bigint generated always as identity primary key,
   orden_id      bigint not null references ordenes on delete cascade,
   fuente_hash   text not null,          -- hash del historial que se le mandó a la IA
-  borrador_ia   jsonb not null,         -- {trabajos_realizados, causa_falla, advertencias_internas}
+  fuente        text,                   -- EL HISTORIAL EXACTO que se le mandó a la IA
+  respuestas    text,                   -- lo que la persona escribió en "datos faltantes"
+  borrador_ia   jsonb not null,         -- lo que la IA redactó (4 secciones)
   generado_por  uuid references perfiles,
   generado_en   timestamptz not null default now(),
   texto_final   jsonb,                  -- snapshot al aprobar: lo que quedó en el informe
   aprobado_por  uuid references perfiles,
   aprobado_en   timestamptz
 );
+
+-- Se guarda `fuente` (y `respuestas`) para NO perder nunca lo que la persona
+-- escribió: antes solo se guardaba lo que la IA redactó, así que si alguien
+-- borraba sus observaciones, su texto original quedaba irrecuperable (falla
+-- real encontrada por Jonatan el 25-09-2026). Idempotente para bases que ya
+-- tenían la tabla sin estas columnas.
+alter table informes_ia add column if not exists fuente text;
+alter table informes_ia add column if not exists respuestas text;
 
 create index if not exists informes_ia_orden_idx  on informes_ia (orden_id, generado_en desc);
 create index if not exists informes_ia_autor_idx  on informes_ia (generado_por, generado_en desc);

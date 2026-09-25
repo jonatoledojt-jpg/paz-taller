@@ -2039,13 +2039,25 @@ los `diagnosticos` (con `codigos_falla`) y la cronología de
 real, `suficiente` es false: **no se llama a la API**, se avisa y se escribe
 a mano.
 
-**Auditoría** (`informes_ia`): cada generación guarda `borrador_ia` (lo que
-propuso la IA), `fuente_hash` (hash del historial), `generado_por`/`generado_en`.
-Al Guardar, se completa `texto_final` (lo que quedó de verdad), `aprobado_por` y
-`aprobado_en` — así se puede comparar si la persona cambió lo que la IA propuso.
-Solo dueño y coordinador (RLS); sin delete (es auditoría). El texto editable
-sigue viviendo en `diagnosticos` (que es lo que lee el informe imprimible);
-`informes_ia` es solo el rastro.
+**Auditoría** (`informes_ia`): guarda la **cadena completa** para que un
+auditor pueda verificar que la IA redactó fiel (no inventó, no distorsionó):
+- `fuente` + `respuestas` — **el texto EXACTO que recibió la IA** (el historial
+  de la OT + lo que la persona escribió en datos faltantes).
+- `borrador_ia` — lo que la IA redactó.
+- `texto_final` + `aprobado_por` + `aprobado_en` — lo que la persona aprobó
+  (permite ver si cambió lo que la IA propuso).
+- `fuente_hash`, `generado_por`, `generado_en`.
+
+**Falla real corregida (25-09-2026):** la primera versión guardaba solo el
+`borrador_ia` (la salida), NO la `fuente` (la entrada). Jonatan lo cazó: si
+borraba sus observaciones de la OT, su texto original quedaba irrecuperable, y
+frente a un auditor **no se podía saber si la IA lo hizo bien o mal** porque
+faltaba con qué comparar. Se agregaron `fuente`/`respuestas` (idempotente en
+`33-informe-ia.sql`) y la Edge Function las guarda en cada `redactar`. Los
+registros generados ANTES del arreglo no tienen `fuente` (se perdió); de ahí en
+adelante queda la cadena completa. Solo dueño y coordinador (RLS); sin delete
+(es auditoría). El texto editable final sigue viviendo en `diagnosticos` (lo que
+lee el informe imprimible); `informes_ia` es el rastro.
 
 **Costo y límites** (cada llamada cuesta):
 - Botones manuales, **nunca automático** al abrir la pantalla.
