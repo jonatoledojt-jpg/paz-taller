@@ -413,6 +413,15 @@ grupo de arriba (`tecnico_agendado = auth.uid()`). Una sola función,
 `tarjetaOT(o, opts)` en `index.html`, arma la tarjeta en todas las
 listas.
 
+**Botón "Editar" en la tarjeta (25-09-2026).** Cada tarjeta trae un botón
+"Editar" (solo dueño/coordinador) que abre `vEditarOT` (`abrirEditarOT`) para
+corregir cliente, RUT, patente, tipo de módulo/sistema, origen y falla sin
+entrar al detalle completo. **Ojo:** cambiar nombre/RUT actualiza el
+`clientes` compartido (afecta a todas las OT de ese cliente) y la patente el
+`vehiculos` (todas las OT de ese vehículo) — correcto para corregir un tipeo.
+Un servicio se fuerza a `origen = terreno` (hay check en la base). El botón
+usa `stopPropagation` para no abrir el detalle al tocarlo.
+
 **Diego no ve la pestaña Terreno de la barra inferior** (21-09-2026,
 Jonatan: "su área pura y dura es laboratorio"). Se esconde una sola vez
 en `iniciar()` con `document.querySelector('[data-seccion="terreno"]')`

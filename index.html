@@ -119,6 +119,8 @@ main.con-navinf{padding-bottom:96px}
    rojo -- con un borde a la izquierda, para que se note sin leer cada
    tarjeta una por una (pedido de Jonatan, 17-09-2026). */
 .ot.falta-cobrar{border-left:4px solid var(--alerta);background:#FFFBFA}
+.ot .card-editar{margin-top:10px;background:none;border:1px solid var(--linea);border-radius:7px;padding:7px 14px;font-size:13px;color:var(--tinta);cursor:pointer}
+.ot .card-editar:active{opacity:.85}
 /* Seis estados de asistencia en dos filas de tres, con guantes. */
 .asis-opc{flex-wrap:wrap}
 .asis-opc button{flex:1 1 30%;font-size:13px;padding:10px 6px}
@@ -721,6 +723,32 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <button class="btn claro" id="btnCieCancelar">Cancelar</button>
     </section>
 
+    <!-- Editar datos de la OT (cliente, patente, sistema, RUT, origen, falla) -->
+    <section id="vEditarOT" class="oculto">
+      <h2 id="edTitulo">Editar OT</h2>
+      <div id="edError" class="aviso oculto"></div>
+      <div class="seccion">
+        <div class="campo"><label for="edCliente">Cliente</label><input id="edCliente" list="dlClientes"></div>
+        <div class="campo"><label for="edRut">RUT</label><input id="edRut" inputmode="text"></div>
+        <div class="campo"><label for="edPatente">Patente</label><input id="edPatente"></div>
+        <div class="campo">
+          <label id="edTipoLbl" for="edTipo">Tipo de módulo</label>
+          <input id="edTipo">
+        </div>
+        <div class="campo">
+          <label>Origen</label>
+          <div class="opciones" id="edOrigen">
+            <button type="button" data-v="terreno">Terreno</button>
+            <button type="button" data-v="laboratorio">Laboratorio</button>
+          </div>
+        </div>
+        <div class="campo"><label for="edFalla">Falla / síntoma</label><textarea id="edFalla"></textarea></div>
+      </div>
+      <button class="btn" id="btnEditGuardar">Guardar cambios</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnEditCancelar">Cancelar</button>
+    </section>
+
     <!-- Registrar / editar gasto -->
     <section id="vGasto" class="oculto">
       <h2 id="gastoTitulo">Registrar gasto</h2>
@@ -1200,7 +1228,7 @@ const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
    "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas","vPendientes",
-   "vAsistencia","vPago","vComprobante"].forEach(v => $(v).classList.add("oculto"));
+   "vAsistencia","vPago","vComprobante","vEditarOT"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -1531,6 +1559,16 @@ function tarjetaOT(o, opts = {}) {
   div.querySelector(".mod").textContent = tipoTexto;
   div.querySelector(".sintoma").textContent = lineaExtra;
   div.onclick = () => abrirDetalle(o);
+  // Botón "Editar" para corregir datos (cliente, patente, sistema, RUT,
+  // origen, falla) sin abrir el detalle completo. Solo dueño/coordinador.
+  if (["dueno", "coordinador"].includes(perfil?.rol)) {
+    const btnEd = document.createElement("button");
+    btnEd.type = "button";
+    btnEd.className = "card-editar";
+    btnEd.textContent = "Editar";
+    btnEd.onclick = (e) => { e.stopPropagation(); abrirEditarOT(o.id); };
+    div.appendChild(btnEd);
+  }
   return div;
 }
 
@@ -1735,6 +1773,7 @@ grupoOpciones("selFactEntregado");
 grupoOpciones("selFranja");
 grupoOpciones("selFranjaDet");
 grupoOpciones("selFranjaCaso");
+grupoOpciones("edOrigen");
 const elegido = cont => $(cont).querySelector('[aria-pressed="true"]')?.dataset.v ?? null;
 
 $("selTipoTrabajo").querySelectorAll("button").forEach(b => {
@@ -5543,6 +5582,68 @@ async function mostrarBotonVerInforme(ordenId) {
   if (hay) $("btnCierre").classList.add("oculto");
 }
 $("btnVerInforme").onclick = () => mostrarInforme();
+
+// ---------- Editar datos de la OT ----------
+// Corrige cliente, RUT, patente, tipo/sistema, origen y falla desde la
+// tarjeta, sin abrir el detalle completo. Solo dueño/coordinador (RLS + el
+// botón solo se muestra para ellos). Ojo: cambiar nombre/RUT afecta a TODAS
+// las OT de ese cliente, y la patente a todas las OT de ese vehículo (son
+// entidades compartidas) -- es lo correcto para corregir un error de tipeo.
+let editOrden = null;
+async function abrirEditarOT(ordenId) {
+  msg("edError", "");
+  const { data: o } = await db.from("ordenes")
+    .select("id,numero_ot,cliente_id,vehiculo_id,origen,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,clientes(nombre,rut),vehiculos(patente)")
+    .eq("id", ordenId).single();
+  if (!o) return;
+  editOrden = o;
+  const esServicio = o.tipo_trabajo === "servicio";
+  $("edTitulo").textContent = "Editar " + (o.numero_ot ?? "OT");
+  $("edCliente").value = o.clientes?.nombre ?? "";
+  $("edRut").value = o.clientes?.rut ?? "";
+  $("edPatente").value = o.vehiculos?.patente ?? "";
+  $("edTipoLbl").textContent = esServicio ? "Sistema afectado" : "Tipo de módulo";
+  $("edTipo").value = esServicio ? (o.sistema ?? "") : (o.tipo_modulo ?? "");
+  $("edFalla").value = o.sintoma_cliente ?? "";
+  $("edOrigen").querySelector(`[data-v="${o.origen ?? "terreno"}"]`)?.click();
+  ver("vEditarOT");
+}
+$("btnEditCancelar").onclick = () => { ver("vTablero"); cargarSeccion(); };
+$("btnEditGuardar").onclick = async () => {
+  if (!editOrden) return;
+  msg("edError", "");
+  const nombre = $("edCliente").value.trim();
+  if (!nombre) return msg("edError", "El cliente no puede quedar vacío.");
+  const patente = $("edPatente").value.trim();
+  $("btnEditGuardar").disabled = true;
+  $("btnEditGuardar").textContent = "Guardando…";
+  try {
+    const esServicio = editOrden.tipo_trabajo === "servicio";
+    if (editOrden.cliente_id)
+      await db.from("clientes").update({ nombre, rut: $("edRut").value.trim() || null })
+        .eq("id", editOrden.cliente_id);
+    if (editOrden.vehiculo_id && patente) {
+      const { error: ev } = await db.from("vehiculos").update({ patente }).eq("id", editOrden.vehiculo_id);
+      if (ev) throw new Error("No se pudo cambiar la patente (¿ya existe otra igual?): " + ev.message);
+    }
+    const upd = {
+      // Un servicio siempre es terreno (hay check en la base); no dejar que
+      // el toggle lo mande a laboratorio.
+      origen: esServicio ? "terreno" : (elegido("edOrigen") || editOrden.origen),
+      sintoma_cliente: $("edFalla").value.trim() || null
+    };
+    if (esServicio) upd.sistema = $("edTipo").value.trim() || null;
+    else upd.tipo_modulo = $("edTipo").value.trim() || null;
+    const { error: eo } = await db.from("ordenes").update(upd).eq("id", editOrden.id);
+    if (eo) throw eo;
+    ver("vTablero"); cargarSeccion();
+  } catch (e) {
+    msg("edError", "No se pudo guardar: " + (e.message || "error desconocido"));
+  } finally {
+    $("btnEditGuardar").disabled = false;
+    $("btnEditGuardar").textContent = "Guardar cambios";
+  }
+};
 
 // ---------- Utilidades ----------
 async function subirFoto(orden_id, blob, categoria) {
