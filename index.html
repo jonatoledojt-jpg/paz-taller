@@ -1628,7 +1628,6 @@ async function cargarOrdenes() {
 
   $("listaOT").innerHTML = "";
   if (agendadas.length) {
-    const puedeReordenar = ["dueno", "coordinador"].includes(perfil?.rol);
     const tit = document.createElement("span");
     tit.className = "rotulo sep";
     tit.textContent = "Agendado esta semana";
@@ -1641,22 +1640,7 @@ async function cargarOrdenes() {
       cab.className = "dia-grupo";
       cab.innerHTML = `<span class="nombre">${DIAS_SEMANA[i]} ${new Date(isoDia + "T00:00:00").getDate()}</span>`;
       $("listaOT").appendChild(cab);
-      delDia.forEach((o, idx) => {
-        const card = tarjetaOT(o, { agenda: true });
-        if (puedeReordenar) {
-          const reord = document.createElement("div");
-          reord.className = "reordenar";
-          const subir = document.createElement("button");
-          subir.type = "button"; subir.textContent = "↑ Subir"; subir.disabled = idx === 0;
-          subir.onclick = e => { e.stopPropagation(); moverOrdenRuta(delDia, idx, -1); };
-          const bajar = document.createElement("button");
-          bajar.type = "button"; bajar.textContent = "↓ Bajar"; bajar.disabled = idx === delDia.length - 1;
-          bajar.onclick = e => { e.stopPropagation(); moverOrdenRuta(delDia, idx, 1); };
-          reord.appendChild(subir); reord.appendChild(bajar);
-          card.appendChild(reord);
-        }
-        $("listaOT").appendChild(card);
-      });
+      delDia.forEach(o => $("listaOT").appendChild(tarjetaOT(o, { agenda: true })));
     });
     if (resto.length) {
       const tit2 = document.createElement("span");
@@ -1723,17 +1707,6 @@ function lunesDeSemana(offset) {
   return lunes;
 }
 
-// Reordenar dentro de un día llama a cargarOrdenes -- el agrupado por
-// día ahora vive ahí (dentro de Terreno/Laboratorio), no en una
-// pantalla de Agenda aparte.
-async function moverOrdenRuta(lista, i, dir) {
-  const j = i + dir;
-  if (j < 0 || j >= lista.length) return;
-  [lista[i], lista[j]] = [lista[j], lista[i]];
-  const actualizaciones = lista.map((o, idx) => db.from("ordenes").update({ orden_ruta: idx + 1 }).eq("id", o.id));
-  await Promise.all(actualizaciones);
-  cargarOrdenes();
-}
 
 $("btnHerAgendar").onclick = () => {
   $("btnNueva").click();
