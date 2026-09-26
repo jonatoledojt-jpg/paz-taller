@@ -729,7 +729,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div id="edError" class="aviso oculto"></div>
       <div class="seccion">
         <div class="campo"><label for="edCliente">Cliente</label><input id="edCliente" list="dlClientes"></div>
-        <div class="campo"><label for="edRut">RUT</label><input id="edRut" inputmode="text"></div>
+        <div class="campo"><label for="edRut">RUT</label><input id="edRut" inputmode="text" placeholder="76.543.210-9"><div class="pista" id="edPistaRut"></div></div>
         <div class="campo"><label for="edPatente">Patente</label><input id="edPatente"></div>
         <div class="campo">
           <label id="edTipoLbl" for="edTipo">Tipo de módulo</label>
@@ -5581,6 +5581,7 @@ async function abrirEditarOT(ordenId) {
   $("edTitulo").textContent = "Editar " + (o.numero_ot ?? "OT");
   $("edCliente").value = o.clientes?.nombre ?? "";
   $("edRut").value = o.clientes?.rut ?? "";
+  $("edPistaRut").textContent = ""; $("edPistaRut").className = "pista";
   $("edPatente").value = o.vehiculos?.patente ?? "";
   $("edTipoLbl").textContent = esServicio ? "Sistema afectado" : "Tipo de módulo";
   $("edTipo").value = esServicio ? (o.sistema ?? "") : (o.tipo_modulo ?? "");
@@ -5588,6 +5589,17 @@ async function abrirEditarOT(ordenId) {
   $("edOrigen").querySelector(`[data-v="${o.origen ?? "terreno"}"]`)?.click();
   ver("vEditarOT");
 }
+// Mismo formateo/validación de RUT que "Nueva OT" (puntos, guion, dígito).
+$("edRut").oninput = e => {
+  const alFinal = e.target.selectionStart === e.target.value.length;
+  e.target.value = formatearRut(e.target.value);
+  if (alFinal) e.target.setSelectionRange(e.target.value.length, e.target.value.length);
+  const ok = dvCorrecto(e.target.value);
+  const p = $("edPistaRut");
+  if (ok === null) { p.textContent = ""; p.className = "pista"; }
+  else if (ok)     { p.textContent = "RUT válido"; p.className = "pista bien"; }
+  else             { p.textContent = "El dígito verificador no calza. Revísalo."; p.className = "pista mal"; }
+};
 $("btnEditCancelar").onclick = () => { ver("vTablero"); cargarSeccion(); };
 $("btnEditGuardar").onclick = async () => {
   if (!editOrden) return;
