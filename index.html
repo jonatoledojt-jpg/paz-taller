@@ -2026,7 +2026,10 @@ function accionesPrincipales(o) {
       // tiene padre, es su propia raíz) -- si esta es una hija, se
       // cobra junto con las demás desde arriba, no suelta (pedido de
       // Jonatan, 17-09-2026: "que solo se pueda cobrar en la OT padre").
-      if (o.orden_padre_id) return [["Ir a la OT padre para cobrar", () => irAOrden(o.orden_padre_id)]];
+      // El cobro se hace desde la OT padre... salvo que el padre YA se haya
+      // cobrado/cerrado: ahí la hija quedaría atrapada "por cobrar" para
+      // siempre (auditoría 26-09). En ese caso se cobra la hija directo.
+      if (o.orden_padre_id) return [["Registrar cobro", () => cobrarHija(o)]];
       return [["Registrar cobro", () => abrirFacturar()]];
     }
     return [["Cerrar OT", () => cerrarOT()]];
@@ -2164,8 +2167,11 @@ function pintarEstados(o) {
 // compatibilidad, no la fuente de verdad.
 function estadoLegado(o) {
   if (o.comercial === "rechazado") return "rechazado";
-  if (o.reparacion === "irreparable") return "irreparable";
+  // Pagado gana sobre irreparable: si se cobró (aunque sea el diagnóstico de
+  // un módulo irreparable), el espejo debe decir "facturado" para que
+  // resumen_rentabilidad/rentabilidad_ot cuenten esa plata (auditoría 26-09).
   if (o.pagado_en) return "facturado";
+  if (o.reparacion === "irreparable") return "irreparable";
   if (o.reparacion === "listo") {
     if (o.tipo_trabajo === "servicio") return "resuelto_en_terreno";
     if (o.origen === "terreno") return o.ubicacion === "entregado" ? "instalado" : "listo_entrega";
@@ -2210,6 +2216,17 @@ async function cambiarReparacion(nueva) {
 
 async function cambiarComercial(nuevo) {
   const payload = { comercial: nuevo };
+  // Mantener el booleano legado aprobado_cliente en sincronía con el carril
+  // comercial: resumen_rentabilidad (Comprometido) y rentabilidad_ot leen
+  // aprobado_cliente, no comercial. Si se aprueba/desaprueba por el panel
+  // manual y no se sincroniza, esa OT queda fuera del comprometido y del
+  // margen provisional (auditoría 26-09).
+  if (nuevo === "aprobado") {
+    payload.aprobado_cliente = true;
+    if (!ordenActual.fecha_aprobacion) payload.fecha_aprobacion = new Date().toISOString();
+  } else {
+    payload.aprobado_cliente = false;
+  }
   payload.estado = estadoLegado({ ...ordenActual, ...payload });
   const { error } = await db.from("ordenes").update(payload).eq("id", ordenActual.id);
   if (error) return msg("detError", "No se pudo cambiar el estado económico: " + error.message);
@@ -2378,6 +2395,18 @@ async function irAOrden(id) {
     .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
     .eq("id", id).single();
   if (destino) abrirDetalle(destino);
+}
+
+// Cobro de una OT hija: si el padre todavía se puede cobrar, se cobra desde
+// el padre (con la lista de hermanos, como manda el diseño). Pero si el padre
+// YA está cobrado o cerrado, la hija quedaría atrapada -- ahí se cobra la hija
+// directa desde Facturar (auditoría 26-09).
+async function cobrarHija(o) {
+  const { data: padre } = await db.from("ordenes")
+    .select("pagado_en,fecha_cierre,comercial").eq("id", o.orden_padre_id).single();
+  const padreCobrable = padre && !padre.pagado_en && !padre.fecha_cierre && padre.comercial !== "rechazado";
+  if (padreCobrable) irAOrden(o.orden_padre_id);
+  else abrirFacturar();
 }
 
 async function pintarVinculos(o) {
@@ -2659,9 +2688,15 @@ $("btnConfirmarFacturar").onclick = async () => {
     const chk = $("factHermanosLista").querySelector(`input[type=checkbox][data-id="${h.id}"]`);
     if (!chk?.checked) continue;
     const escrito = $("factHermanosLista").querySelector(`.fHermanoMonto[data-id="${h.id}"]`).value;
-    const bruto = escrito ? parseInt(escrito, 10) : h._sugerido;
-    if (!bruto) return msg("factError", `Falta el monto de ${h.numero_ot}.`);
-    marcados.push({ ...h, neto: conFactura ? Math.round(bruto / 1.19) : bruto });
+    // Si la persona ESCRIBIÓ un monto, se aplica el criterio con/sin factura
+    // (lo escrito con factura es bruto → se le saca el IVA). Si lo dejó en
+    // blanco, el sugerido YA es neto: no volver a dividirlo por 1.19, porque
+    // ahí se descontaba el IVA dos veces en silencio (auditoría 26-09).
+    const neto = escrito
+      ? (conFactura ? Math.round(parseInt(escrito, 10) / 1.19) : parseInt(escrito, 10))
+      : h._sugerido;
+    if (!neto) return msg("factError", `Falta el monto de ${h.numero_ot}.`);
+    marcados.push({ ...h, neto });
   }
 
   $("btnConfirmarFacturar").disabled = true;

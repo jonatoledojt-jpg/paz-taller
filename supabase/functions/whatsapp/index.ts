@@ -294,6 +294,7 @@ async function contextoDelSistema(paz: any, telefono: string, historial: { conte
 
   const { data: cli } = await paz.from("clientes")
     .select("id,nombre,rut,ciudad").eq("telefono", telefono).limit(1);
+  const clienteActualId: number | null = cli?.[0]?.id ?? null;
   if (cli?.length) {
     const c = cli[0];
     lineas.push(`Cliente ya registrado con este teléfono: ${c.nombre}` +
@@ -303,12 +304,25 @@ async function contextoDelSistema(paz: any, telefono: string, historial: { conte
   const dichas = patentesEn(historial.map((m) => m.content).join(" "));
   for (const p of dichas.slice(0, 3)) {
     const { data: veh } = await paz.from("vehiculos")
-      .select("patente,marca,modelo,anio,clientes(nombre)").eq("patente", p).limit(1);
+      .select("patente,marca,modelo,anio,cliente_id,clientes(nombre)").eq("patente", p).limit(1);
     if (!veh?.length) {
       lineas.push(`La patente ${p} no está registrada. Pregunta marca, modelo y año.`);
       continue;
     }
     const v: any = veh[0];
+    // SOLO revelar/confirmar datos de un vehículo si pertenece al MISMO
+    // cliente de este teléfono. Si la patente es de OTRO cliente (o el
+    // teléfono no está registrado), NO reveles su nombre ni sus trabajos
+    // anteriores -- antes cualquiera escribía la patente de un tercero y PAZ
+    // soltaba el nombre del dueño y sus OT (auditoría 26-09, IDOR por prompt).
+    if (clienteActualId === null || v.cliente_id !== clienteActualId) {
+      lineas.push(
+        `La patente ${p} no está asociada a este contacto. Pídele al cliente los ` +
+        `datos del vehículo como si fuera nuevo; NO asumas de quién es ni des ` +
+        `información de esa patente.`,
+      );
+      continue;
+    }
     lineas.push(
       `Patente ${p} registrada: ${[v.marca, v.modelo].filter(Boolean).join(" ")}` +
       (v.anio ? ` año ${v.anio}` : "") +
@@ -709,9 +723,16 @@ Deno.serve(async (req) => {
       });
       return;
     }
-    for (const m of mensajes) {
-      try { await procesarMensaje(paz, m); } catch (e) { console.error("Error procesando:", e); }
-    }
+    // En PARALELO, no en serie: cuando Meta agrupa varios mensajes en un solo
+    // webhook, procesarlos uno tras otro dejaba al mensaje 2 sin insertar hasta
+    // que el 1 terminaba todo su debounce, asi que el 1 se veia como el mas
+    // reciente y respondia, y el 2 respondia tambien -> duplicado (auditoria
+    // 26-09). En paralelo, los dos se insertan casi al tiempo antes de que
+    // cualquiera termine su espera, y el debounce deja responder solo al mas
+    // nuevo (el resto se retira al ver uno con creado_en mayor).
+    await Promise.all(mensajes.map((m) =>
+      procesarMensaje(paz, m).catch((e) => console.error("Error procesando:", e))
+    ));
   })();
   // @ts-ignore: lo provee el runtime de Supabase
   if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(trabajo);

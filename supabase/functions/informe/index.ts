@@ -193,12 +193,19 @@ Deno.serve(async (req) => {
     const { accion = "redactar", orden_id, fuente = "", fuente_hash = "", respuestas = "", texto = "" } =
       await req.json();
 
+    // Tope por hora sobre ia_uso (que registra TODAS las acciones que llaman
+    // al modelo: analizar/redactar/mejorar). Antes se contaba informes_ia, que
+    // solo escribe "redactar", asi que analizar/mejorar esquivaban el tope
+    // (auditoria 26-09). Se cuenta y se deja la marca antes de llamar a la IA.
     const hace1h = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await comoUsuario
-      .from("informes_ia").select("id", { count: "exact", head: true })
-      .eq("generado_por", user.id).gte("generado_en", hace1h);
+      .from("ia_uso").select("id", { count: "exact", head: true })
+      .eq("usuario_id", user.id).gte("creado_en", hace1h);
     if ((count ?? 0) >= TOPE_POR_HORA) {
       return json({ error: "Llegaste al tope de generaciones por hora. Espera un rato." }, 429);
+    }
+    if (["analizar", "redactar", "mejorar"].includes(accion)) {
+      await comoUsuario.from("ia_uso").insert({ usuario_id: user.id, accion });
     }
 
     const entrada = armarEntrada(fuente, respuestas);

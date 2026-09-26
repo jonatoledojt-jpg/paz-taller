@@ -83,6 +83,7 @@ sw.js                   service worker
 31-cotizacion-suma-todas.sql monto_cotizado suma TODAS las cotizaciones no anuladas, no solo la última
 32-perfiles-area.sql         perfiles.area (reusa area_gasto) -- distingue a Diego de Jonatan Osores
 33-informe-ia.sql            tabla informes_ia: rastro de auditoria del informe redactado con IA
+34-endurece-rls-y-ia-uso.sql RLS de diagnosticos/archivos/movimientos + tabla ia_uso (auditoria 26-09)
 25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
@@ -2132,6 +2133,51 @@ con observaciones de tacógrafo/vector/aguja del GP y conclusión de falla de
 caja, confirmando que la IA no agrega visitas/fechas/piezas que no estén, que
 mejora la redacción sin cambiar hechos, y que una OT sin historial avisa y no
 llama a la API.
+
+## Auditoría completa y arreglos (26-09-2026)
+
+Auditoría exhaustiva multi-agente (5 lentes + verificación adversarial) sobre
+todo: front, .sql y Edge Functions. 11 hallazgos confirmados, **todos
+corregidos** el mismo día. Los importantes:
+
+- **OT irreparable cobrada se perdía de la rentabilidad.** `estadoLegado`
+  evaluaba `irreparable` antes que `pagado_en`, así que un módulo irreparable
+  cuyo diagnóstico se cobró quedaba `estado='irreparable'` y
+  `resumen_rentabilidad`/`rentabilidad_ot` (que filtran por `='facturado'`) no
+  lo contaban. **Fix:** `pagado_en` gana sobre `irreparable` en `estadoLegado`.
+- **OT hija quedaba atrapada "por cobrar" si el padre ya se facturó.** La hija
+  solo ofrecía "Ir a la OT padre para cobrar", pero el padre pagado no tiene
+  Facturar. **Fix:** `cobrarHija(o)` — si el padre sigue cobrable, va al padre;
+  si ya está cobrado/cerrado, cobra la hija directo con `abrirFacturar`.
+- **`diagnosticos` y `archivos` tenían `FOR ALL using(true)`**: cualquier
+  técnico (o la sesión del rol agente) podía UPDATE/DELETE filas ajenas.
+  **Fix (`34-endurece-rls`):** SELECT/INSERT abiertos, pero UPDATE acotado
+  (dueño/coordinador o el técnico de esa OT) y DELETE solo dueño; archivos
+  UPDATE/DELETE dueño/coordinador o quien lo subió.
+- **`movimientos_estado` insert con `check(true)`**: se podía forjar historial
+  a nombre de otro. **Fix:** `with check (usuario_id = auth.uid())` (el trigger
+  ya inserta con auth.uid(), sigue funcionando).
+- **Cobro de hermano "con factura" + monto en blanco** descontaba IVA dos veces
+  (el sugerido ya es neto y se re-dividía por 1.19). **Fix:** si el campo está
+  en blanco se usa el neto sugerido tal cual; solo lo ESCRITO se trata como
+  bruto.
+- **Aprobar cotización por "Cambiar estados manualmente"** no seteaba
+  `aprobado_cliente`, así que la rentabilidad no la contaba. **Fix:**
+  `cambiarComercial` sincroniza `aprobado_cliente` con el carril comercial.
+- **Tope por hora del Redactor IA** solo contaba `redactar` (informes_ia), no
+  `analizar`/`mejorar`. **Fix:** tabla `ia_uso` que registra las tres acciones;
+  el tope se cuenta de ahí.
+- **PAZ WhatsApp filtraba datos de otros clientes** con solo escribir su
+  patente (IDOR por prompt). **Fix:** `contextoDelSistema` solo revela/confirma
+  un vehículo si es del MISMO cliente del teléfono que escribe. (Latente hasta
+  conectar el número real.)
+- **Meta agrupa varios mensajes en un webhook → PAZ respondía duplicado.**
+  **Fix:** procesar el batch en paralelo (`Promise.all`) para que el debounce
+  vea todos los mensajes y solo responda el más nuevo. (Latente.)
+- **Nexa `activa=false` bloqueaba acciones sin IA** (marcar atendido, enviar
+  respuesta ya redactada). **Fix:** esas dos acciones se exceptúan del gate.
+- (Baja) historial de estados forjable → cubierto por el fix de
+  `movimientos_estado` arriba.
 
 ## Contexto de negocio que importa
 

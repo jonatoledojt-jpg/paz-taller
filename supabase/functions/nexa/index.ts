@@ -145,22 +145,29 @@ Deno.serve(async (req) => {
     const { data: cfg } = await admin
       .from("nexa_config").select("prompt,prompt_ficha,modelo,activa").eq("id", 1).single();
 
-    if (!cfg?.activa) return json({ error: "Nexa está desactivada." }, 503);
-    if (!cfg.prompt?.trim()) {
-      return json({ error: "Nexa no tiene instrucciones cargadas todavía." }, 503);
-    }
-
     const apiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!apiKey) {
-      return json({
-        error: "Falta configurar la llave de la IA. Corre: supabase secrets set OPENAI_API_KEY=tu-llave",
-      }, 503);
-    }
 
     const {
       accion = "responder", historial = [], texto = "",
       caso_id, instruccion, mensaje,
     } = await req.json();
+
+    // marcar_atendido y enviar_respuesta NO llaman a la IA (una actualiza el
+    // caso, la otra manda por WhatsApp un texto ya redactado). Deben funcionar
+    // aunque PAZ esté desactivada (activa=false) o sin prompt/llave -- antes el
+    // gate de arriba las bloqueaba a todas por igual (auditoría 26-09).
+    const SIN_IA = ["marcar_atendido", "enviar_respuesta"];
+    if (!SIN_IA.includes(accion)) {
+      if (!cfg?.activa) return json({ error: "Nexa está desactivada." }, 503);
+      if (!cfg.prompt?.trim()) {
+        return json({ error: "Nexa no tiene instrucciones cargadas todavía." }, 503);
+      }
+      if (!apiKey) {
+        return json({
+          error: "Falta configurar la llave de la IA. Corre: supabase secrets set OPENAI_API_KEY=tu-llave",
+        }, 503);
+      }
+    }
 
     // Enseñarle a PAZ: se le pega una conversación real o una corrección
     // y ella destila los criterios. No los guarda: los propone, y el
