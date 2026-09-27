@@ -86,6 +86,9 @@ sw.js                   service worker
 34-endurece-rls-y-ia-uso.sql RLS de diagnosticos/archivos/movimientos + tabla ia_uso (auditoria 26-09)
 35-agente-terreno.sql        tabla terreno_diagnosticos: agente de Diagnóstico de Terreno (standalone)
 36-terreno-imagenes.sql      ojos del agente: columna imagenes + bucket privado terreno-adjuntos
+37-lab-esquema.sql           15 tablas ecu_* del agente de Diagnóstico de Laboratorio (paquete MCM2.1)
+38-lab-rls.sql               RLS de las ecu_* + ve_laboratorio() (dueño / coordinador laboratorio)
+39-lab-config.sql            ecu_config: prompt del diagnosticador (el prompt se carga aparte, no en el repo)
 25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
@@ -96,6 +99,7 @@ supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asi
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 supabase/functions/informe/index.ts    Edge Function que redacta el informe tecnico con IA
 supabase/functions/terreno/index.ts     Edge Function del agente de Diagnostico de Terreno (voz)
+supabase/functions/laboratorio/index.ts  Edge Function del agente de Diagnostico de Laboratorio (MCM2.1)
 ```
 
 **De la 01 a la 30 están todas aplicadas en la base real** (verificado el
@@ -2300,6 +2304,46 @@ La función `terreno` ahora atiende multipart con `audio` **o** `imagen`.
 **Pendiente, a propósito:** guardar el audio original (hoy solo la
 transcripción; las imágenes sí se guardan), la fase 2 (asistir al técnico), y
 conectar la cadena PAZ→terreno→informe. Todo eso después, cuando se pida.
+
+## Agente de Diagnóstico de Laboratorio — MCM2.1 (27-09-2026)
+
+Ver `37-lab-esquema.sql`, `38-lab-rls.sql`, `39-lab-config.sql` y
+`supabase/functions/laboratorio/index.ts`. Módulo **STANDALONE** (como el de
+terreno): botón **"Diagnóstico de laboratorio"** en Herramientas, su única
+entrada. **No toca OT, ni informe, ni el agente de terreno.** Lo usan **Diego
+(encargado de laboratorio) y Jonatan** — gate `ve_laboratorio()` = dueño o
+coordinador con `area='laboratorio'`.
+
+**Es diagnóstico de banco, a nivel componente** (no de escáner): el módulo está
+sobre la mesa y se mide pin/voltaje/curva. Empezamos por el **MCM2.1 DAI
+HDEP-EU**; la idea es sumar PLD y otros después reusando las mismas tablas.
+
+**El conocimiento vive en 15 tablas `ecu_*`** (esquema del propio paquete,
+adoptado). Cargado desde el paquete `mcm21-paz-services.zip` (Revisión 3,
+verificado por dos revisores independientes): **1.292 componentes, 120 pines,
+23 hojas, 31 zonas, 27 circuitos (con SVG), 136 etapas, 142 mediciones, 13
+síntomas, 18 canales PV, 1 código**. Todos los conteos verificados contra el
+README tras cargar. La carga se hizo con un generador Python (JSON→SQL) por CLI
+(que salta RLS); las tablas de referencia son **solo lectura** para la app.
+
+**La regla de oro se respeta a nivel de datos:** cada medición esperada trae un
+campo **`base`** (`componente`/`esquema` = sólido; `topologia`/`nombre_senal` =
+inferencia; `supuesto` = estimación a confirmar). **No hay una sola tensión de
+fábrica** — `ecu_mediciones.valor_medido` está vacío a propósito: lo llena el
+taller con el **levantamiento** (trace curve, placa sana). El prompt obliga a
+dar toda tensión con su base y a no inventar puntos de prueba que no estén.
+
+**Cómo funciona el agente (v1):** conversa (chat). En cada mensaje, la función
+`laboratorio` **ubica en la base** lo que el técnico menciona (código, circuito
+por id, pin, componente por designador, canal PWM, síntoma) y le inyecta ese
+detalle al modelo como contexto, más un catálogo compacto de qué existe. El
+modelo razona con el prompt del diagnosticador (`ecu_config.prompt`, **cargado
+en la base, NO en el repo** porque es know-how). Pregunta primero las
+condiciones (actuador conectado/desconectado, banco/camión, código que vuelve)
+antes de dar un plan de descarte. **Pendiente, a propósito:** el visor de
+circuitos SVG interactivo (los 27 SVG están guardados en `ecu_circuitos.svg`),
+el tool-calling de verdad (hoy es inyección de contexto), el levantamiento (RPC
+para llenar `valor_medido`), y el resto de las hojas (5,6,8,9,10,17-21).
 
 ## Contexto de negocio que importa
 

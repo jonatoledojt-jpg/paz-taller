@@ -389,6 +389,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <button type="button" class="herramienta oculto" id="btnHerAgendar">Agendar visita</button>
         <button type="button" class="herramienta oculto" id="btnHerAsistencia">Registro de asistencia</button>
         <button type="button" class="herramienta oculto" id="btnHerDiagTerreno">Diagnóstico de terreno</button>
+        <button type="button" class="herramienta oculto" id="btnHerDiagLab">Diagnóstico de laboratorio</button>
         <button type="button" class="herramienta" id="btnHerGastos">Gastos</button>
       </div>
 
@@ -1063,6 +1064,31 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <button class="btn claro" id="btnDtSalir">‹ Volver a Herramientas</button>
     </section>
 
+    <!-- Diagnóstico de laboratorio (STANDALONE, 27-09-2026): agente que
+         diagnostica el módulo en el banco con el conocimiento cargado del
+         paquete MCM2.1 (tablas ecu_*). No toca OT, informe ni terreno. -->
+    <section id="vLab" class="oculto">
+      <div class="seccion-tit">
+        <h2>Diagnóstico de laboratorio</h2>
+        <span id="labSub">MCM2.1 · módulo en el banco</span>
+      </div>
+      <div id="labError" class="aviso oculto"></div>
+      <div class="aviso info" style="margin-bottom:12px">
+        Cuéntame el código de falla o el síntoma, y en qué condiciones aparece.
+        Te voy guiando la medición paso a paso. Toda tensión va con su base; los
+        valores de placa sana los vas poniendo tú con el tiempo.
+      </div>
+      <div class="chat" id="labChat"></div>
+      <div class="chat-barra" style="margin-top:12px">
+        <textarea id="labTexto" rows="1" placeholder="Código de falla, síntoma, circuito…"></textarea>
+        <button class="btn" id="btnLabEnviar">Enviar</button>
+      </div>
+      <div style="height:12px"></div>
+      <button class="btn claro" id="btnLabNuevo">Empezar de nuevo</button>
+      <div style="height:8px"></div>
+      <button class="btn claro" id="btnLabSalir">‹ Volver a Herramientas</button>
+    </section>
+
     <!-- Detalle de un caso -->
     <section id="vCaso" class="oculto">
       <div class="seccion-tit">
@@ -1284,7 +1310,7 @@ const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
    "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas","vPendientes",
-   "vAsistencia","vPago","vComprobante","vEditarOT","vDiagTerreno"].forEach(v => $(v).classList.add("oculto"));
+   "vAsistencia","vPago","vComprobante","vEditarOT","vDiagTerreno","vLab"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -1549,6 +1575,8 @@ function cambiarSeccion(seccion) {
   $("btnHerAsistencia").classList.toggle("oculto", !veCoordinacionGeneral());
   // Diagnóstico de terreno: standalone, solo dueño (fase 1 de captura).
   $("btnHerDiagTerreno").classList.toggle("oculto", perfil?.rol !== "dueno");
+  // Diagnóstico de laboratorio: dueño o encargado de laboratorio (Diego).
+  $("btnHerDiagLab").classList.toggle("oculto", !veLaboratorio());
   $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
   $("porCobrarAviso").classList.add("oculto");
   $("selGastoVista").classList.toggle("oculto", !(seccion === "gastos" && esDueno));
@@ -1581,6 +1609,9 @@ const veModulosPorRecepcionar = () =>
 // por recepcionar", no porque él mismo lo haya agendado.
 const veCoordinacionGeneral = () =>
   perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "coordinacion");
+// Diagnóstico de laboratorio: el dueño y el encargado de laboratorio (Diego).
+const veLaboratorio = () =>
+  perfil?.rol === "dueno" || (perfil?.rol === "coordinador" && perfil?.area === "laboratorio");
 
 // Aviso persistente arriba de Terreno/Laboratorio/Herramientas (nunca
 // dentro de una OT) -- reemplaza al botón "Pendientes" que antes vivía
@@ -6027,6 +6058,66 @@ $("btnDtEnviarTexto").onclick = dtEnviarTexto;
 $("btnDtGuardar").onclick = dtGuardar;
 $("btnDtFoto").onclick = () => $("dtFotoInput").click();
 $("dtFotoInput").onchange = e => { const f = e.target.files[0]; if (f) dtSubirImagen(f); e.target.value = ""; };
+
+// ============================================================
+// Diagnóstico de laboratorio (STANDALONE) — chat del diagnosticador MCM2.1.
+// Lee el conocimiento de las tablas ecu_* vía la Edge Function `laboratorio`.
+// No toca OT, informe ni terreno.
+// ============================================================
+let labMensajes = [], labOcupado = false;
+function labMsg(t, b) { msg("labError", t, b); }
+
+function abrirLab() {
+  ver("vLab");
+  if (!labMensajes.length) {
+    labMensajes = [{ rol: "assistant", contenido: "Dale. Dime el código de falla o el síntoma, y en qué condiciones aparece: ¿pasa con el actuador conectado o desconectado?, ¿el módulo está en el banco o en el camión?, ¿el código vuelve al borrarlo?" }];
+  }
+  labRender(); labMsg("");
+}
+
+function labRender() {
+  $("labChat").innerHTML = labMensajes.map(m =>
+    `<div class="burbuja ${m.rol === "user" ? "yo" : "ella"}">${escapar(m.contenido)}</div>`).join("");
+  $("labChat").scrollTop = $("labChat").scrollHeight;
+}
+
+async function labEnviar() {
+  const t = $("labTexto").value.trim();
+  if (!t || labOcupado) return;
+  labOcupado = true;
+  $("labTexto").value = "";
+  labMensajes.push({ rol: "user", contenido: t });
+  labMensajes.push({ rol: "assistant", contenido: "…" });
+  labRender(); labMsg("");
+  try {
+    const { data: { session } } = await db.auth.getSession();
+    if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/laboratorio`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ historial: labMensajes.filter(m => m.contenido !== "…").map(m => ({ role: m.rol, content: m.contenido })) }),
+    });
+    const cuerpo = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(cuerpo.error || `El agente respondió con error ${r.status}.`);
+    labMensajes.pop();
+    labMensajes.push({ rol: "assistant", contenido: cuerpo.respuesta || "(sin respuesta)" });
+    labRender();
+  } catch (e) {
+    labMensajes.pop();
+    labRender();
+    labMsg(e.message || "No se pudo consultar.");
+  } finally {
+    labOcupado = false;
+  }
+}
+
+function labNuevo() { labMensajes = []; abrirLab(); }
+
+$("btnHerDiagLab").onclick = abrirLab;
+$("btnLabEnviar").onclick = labEnviar;
+$("btnLabNuevo").onclick = labNuevo;
+$("btnLabSalir").onclick = () => { ver("vTablero"); cambiarSeccion("agenda"); };
+$("labTexto").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); labEnviar(); } };
 
 db.auth.getSession().then(({ data }) => { if (data.session) iniciar(); });
 
