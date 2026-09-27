@@ -16,6 +16,7 @@
 // Desplegar:  .\.tools\supabase.exe functions deploy laboratorio --use-api
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { encodeBase64 } from "jsr:@std/encoding/base64";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -48,6 +49,51 @@ async function llamarIA(apiKey: string, modelo: string, instrucciones: string, e
   });
   if (!r.ok) throw new Error(`La IA respondió ${r.status}: ${(await r.text()).slice(0, 300)}`);
   return extraerTexto(await r.json());
+}
+
+// Transcribe un audio grabado en el navegador (manos ocupadas en el banco).
+async function transcribir(apiKey: string, file: File): Promise<string> {
+  const form = new FormData();
+  form.append("file", file, file.name || "audio.webm");
+  form.append("model", "whisper-1");
+  form.append("language", "es");
+  const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form,
+  });
+  if (!r.ok) throw new Error(`No se pudo transcribir el audio: ${(await r.text()).slice(0, 200)}`);
+  const { text } = await r.json();
+  return (text ?? "").trim();
+}
+
+// Los OJOS en el banco: describe LITERAL lo que se ve en una foto del taller
+// (componente y su estado, lectura de instrumento, curva del trazador, zona de
+// la placa). NO diagnostica -- eso lo hace el agente con esta descripción.
+const REGLAS_OJOS_LAB = [
+  "Describe LITERAL lo que se ve en esta foto de un banco de reparación de módulos",
+  "electrónicos. Puede ser: un componente y su estado (quemado, hinchado, con marca",
+  "de calor, corrosión, soldadura fría, pista dañada), una lectura de instrumento",
+  "(multímetro con su valor y unidad, fuente con su consumo), la curva de un trazador",
+  "(forma: abierta, en corto, deformada, simétrica), o una zona de la placa con sus",
+  "designadores visibles. NO diagnostiques ni interpretes la causa: solo describe lo",
+  "que se ve, con los números y textos que alcances a leer. Si algo está borroso, dilo.",
+].join("\n");
+
+async function leerImagen(apiKey: string, modelo: string, file: File): Promise<string> {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const dataUrl = `data:${file.type || "image/jpeg"};base64,${encodeBase64(buf)}`;
+  const r = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: modelo, instructions: REGLAS_OJOS_LAB,
+      input: [{ role: "user", content: [
+        { type: "input_text", text: "Describe esta foto del banco." },
+        { type: "input_image", image_url: dataUrl },
+      ] }],
+    }),
+  });
+  if (!r.ok) throw new Error(`No se pudo leer la imagen: ${(await r.text()).slice(0, 200)}`);
+  return extraerTexto(await r.json()).trim();
 }
 
 // Arma el bloque de contexto: lo que el técnico mencionó, buscado en las
@@ -164,25 +210,41 @@ Deno.serve(async (req) => {
     const prompt = cfg?.prompt?.trim();
     if (!prompt) return json({ error: "El agente de laboratorio no está configurado (falta el prompt)." }, 503);
 
-    const { historial = [] } = await req.json();
-    const hist = Array.isArray(historial) ? historial.filter((m: any) => m && typeof m.content === "string") : [];
-    if (!hist.length) return json({ error: "No hay mensaje." }, 400);
-
-    // Tope por hora.
+    // Tope por hora (cubre texto, audio e imagen: todos llaman al modelo).
     const hace1h = new Date(Date.now() - 3600_000).toISOString();
     const { count } = await comoUsuario.from("ia_uso").select("id", { count: "exact", head: true })
       .eq("usuario_id", user.id).eq("accion", "lab").gte("creado_en", hace1h);
     if ((count ?? 0) >= TOPE_POR_HORA) return json({ error: "Llegaste al tope por hora. Espera un rato." }, 429);
     await comoUsuario.from("ia_uso").insert({ usuario_id: user.id, accion: "lab" });
 
+    // La entrada puede ser JSON (texto) o multipart (audio / imagen).
+    let hist: any[] = [];
+    let textoUsuario: string | null = null;
+    const tipo = req.headers.get("content-type") ?? "";
+    if (tipo.includes("multipart/form-data")) {
+      const form = await req.formData();
+      try { hist = JSON.parse(String(form.get("historial") ?? "[]")); } catch { hist = []; }
+      hist = Array.isArray(hist) ? hist.filter((m: any) => m && typeof m.content === "string") : [];
+      const audio = form.get("audio");
+      const imagen = form.get("imagen");
+      if (audio instanceof File) textoUsuario = await transcribir(apiKey, audio);
+      else if (imagen instanceof File) { const d = await leerImagen(apiKey, modelo, imagen); textoUsuario = d ? `[Foto del banco] ${d}` : ""; }
+      else return json({ error: "No llegó ni audio ni imagen." }, 400);
+      if (!textoUsuario) return json({ error: "No se entendió el audio o la imagen. Reintenta." }, 400);
+      hist.push({ role: "user", content: textoUsuario });
+    } else {
+      const { historial = [] } = await req.json();
+      hist = Array.isArray(historial) ? historial.filter((m: any) => m && typeof m.content === "string") : [];
+    }
+    if (!hist.length) return json({ error: "No hay mensaje." }, 400);
+
     const ultimo = [...hist].reverse().find((m: any) => m.role === "user")?.content ?? hist[hist.length - 1].content;
     const contexto = await armarContexto(admin, String(ultimo));
-
     const instrucciones = prompt + "\n\n## DATOS DEL MÓDULO QUE EL SISTEMA UBICÓ PARA ESTA CONSULTA\n(Reemplaza a las herramientas: es lo que se encontró en la base para lo que se mencionó.)\n\n" + contexto;
     const texto = await llamarIA(apiKey, modelo, instrucciones, hist.map((m: any) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content })));
     const limpio = texto.replaceAll("**", "");
     if (!limpio) return json({ error: "La IA no devolvió respuesta. Reintenta." }, 502);
-    return json({ respuesta: limpio });
+    return json({ respuesta: limpio, texto_usuario: textoUsuario });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "Error inesperado." }, 500);
   }

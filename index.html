@@ -1084,6 +1084,13 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <textarea id="labTexto" rows="1" placeholder="La falla que describió el cliente…"></textarea>
         <button class="btn" id="btnLabEnviar">Enviar</button>
       </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn claro" id="btnLabGrabar" style="flex:1">🎤 Grabar</button>
+        <button class="btn claro" id="btnLabFoto" style="flex:1">📷 Foto</button>
+      </div>
+      <input type="file" id="labFotoInput" accept="image/*" capture="environment" class="oculto">
+      <div class="pista oculto" id="labGrabando" style="margin-top:6px">Grabando… toca de nuevo para detener.</div>
+      <div class="pista oculto" id="labProcesando" style="margin-top:6px">Procesando…</div>
       <div style="height:12px"></div>
       <button class="btn claro" id="btnLabNuevo">Empezar de nuevo</button>
       <div style="height:8px"></div>
@@ -6065,7 +6072,7 @@ $("dtFotoInput").onchange = e => { const f = e.target.files[0]; if (f) dtSubirIm
 // Lee el conocimiento de las tablas ecu_* vía la Edge Function `laboratorio`.
 // No toca OT, informe ni terreno.
 // ============================================================
-let labMensajes = [], labOcupado = false;
+let labMensajes = [], labOcupado = false, labRec = null, labChunks = [];
 function labMsg(t, b) { msg("labError", t, b); }
 
 function abrirLab() {
@@ -6114,11 +6121,76 @@ async function labEnviar() {
 
 function labNuevo() { labMensajes = []; abrirLab(); }
 
+// Audio (Whisper) e imagen (visión) — mismo camino que el agente de terreno.
+async function labMultimedia(campo, blob, nombre) {
+  if (labOcupado) return;
+  labOcupado = true;
+  $("labProcesando").classList.remove("oculto");
+  labMsg("");
+  try {
+    const { data: { session } } = await db.auth.getSession();
+    if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
+    const form = new FormData();
+    form.append(campo, blob, nombre);
+    form.append("historial", JSON.stringify(labMensajes.filter(m => m.contenido !== "…").map(m => ({ role: m.rol, content: m.contenido }))));
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/laboratorio`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
+      body: form,
+    });
+    const cuerpo = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(cuerpo.error || `El agente respondió con error ${r.status}.`);
+    if (cuerpo.texto_usuario) labMensajes.push({ rol: "user", contenido: cuerpo.texto_usuario });
+    labMensajes.push({ rol: "assistant", contenido: cuerpo.respuesta || "(sin respuesta)" });
+    labRender();
+  } catch (e) {
+    labMsg(e.message || "No se pudo procesar.");
+  } finally {
+    labOcupado = false;
+    $("labProcesando").classList.add("oculto");
+  }
+}
+
+async function labGrabarToggle() {
+  if (labOcupado) return;
+  if (labRec && labRec.state === "recording") { labRec.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    labChunks = [];
+    labRec = new MediaRecorder(stream);
+    labRec.ondataavailable = e => { if (e.data && e.data.size) labChunks.push(e.data); };
+    labRec.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      $("labGrabando").classList.add("oculto");
+      $("btnLabGrabar").textContent = "🎤 Grabar";
+      const blob = new Blob(labChunks, { type: labRec.mimeType || "audio/webm" });
+      if (blob.size > 0) {
+        const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
+        labMultimedia("audio", blob, "audio." + ext);
+      }
+    };
+    labRec.start();
+    $("labGrabando").classList.remove("oculto");
+    $("btnLabGrabar").textContent = "⏹ Detener";
+    labMsg("");
+  } catch (e) {
+    labMsg("No se pudo usar el micrófono. Revisa el permiso del navegador.");
+  }
+}
+
+async function labSubirImagen(file) {
+  try { labMultimedia("imagen", await comprimir(file), "foto.jpg"); }
+  catch (e) { labMsg(e.message || "No se pudo procesar la imagen."); }
+}
+
 $("btnHerDiagLab").onclick = abrirLab;
 $("btnLabEnviar").onclick = labEnviar;
 $("btnLabNuevo").onclick = labNuevo;
 $("btnLabSalir").onclick = () => { ver("vTablero"); cambiarSeccion("agenda"); };
 $("labTexto").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); labEnviar(); } };
+$("btnLabGrabar").onclick = labGrabarToggle;
+$("btnLabFoto").onclick = () => $("labFotoInput").click();
+$("labFotoInput").onchange = e => { const f = e.target.files[0]; if (f) labSubirImagen(f); e.target.value = ""; };
 
 db.auth.getSession().then(({ data }) => { if (data.session) iniciar(); });
 
