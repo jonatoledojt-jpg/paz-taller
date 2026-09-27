@@ -388,6 +388,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div id="herramientasGrid" class="oculto herramientas-grid">
         <button type="button" class="herramienta oculto" id="btnHerAgendar">Agendar visita</button>
         <button type="button" class="herramienta oculto" id="btnHerAsistencia">Registro de asistencia</button>
+        <button type="button" class="herramienta oculto" id="btnHerDiagTerreno">Diagnóstico de terreno</button>
         <button type="button" class="herramienta" id="btnHerGastos">Gastos</button>
       </div>
 
@@ -1007,6 +1008,58 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
     </section>
 
+    <!-- Diagnóstico de terreno (STANDALONE, 27-09-2026): botón único en
+         Herramientas. Captura por voz del diagnóstico del técnico. NO toca
+         OT, NO toca el informe -- guarda en su propia tabla. -->
+    <section id="vDiagTerreno" class="oculto">
+      <div class="seccion-tit">
+        <h2>Diagnóstico de terreno</h2>
+        <span>Dicta cómo diagnosticaste el camión</span>
+      </div>
+      <div id="dtError" class="aviso oculto"></div>
+
+      <!-- Inicio: nuevo + lista de guardados -->
+      <div id="dtInicio">
+        <button class="btn" id="btnDtNuevo">Nuevo diagnóstico</button>
+        <div style="height:14px"></div>
+        <span class="rotulo sep">Diagnósticos guardados</span>
+        <div id="dtLista" class="lista"></div>
+      </div>
+
+      <!-- Diagnóstico abierto -->
+      <div id="dtConv" class="oculto">
+        <div class="aviso info" style="margin-bottom:12px">
+          Habla natural: qué código dio, qué revisaste, qué encontraste, la
+          causa, qué lo solucionó y si necesitaste remoto. Yo lo ordeno y te
+          pregunto lo que falte.
+        </div>
+
+        <button class="btn" id="btnDtGrabar" style="width:100%">🎤 Grabar</button>
+        <div class="pista oculto" id="dtGrabando" style="margin-top:6px">Grabando… toca de nuevo para detener.</div>
+        <div class="pista oculto" id="dtProcesando" style="margin-top:6px">Transcribiendo y ordenando…</div>
+
+        <div class="chat" id="dtChat" style="margin-top:14px"></div>
+
+        <div class="seccion" style="margin-top:14px">
+          <span class="ficha-tit">Ficha del diagnóstico</span>
+          <div id="dtFicha" style="margin-top:10px"></div>
+        </div>
+
+        <div style="height:12px"></div>
+        <button class="btn" id="btnDtGuardar">Guardar diagnóstico</button>
+        <div style="height:8px"></div>
+        <button class="btn claro" id="btnDtVolver">Volver</button>
+
+        <div class="chat-barra" style="margin-top:12px">
+          <textarea id="dtTexto" rows="1" placeholder="…o escribe en vez de hablar"></textarea>
+          <button class="btn" id="btnDtEnviarTexto">Agregar</button>
+        </div>
+      </div>
+
+      <div style="height:16px"></div>
+      <button class="btn claro" id="btnDtSalir">‹ Volver a Herramientas</button>
+    </section>
+
     <!-- Detalle de un caso -->
     <section id="vCaso" class="oculto">
       <div class="seccion-tit">
@@ -1228,7 +1281,7 @@ const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
    "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas","vPendientes",
-   "vAsistencia","vPago","vComprobante","vEditarOT"].forEach(v => $(v).classList.add("oculto"));
+   "vAsistencia","vPago","vComprobante","vEditarOT","vDiagTerreno"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -1491,6 +1544,8 @@ function cambiarSeccion(seccion) {
   $("herramientasGrid").classList.toggle("oculto", seccion !== "agenda");
   $("btnHerAgendar").classList.toggle("oculto", !veCoordinacionGeneral());
   $("btnHerAsistencia").classList.toggle("oculto", !veCoordinacionGeneral());
+  // Diagnóstico de terreno: standalone, solo dueño (fase 1 de captura).
+  $("btnHerDiagTerreno").classList.toggle("oculto", perfil?.rol !== "dueno");
   $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
   $("porCobrarAviso").classList.add("oculto");
   $("selGastoVista").classList.toggle("oculto", !(seccion === "gastos" && esDueno));
@@ -5699,6 +5754,225 @@ function comprimir(file) {
 }
 
 // ---------- Arranque ----------
+// ============================================================
+// Diagnóstico de terreno (STANDALONE) — captura por voz.
+// No toca OT ni informe: guarda en terreno_diagnosticos (35-agente-terreno).
+// Fase 1: solo el dueño dicta sus diagnósticos; la IA transcribe (Whisper),
+// ordena la ficha y pregunta lo que falta. No diagnostica ella.
+// ============================================================
+let dtTranscripcion = "", dtFichaActual = {}, dtMensajes = [];
+let dtRec = null, dtChunks = [], dtOcupado = false, dtEditId = null;
+
+const DT_CAMPOS = [
+  ["vehiculo", "Vehículo"], ["patente", "Patente"], ["codigo", "Código de falla"],
+  ["sintoma", "Síntoma"], ["reviso", "Qué revisó"], ["hallazgo", "Qué encontró"],
+  ["causa", "Causa"], ["solucion", "Solución"], ["resumen", "Resumen"],
+];
+
+function dtMsg(texto, bien) { msg("dtError", texto, bien); }
+
+function abrirDiagTerreno() {
+  ver("vDiagTerreno");
+  $("dtInicio").classList.remove("oculto");
+  $("dtConv").classList.add("oculto");
+  dtMsg("");
+  cargarDtLista();
+}
+
+async function cargarDtLista() {
+  const { data, error } = await db.from("terreno_diagnosticos")
+    .select("id,resumen,patente,vehiculo,creado_en").order("creado_en", { ascending: false });
+  const cont = $("dtLista");
+  if (error) { cont.innerHTML = ""; return dtMsg("No se pudo cargar: " + error.message); }
+  if (!data.length) { cont.innerHTML = '<div class="pista">Todavía no hay diagnósticos guardados.</div>'; return; }
+  cont.innerHTML = data.map(d => `
+    <button type="button" class="btn claro" style="text-align:left;width:100%;margin-bottom:8px" data-id="${d.id}">
+      <strong>${escapar(d.resumen || d.vehiculo || "Diagnóstico")}</strong><br>
+      <span style="opacity:.7;font-size:13px">${escapar([d.patente, fechaCL(d.creado_en)].filter(Boolean).join(" · "))}</span>
+    </button>`).join("");
+  cont.querySelectorAll("button[data-id]").forEach(b =>
+    b.onclick = () => dtAbrirGuardado(+b.dataset.id));
+}
+
+function dtNuevo() {
+  dtEditId = null; dtTranscripcion = ""; dtFichaActual = {}; dtMensajes = [];
+  $("dtTexto").value = "";
+  $("dtInicio").classList.add("oculto");
+  $("dtConv").classList.remove("oculto");
+  dtRenderChat(); dtRenderFicha(); dtMsg("");
+}
+
+async function dtAbrirGuardado(id) {
+  const { data, error } = await db.from("terreno_diagnosticos").select("*").eq("id", id).single();
+  if (error || !data) return dtMsg("No se pudo abrir: " + (error?.message || ""));
+  dtEditId = id;
+  dtTranscripcion = data.transcripcion || "";
+  dtFichaActual = {
+    vehiculo: data.vehiculo, patente: data.patente, codigo: data.codigo,
+    sintoma: data.sintoma, reviso: data.reviso, hallazgo: data.hallazgo,
+    causa: data.causa, solucion: data.solucion, resumen: data.resumen,
+    requirio_remoto: data.requirio_remoto,
+  };
+  dtMensajes = dtTranscripcion ? [{ rol: "user", texto: dtTranscripcion }] : [];
+  $("dtInicio").classList.add("oculto");
+  $("dtConv").classList.remove("oculto");
+  dtRenderChat(); dtRenderFicha(); dtMsg("");
+}
+
+function dtRenderChat() {
+  $("dtChat").innerHTML = dtMensajes.map(m =>
+    `<div class="burbuja ${m.rol === "user" ? "yo" : "ella"}">${escapar(m.texto)}</div>`).join("");
+  $("dtChat").scrollTop = $("dtChat").scrollHeight;
+}
+
+function dtRenderFicha() {
+  const f = dtFichaActual;
+  const campo = (k, label) => `
+    <label class="rotulo" style="display:block;margin-top:8px">${label}</label>
+    <textarea id="dtf_${k}" rows="1" style="width:100%">${escapar(f[k] || "")}</textarea>`;
+  let html = DT_CAMPOS.map(([k, l]) => campo(k, l)).join("");
+  html += `
+    <label class="rotulo" style="display:block;margin-top:8px">¿Requirió remoto / Xentry?</label>
+    <select id="dtf_remoto" style="width:100%">
+      <option value="">— sin decir —</option>
+      <option value="si"${f.requirio_remoto === true ? " selected" : ""}>Sí</option>
+      <option value="no"${f.requirio_remoto === false ? " selected" : ""}>No</option>
+    </select>`;
+  if (dtEditId) {
+    html += `<div style="height:10px"></div>
+      <button type="button" class="btn claro" id="dtBtnEliminar" style="color:#b00">Eliminar este diagnóstico</button>`;
+  }
+  $("dtFicha").innerHTML = html;
+  if (dtEditId) $("dtBtnEliminar").onclick = dtEliminar;
+}
+
+function dtProcesarResultado(cuerpo) {
+  if (cuerpo.transcripcion != null) dtTranscripcion = cuerpo.transcripcion;
+  dtMensajes = [];
+  if (dtTranscripcion) dtMensajes.push({ rol: "user", texto: dtTranscripcion });
+  if (cuerpo.pregunta) dtMensajes.push({ rol: "agente", texto: cuerpo.pregunta });
+  if (cuerpo.ficha) dtFichaActual = { ...cuerpo.ficha };
+  dtRenderChat(); dtRenderFicha();
+}
+
+async function dtEnviarAudio(blob) {
+  dtOcupado = true;
+  $("dtProcesando").classList.remove("oculto");
+  dtMsg("");
+  try {
+    const { data: { session } } = await db.auth.getSession();
+    if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
+    const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg"
+      : blob.type.includes("wav") ? "wav" : "webm";
+    const form = new FormData();
+    form.append("audio", blob, "audio." + ext);
+    form.append("transcripcion_previa", dtTranscripcion);
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/terreno`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
+      body: form,
+    });
+    const cuerpo = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(cuerpo.error || `El agente respondió con error ${r.status}.`);
+    dtProcesarResultado(cuerpo);
+  } catch (e) {
+    dtMsg(e.message || "No se pudo procesar el audio.");
+  } finally {
+    dtOcupado = false;
+    $("dtProcesando").classList.add("oculto");
+  }
+}
+
+async function dtEnviarTexto() {
+  const t = $("dtTexto").value.trim();
+  if (!t || dtOcupado) return;
+  dtOcupado = true;
+  $("dtProcesando").classList.remove("oculto");
+  dtMsg("");
+  try {
+    const nueva = [dtTranscripcion, t].filter(Boolean).join("\n");
+    const { data: { session } } = await db.auth.getSession();
+    if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/terreno`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ transcripcion: nueva }),
+    });
+    const cuerpo = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(cuerpo.error || `El agente respondió con error ${r.status}.`);
+    $("dtTexto").value = "";
+    dtProcesarResultado(cuerpo);
+  } catch (e) {
+    dtMsg(e.message || "No se pudo procesar.");
+  } finally {
+    dtOcupado = false;
+    $("dtProcesando").classList.add("oculto");
+  }
+}
+
+async function dtGrabarToggle() {
+  if (dtOcupado) return;
+  if (dtRec && dtRec.state === "recording") { dtRec.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    dtChunks = [];
+    dtRec = new MediaRecorder(stream);
+    dtRec.ondataavailable = e => { if (e.data && e.data.size) dtChunks.push(e.data); };
+    dtRec.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      $("dtGrabando").classList.add("oculto");
+      $("btnDtGrabar").textContent = "🎤 Grabar";
+      const blob = new Blob(dtChunks, { type: dtRec.mimeType || "audio/webm" });
+      if (blob.size > 0) dtEnviarAudio(blob);
+    };
+    dtRec.start();
+    $("dtGrabando").classList.remove("oculto");
+    $("btnDtGrabar").textContent = "⏹ Detener";
+    dtMsg("");
+  } catch (e) {
+    dtMsg("No se pudo usar el micrófono. Revisa el permiso del navegador.");
+  }
+}
+
+async function dtGuardar() {
+  if (dtOcupado) return;
+  const leer = k => { const el = $("dtf_" + k); const v = (el?.value || "").trim(); return v || null; };
+  const remotoSel = $("dtf_remoto")?.value;
+  const fila = {
+    vehiculo: leer("vehiculo"), patente: leer("patente"), codigo: leer("codigo"),
+    sintoma: leer("sintoma"), reviso: leer("reviso"), hallazgo: leer("hallazgo"),
+    causa: leer("causa"), solucion: leer("solucion"), resumen: leer("resumen"),
+    requirio_remoto: remotoSel === "si" ? true : remotoSel === "no" ? false : null,
+    transcripcion: dtTranscripcion || null,
+  };
+  if (!fila.transcripcion && !fila.resumen && !fila.reviso)
+    return dtMsg("Dicta o escribe algo antes de guardar.");
+  dtOcupado = true;
+  let error;
+  if (dtEditId) ({ error } = await db.from("terreno_diagnosticos").update(fila).eq("id", dtEditId));
+  else ({ error } = await db.from("terreno_diagnosticos").insert(fila));
+  dtOcupado = false;
+  if (error) return dtMsg("No se pudo guardar: " + error.message);
+  dtMsg("Diagnóstico guardado.", true);
+  abrirDiagTerreno();
+}
+
+async function dtEliminar() {
+  if (!dtEditId) return;
+  if (!confirm("¿Eliminar este diagnóstico? No se puede deshacer.")) return;
+  const { error } = await db.from("terreno_diagnosticos").delete().eq("id", dtEditId);
+  if (error) return dtMsg("No se pudo eliminar: " + error.message);
+  abrirDiagTerreno();
+}
+
+$("btnHerDiagTerreno").onclick = abrirDiagTerreno;
+$("btnDtSalir").onclick = () => { ver("vTablero"); cambiarSeccion("agenda"); };
+$("btnDtNuevo").onclick = dtNuevo;
+$("btnDtVolver").onclick = abrirDiagTerreno;
+$("btnDtGrabar").onclick = dtGrabarToggle;
+$("btnDtEnviarTexto").onclick = dtEnviarTexto;
+$("btnDtGuardar").onclick = dtGuardar;
+
 db.auth.getSession().then(({ data }) => { if (data.session) iniciar(); });
 
 // La app se queda abierta horas sin recargar -- sin esto, un cambio ya

@@ -84,6 +84,7 @@ sw.js                   service worker
 32-perfiles-area.sql         perfiles.area (reusa area_gasto) -- distingue a Diego de Jonatan Osores
 33-informe-ia.sql            tabla informes_ia: rastro de auditoria del informe redactado con IA
 34-endurece-rls-y-ia-uso.sql RLS de diagnosticos/archivos/movimientos + tabla ia_uso (auditoria 26-09)
+35-agente-terreno.sql        tabla terreno_diagnosticos: agente de Diagnóstico de Terreno (standalone)
 25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
@@ -93,6 +94,7 @@ sw.js                   service worker
 supabase/functions/nexa/index.ts       Edge Function del chat interno y modo asistido
 supabase/functions/whatsapp/index.ts   Edge Function que habla con el cliente por WhatsApp
 supabase/functions/informe/index.ts    Edge Function que redacta el informe tecnico con IA
+supabase/functions/terreno/index.ts     Edge Function del agente de Diagnostico de Terreno (voz)
 ```
 
 **De la 01 a la 30 están todas aplicadas en la base real** (verificado el
@@ -1608,6 +1610,67 @@ porque la conversación queda perfecta en la base y el cliente no recibe nada.
 **Falta el número real.** Hoy es el de prueba, que solo habla con 5 teléfonos
 autorizados. Ningún cliente puede alcanzar a PAZ todavía.
 
+### El número real quedó conectado por Coexistencia (26-09-2026)
+
+Ya no falta el número real: **+56 9 3374 0440** (el WhatsApp del taller)
+quedó conectado a la Cloud API **por Coexistencia** (sigue en el celular, no
+se migró). Se destrabó cuando Meta **aprobó la verificación del negocio**
+(Jonatan subió cédula + datos de la empresa) — hasta que eso se aprobó,
+rechazaba el nombre visible (#2388009) y no dejaba avanzar.
+
+Datos duros (por si hay que rehacer algo):
+- **Phone Number ID:** `738052576047946` (secreto `WHATSAPP_PHONE_ID`, ya
+  actualizado — antes apuntaba al de prueba).
+- **WABA ID:** `1504175913877285` (nombre "PazServices"). Ojo: el `asset_id`
+  que muestra la URL del Administrador de WhatsApp **es** este ID, pero solo
+  se puede leer por API una vez que la WABA está asignada al usuario del
+  sistema (ver abajo).
+- **Business:** `717097581476869`. **App de Meta:** `1817404549418877`.
+
+**Las dos trampas que costaron esta conexión (si algo se cae, mirar acá):**
+
+1. **La WABA del número real NO nace asignada a nuestra app.** Coexistencia
+   creó su propia WABA (`1504175913877285`), aparte de la de prueba
+   (`1401850802132799`). El token del usuario de sistema ("Employee") no la
+   veía (`owned_whatsapp_business_accounts` solo traía la de prueba), y sin
+   verla no se puede suscribir. **Arreglo:** en Configuración del negocio →
+   Usuarios del sistema → "Employee" → Agregar activos → Cuentas de WhatsApp
+   → marcar "PazServices" con **Control total**. Recién ahí el token la ve.
+2. **Hay que suscribir la app a esa WABA** (`POST /{waba}/subscribed_apps`) o
+   Meta no reenvía los mensajes al webhook — es la misma "segunda suscripción"
+   de siempre. Se hizo con una función temporal de mantenimiento (`wa-admin`,
+   guardada por un secreto de un solo uso `WA_ADMIN_KEY`, que reusaba
+   `WHATSAPP_TOKEN` sin exponerlo; se **borró** apenas cumplió, junto con su
+   secreto — mismo patrón que `bootstrap-agente`). Tras suscribir, la WABA
+   quedó con dos apps: la nuestra ("Paz-Services") y "Business Agent" (el
+   mecanismo interno de Coexistencia — normal que convivan).
+
+**Camino que NO sirve (no volver a intentarlo):** el panel de desarrolladores
+→ WhatsApp → "Configuración de la API / Paso 2 / Agregar número" es el
+**registro estándar = migración** (pide crear perfil + nombre visible y
+termina en código SMS, que saca el número del celular). Nunca completarlo. La
+Coexistencia se resolvió sola con la verificación del negocio + los dos pasos
+de arriba; no hubo que tocar ese flujo.
+
+**Arranque en silencioso (elección de Jonatan, 26-09-2026):** se dejó
+`responde_whatsapp = false` — PAZ recibe y arma casos pero **no le contesta
+al cliente**. Los clientes escriben y el equipo responde **desde el celular**
+(Coexistencia), mientras PAZ observa. Los casos nacen `modo = 'aprendizaje'`
+(`modo_casos_defecto` sigue en aprendizaje), así que solo el dueño los ve en
+la pestaña Entrenamiento y no se pueden crear OT ni responder por modo
+asistido todavía (`enviar_respuesta` bloquea aprendizaje). **Para soltar a
+PAZ de verdad:** pasar `modo_casos_defecto` (y/o los casos) a `produccion` y
+poner `responde_whatsapp = true`.
+
+**Probado de punta a punta (26-09-2026):** un mensaje real ("Hola Paz prueba
+2") desde un teléfono cualquiera llegó a `nexa_mensajes`, creó el caso #2
+(`aprendizaje`, `recopilando_datos`), sin auto-respuesta y sin rechazos en
+`wa_log`. La firma se validó bien.
+
+**Cuidado operativo de Coexistencia:** hay que abrir la app de WhatsApp
+Business en el celular al menos cada ~13 días o Meta corta el enlace con la
+API.
+
 ### Cómo se conectó (14-09-2026, 21:00)
 
 App de Meta creada (`Paz-Services`), número de prueba `+1 555 152-8643`,
@@ -2178,6 +2241,52 @@ corregidos** el mismo día. Los importantes:
   respuesta ya redactada). **Fix:** esas dos acciones se exceptúan del gate.
 - (Baja) historial de estados forjable → cubierto por el fix de
   `movimientos_estado` arriba.
+
+## Agente de Diagnóstico de Terreno (27-09-2026) — primera versión
+
+Ver `35-agente-terreno.sql` y `supabase/functions/terreno/index.ts`. Módulo
+**STANDALONE**, pedido explícito de Jonatan: *"un botón limpio en la sección
+herramientas... esa es la única entrada al agente"*, y **no mezclar con las OT
+ni con el informe**. Por eso guarda en **su propia tabla** (`terreno_diagnosticos`),
+no toca `diagnosticos`, ni las OT, ni el Redactor.
+
+**Por qué existe:** es el corazón del proyecto — **sacar a Jonatan del
+diagnóstico** (el cuello de botella; ver "Contexto de negocio"). Fase 1 es
+**captura**: Jonatan **dicta por voz** cómo diagnosticó un camión, la IA
+transcribe (Whisper), **ordena la ficha y le pregunta lo que falta**. NO
+diagnostica ella, NO inventa causas ni soluciones — solo organiza lo dicho.
+La **transcripción es la fuente de verdad** (sus palabras); la ficha es cómo la
+IA la ordena — mismo criterio que PAZ (mensajes = verdad, ficha = organización).
+Fase 2 (después, no construida): el agente **asiste al técnico** desde estos
+casos acumulados. `diagnosticos.requirio_remoto` (de la OT) sigue siendo el
+número que mide el éxito.
+
+**La cadena que lo hace valioso** (idea de Jonatan): PAZ arma la OT → el agente
+de terreno agrega el diagnóstico → el Redactor IA escribe el informe. Cada uno
+lee lo del anterior, cero re-tipeo. **Pero hoy el de terreno está aislado a
+propósito** — la conexión de esa cadena queda para cuando Jonatan lo pida, no
+antes.
+
+**Cómo quedó armado:**
+- **Botón "Diagnóstico de terreno"** en Herramientas (`btnHerDiagTerreno`),
+  **solo dueño** (fase 1). Abre `vDiagTerreno`, la única entrada.
+- **Tabla `terreno_diagnosticos`**: ficha (vehiculo, patente, codigo, sintoma,
+  reviso, hallazgo, causa, solucion, requirio_remoto, resumen) + `transcripcion`
+  (la fuente de verdad). RLS **dueño puro, solo sus filas** (select/insert/
+  update/delete) — falla cerrado, se abrirá en fase 2.
+- **Edge Function `terreno`**: verifica sesión + rol dueño (como `informe`).
+  Recibe audio (multipart) → Whisper → ordena la ficha con la IA y devuelve la
+  siguiente pregunta; o recibe texto (JSON) para lo mismo sin audio. Tope por
+  hora sobre `ia_uso` (accion `diag_terreno`). Modelo de `nexa_config`.
+- **Front**: graba con `MediaRecorder`, manda el audio a la función, muestra
+  chat (lo dictado + la pregunta del agente) y la **ficha editable**; guardar
+  inserta/actualiza en `terreno_diagnosticos` directo por RLS (la función no
+  guarda). Voz por Whisper (no `webkitSpeechRecognition`) para que sea
+  consistente y fiable en iPhone, igual que los audios de PAZ.
+
+**Pendiente, a propósito:** guardar el audio original (hoy solo la
+transcripción), la fase 2 (asistir al técnico), y conectar la cadena
+PAZ→terreno→informe. Todo eso después, cuando se pida.
 
 ## Contexto de negocio que importa
 
