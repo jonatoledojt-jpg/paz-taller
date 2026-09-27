@@ -1074,13 +1074,14 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       </div>
       <div id="labError" class="aviso oculto"></div>
       <div class="aviso info" style="margin-bottom:12px">
-        Cuéntame el código de falla o el síntoma, y en qué condiciones aparece.
-        Te voy guiando la medición paso a paso. Toda tensión va con su base; los
-        valores de placa sana los vas poniendo tú con el tiempo.
+        Cuéntame la falla que describió el cliente. Según sea global (no
+        comunica, no parte) o de una función puntual (un banco, una válvula…),
+        te guío por el consumo o por las etapas del circuito. Toda tensión va
+        con su base; los valores de placa sana los pones tú con el tiempo.
       </div>
       <div class="chat" id="labChat"></div>
       <div class="chat-barra" style="margin-top:12px">
-        <textarea id="labTexto" rows="1" placeholder="Código de falla, síntoma, circuito…"></textarea>
+        <textarea id="labTexto" rows="1" placeholder="La falla que describió el cliente…"></textarea>
         <button class="btn" id="btnLabEnviar">Enviar</button>
       </div>
       <div style="height:12px"></div>
@@ -6070,7 +6071,7 @@ function labMsg(t, b) { msg("labError", t, b); }
 function abrirLab() {
   ver("vLab");
   if (!labMensajes.length) {
-    labMensajes = [{ rol: "assistant", contenido: "Dale. Dime el código de falla o el síntoma, y en qué condiciones aparece: ¿pasa con el actuador conectado o desconectado?, ¿el módulo está en el banco o en el camión?, ¿el código vuelve al borrarlo?" }];
+    labMensajes = [{ rol: "assistant", contenido: "Dale. ¿Cuál es la falla que describió el cliente? Si por casualidad trae un código de escáner, pásamelo (aunque casi nunca vienen con código)." }];
   }
   labRender(); labMsg("");
 }
