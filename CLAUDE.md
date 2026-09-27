@@ -85,6 +85,7 @@ sw.js                   service worker
 33-informe-ia.sql            tabla informes_ia: rastro de auditoria del informe redactado con IA
 34-endurece-rls-y-ia-uso.sql RLS de diagnosticos/archivos/movimientos + tabla ia_uso (auditoria 26-09)
 35-agente-terreno.sql        tabla terreno_diagnosticos: agente de Diagnóstico de Terreno (standalone)
+36-terreno-imagenes.sql      ojos del agente: columna imagenes + bucket privado terreno-adjuntos
 25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
@@ -2284,9 +2285,21 @@ antes.
   guarda). Voz por Whisper (no `webkitSpeechRecognition`) para que sea
   consistente y fiable en iPhone, igual que los audios de PAZ.
 
+**Ojos: leer la pantalla del escáner (27-09-2026, `36-terreno-imagenes.sql`).**
+Pedido de Jonatan: que el agente VEA imágenes del escáner (códigos y datos en
+vivo). Botón **"📷 Ver pantalla del escáner"** en `vDiagTerreno`: la foto se
+comprime (mismo `comprimir()` de la app), se sube al bucket privado
+**`terreno-adjuntos`** (`<uid>/archivo.jpg`, RLS dueño/su carpeta), y se manda a
+la función, que la **lee con visión** (`leerImagen`, prompt `REGLAS_OJOS`):
+transcribe LITERAL los códigos y valores que se ven, sin interpretar ni
+diagnosticar, y lo que no se lee lo dice. Ese texto entra a la transcripción como
+`[Pantalla del escáner] ...` y re-arma la ficha. Las rutas quedan en
+`terreno_diagnosticos.imagenes` (text[]); se ven como miniaturas con URL firmada.
+La función `terreno` ahora atiende multipart con `audio` **o** `imagen`.
+
 **Pendiente, a propósito:** guardar el audio original (hoy solo la
-transcripción), la fase 2 (asistir al técnico), y conectar la cadena
-PAZ→terreno→informe. Todo eso después, cuando se pida.
+transcripción; las imágenes sí se guardan), la fase 2 (asistir al técnico), y
+conectar la cadena PAZ→terreno→informe. Todo eso después, cuando se pida.
 
 ## Contexto de negocio que importa
 

@@ -18,6 +18,7 @@
 // Desplegar:  .\.tools\supabase.exe functions deploy terreno --use-api
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { encodeBase64 } from "jsr:@std/encoding/base64";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -87,6 +88,39 @@ async function transcribir(apiKey: string, file: File): Promise<string> {
   return (text ?? "").trim();
 }
 
+// Los OJOS del agente: lee LITERAL la pantalla de un escáner (códigos de
+// falla, datos en vivo). NO diagnostica ni interpreta -- solo transcribe lo
+// que se ve, y lo que no se lee bien lo dice. Ese texto entra a la
+// transcripción del caso como un dato más.
+const REGLAS_OJOS = [
+  "Eres los OJOS del asistente de diagnóstico de Paz Services. Te paso una foto",
+  "de la pantalla de un escáner (o de datos en vivo) de un camión Mercedes-Benz.",
+  "Lee y transcribe LITERAL lo que muestra: los códigos de falla EXACTOS (letras",
+  "y números tal cual), su descripción si aparece, y —si son datos en vivo— cada",
+  "parámetro con su valor y unidad. NO interpretes, NO diagnostiques, NO inventes.",
+  "Si algo está borroso o no se alcanza a leer, dilo ('no se lee'). Devuelve solo",
+  "texto plano y ordenado de lo que se ve.",
+].join("\n");
+
+async function leerImagen(apiKey: string, modelo: string, file: File): Promise<string> {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const dataUrl = `data:${file.type || "image/jpeg"};base64,${encodeBase64(buf)}`;
+  const r = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: modelo,
+      instructions: REGLAS_OJOS,
+      input: [{ role: "user", content: [
+        { type: "input_text", text: "Lee esta pantalla del escáner." },
+        { type: "input_image", image_url: dataUrl },
+      ] }],
+    }),
+  });
+  if (!r.ok) throw new Error(`No se pudo leer la imagen: ${(await r.text()).slice(0, 200)}`);
+  return extraerTexto(await r.json()).trim();
+}
+
 // Identidad + reglas duras. FASE 1 = capturar, no diagnosticar.
 const REGLAS = [
   "Eres el asistente de Diagnóstico de Terreno de Paz Services, taller de",
@@ -152,9 +186,16 @@ Deno.serve(async (req) => {
     if (tipo.includes("multipart/form-data")) {
       const form = await req.formData();
       const audio = form.get("audio");
+      const imagen = form.get("imagen");
       const previa = String(form.get("transcripcion_previa") ?? "").trim();
-      if (!(audio instanceof File)) return json({ error: "No llegó el audio." }, 400);
-      textoNuevo = await transcribir(apiKey, audio);
+      if (audio instanceof File) {
+        textoNuevo = await transcribir(apiKey, audio);
+      } else if (imagen instanceof File) {
+        const lectura = await leerImagen(apiKey, modelo, imagen);
+        textoNuevo = lectura ? `[Pantalla del escáner] ${lectura}` : "";
+      } else {
+        return json({ error: "No llegó ni audio ni imagen." }, 400);
+      }
       transcripcion = [previa, textoNuevo].filter(Boolean).join("\n").trim();
     } else {
       const cuerpo = await req.json().catch(() => ({}));

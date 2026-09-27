@@ -1035,8 +1035,11 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         </div>
 
         <button class="btn" id="btnDtGrabar" style="width:100%">🎤 Grabar</button>
+        <button class="btn claro" id="btnDtFoto" style="width:100%;margin-top:8px">📷 Ver pantalla del escáner</button>
+        <input type="file" id="dtFotoInput" accept="image/*" capture="environment" class="oculto">
+        <div id="dtImgs" class="oculto" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"></div>
         <div class="pista oculto" id="dtGrabando" style="margin-top:6px">Grabando… toca de nuevo para detener.</div>
-        <div class="pista oculto" id="dtProcesando" style="margin-top:6px">Transcribiendo y ordenando…</div>
+        <div class="pista oculto" id="dtProcesando" style="margin-top:6px">Procesando…</div>
 
         <div class="chat" id="dtChat" style="margin-top:14px"></div>
 
@@ -5760,7 +5763,7 @@ function comprimir(file) {
 // Fase 1: solo el dueño dicta sus diagnósticos; la IA transcribe (Whisper),
 // ordena la ficha y pregunta lo que falta. No diagnostica ella.
 // ============================================================
-let dtTranscripcion = "", dtFichaActual = {}, dtMensajes = [];
+let dtTranscripcion = "", dtFichaActual = {}, dtMensajes = [], dtImagenes = [];
 let dtRec = null, dtChunks = [], dtOcupado = false, dtEditId = null;
 
 const DT_CAMPOS = [
@@ -5795,11 +5798,11 @@ async function cargarDtLista() {
 }
 
 function dtNuevo() {
-  dtEditId = null; dtTranscripcion = ""; dtFichaActual = {}; dtMensajes = [];
+  dtEditId = null; dtTranscripcion = ""; dtFichaActual = {}; dtMensajes = []; dtImagenes = [];
   $("dtTexto").value = "";
   $("dtInicio").classList.add("oculto");
   $("dtConv").classList.remove("oculto");
-  dtRenderChat(); dtRenderFicha(); dtMsg("");
+  dtRenderChat(); dtRenderFicha(); dtRenderImagenes(); dtMsg("");
 }
 
 async function dtAbrirGuardado(id) {
@@ -5814,9 +5817,58 @@ async function dtAbrirGuardado(id) {
     requirio_remoto: data.requirio_remoto,
   };
   dtMensajes = dtTranscripcion ? [{ rol: "user", texto: dtTranscripcion }] : [];
+  dtImagenes = Array.isArray(data.imagenes) ? data.imagenes : [];
   $("dtInicio").classList.add("oculto");
   $("dtConv").classList.remove("oculto");
-  dtRenderChat(); dtRenderFicha(); dtMsg("");
+  dtRenderChat(); dtRenderFicha(); dtRenderImagenes(); dtMsg("");
+}
+
+// Sube la foto del escáner al bucket privado, la manda a "leer" a la función
+// (visión) y suma lo que dice la pantalla a la transcripción del caso.
+async function dtSubirImagen(file) {
+  if (dtOcupado) return;
+  dtOcupado = true;
+  $("dtProcesando").classList.remove("oculto");
+  dtMsg("");
+  try {
+    const blob = await comprimir(file);
+    const { data: { user } } = await db.auth.getUser();
+    const ruta = `${user.id}/${Date.now()}.jpg`;
+    const { error: eUp } = await db.storage.from("terreno-adjuntos")
+      .upload(ruta, blob, { contentType: "image/jpeg" });
+    if (eUp) throw eUp;
+    dtImagenes.push(ruta);
+    await dtRenderImagenes();
+    const { data: { session } } = await db.auth.getSession();
+    const form = new FormData();
+    form.append("imagen", blob, "escaner.jpg");
+    form.append("transcripcion_previa", dtTranscripcion);
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/terreno`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
+      body: form,
+    });
+    const cuerpo = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(cuerpo.error || `El agente respondió con error ${r.status}.`);
+    dtProcesarResultado(cuerpo);
+  } catch (e) {
+    dtMsg(e.message || "No se pudo procesar la imagen.");
+  } finally {
+    dtOcupado = false;
+    $("dtProcesando").classList.add("oculto");
+  }
+}
+
+async function dtRenderImagenes() {
+  const cont = $("dtImgs");
+  cont.classList.toggle("oculto", !dtImagenes.length);
+  if (!dtImagenes.length) { cont.innerHTML = ""; return; }
+  const urls = await Promise.all(dtImagenes.map(async ruta => {
+    const { data } = await db.storage.from("terreno-adjuntos").createSignedUrl(ruta, 3600);
+    return data?.signedUrl || "";
+  }));
+  cont.innerHTML = urls.filter(Boolean).map(u =>
+    `<img src="${u}" alt="Escáner" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--linea)">`).join("");
 }
 
 function dtRenderChat() {
@@ -5944,9 +5996,10 @@ async function dtGuardar() {
     causa: leer("causa"), solucion: leer("solucion"), resumen: leer("resumen"),
     requirio_remoto: remotoSel === "si" ? true : remotoSel === "no" ? false : null,
     transcripcion: dtTranscripcion || null,
+    imagenes: dtImagenes,
   };
-  if (!fila.transcripcion && !fila.resumen && !fila.reviso)
-    return dtMsg("Dicta o escribe algo antes de guardar.");
+  if (!fila.transcripcion && !fila.resumen && !fila.reviso && !dtImagenes.length)
+    return dtMsg("Dicta, escribe o agrega una imagen antes de guardar.");
   dtOcupado = true;
   let error;
   if (dtEditId) ({ error } = await db.from("terreno_diagnosticos").update(fila).eq("id", dtEditId));
@@ -5972,6 +6025,8 @@ $("btnDtVolver").onclick = abrirDiagTerreno;
 $("btnDtGrabar").onclick = dtGrabarToggle;
 $("btnDtEnviarTexto").onclick = dtEnviarTexto;
 $("btnDtGuardar").onclick = dtGuardar;
+$("btnDtFoto").onclick = () => $("dtFotoInput").click();
+$("dtFotoInput").onchange = e => { const f = e.target.files[0]; if (f) dtSubirImagen(f); e.target.value = ""; };
 
 db.auth.getSession().then(({ data }) => { if (data.session) iniciar(); });
 
