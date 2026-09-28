@@ -1097,7 +1097,23 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <button class="btn claro" id="btnLabGuardadas">Ver conversaciones guardadas</button>
       <div id="labGuardadas" class="oculto" style="margin-top:10px"></div>
       <div style="height:8px"></div>
+      <button class="btn claro" id="btnLabDiagramas">📐 Ver diagramas del módulo</button>
+      <div style="height:8px"></div>
       <button class="btn claro" id="btnLabSalir">‹ Volver a Herramientas</button>
+    </section>
+
+    <!-- Diagramas del módulo (SVG guardados en ecu_circuitos). Cada uno se
+         abre en una pestaña nueva del navegador para no cerrar la app. -->
+    <section id="vDiagramas" class="oculto">
+      <div class="seccion-tit">
+        <h2>Diagramas — MCM2.1</h2>
+        <span id="diagSub"></span>
+      </div>
+      <div id="diagError" class="aviso oculto"></div>
+      <div class="pista" style="margin-bottom:12px">Toca un diagrama y se abre en una pestaña nueva del navegador.</div>
+      <div id="diagLista" class="lista"></div>
+      <div style="height:14px"></div>
+      <button class="btn claro" id="btnDiagVolver">‹ Volver al diagnóstico</button>
     </section>
 
     <!-- Detalle de un caso -->
@@ -1321,7 +1337,7 @@ const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
    "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas","vPendientes",
-   "vAsistencia","vPago","vComprobante","vEditarOT","vDiagTerreno","vLab"].forEach(v => $(v).classList.add("oculto"));
+   "vAsistencia","vPago","vComprobante","vEditarOT","vDiagTerreno","vLab","vDiagramas"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -6238,7 +6254,36 @@ async function labSubirImagen(file) {
   catch (e) { labMsg(e.message || "No se pudo procesar la imagen."); }
 }
 
+// Diagramas del módulo: lista de circuitos; cada SVG se abre en pestaña nueva.
+function diagMsg(t) { msg("diagError", t); }
+async function abrirDiagramas() {
+  ver("vDiagramas");
+  diagMsg("");
+  const { data, error } = await db.from("ecu_circuitos")
+    .select("id,titulo,subtitulo,hoja").order("hoja").order("id");
+  const cont = $("diagLista");
+  if (error) { cont.innerHTML = ""; return diagMsg("No se pudieron cargar: " + error.message); }
+  $("diagSub").textContent = `${data.length} diagramas`;
+  cont.innerHTML = data.map(c => `
+    <button type="button" class="btn claro" style="text-align:left;width:100%;margin-bottom:8px" data-id="${c.id}">
+      <strong>${escapar(c.titulo)}</strong><br>
+      <span style="opacity:.7;font-size:13px">${escapar((c.subtitulo ? c.subtitulo + " · " : "") + "hoja " + (c.hoja ?? "—"))}</span>
+    </button>`).join("");
+  cont.querySelectorAll("button[data-id]").forEach(b => b.onclick = () => abrirDiagrama(b.dataset.id));
+}
+async function abrirDiagrama(id) {
+  // Abrir la pestaña YA, dentro del toque, para que iOS no la bloquee.
+  const w = window.open("", "_blank");
+  const { data, error } = await db.from("ecu_circuitos").select("svg,titulo").eq("id", id).single();
+  if (error || !data?.svg) { if (w) w.close(); return diagMsg("No se pudo abrir el diagrama."); }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapar(data.titulo)}</title><style>body{margin:0;background:#fff;display:flex;justify-content:center;padding:8px}svg{max-width:100%;height:auto}</style></head><body>${data.svg}</body></html>`;
+  if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+  else { window.open(URL.createObjectURL(new Blob([html], { type: "text/html" })), "_blank"); }
+}
+
 $("btnHerDiagLab").onclick = abrirLab;
+$("btnLabDiagramas").onclick = abrirDiagramas;
+$("btnDiagVolver").onclick = () => { ver("vLab"); labRender(); };
 $("btnLabEnviar").onclick = labEnviar;
 $("btnLabNuevo").onclick = labNuevo;
 $("btnLabSalir").onclick = () => { ver("vTablero"); cambiarSeccion("agenda"); };

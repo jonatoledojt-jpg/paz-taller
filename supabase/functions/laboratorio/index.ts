@@ -69,13 +69,16 @@ async function transcribir(apiKey: string, file: File): Promise<string> {
 // (componente y su estado, lectura de instrumento, curva del trazador, zona de
 // la placa). NO diagnostica -- eso lo hace el agente con esta descripción.
 const REGLAS_OJOS_LAB = [
-  "Describe LITERAL lo que se ve en esta foto de un banco de reparación de módulos",
-  "electrónicos. Puede ser: un componente y su estado (quemado, hinchado, con marca",
-  "de calor, corrosión, soldadura fría, pista dañada), una lectura de instrumento",
-  "(multímetro con su valor y unidad, fuente con su consumo), la curva de un trazador",
-  "(forma: abierta, en corto, deformada, simétrica), o una zona de la placa con sus",
-  "designadores visibles. NO diagnostiques ni interpretes la causa: solo describe lo",
-  "que se ve, con los números y textos que alcances a leer. Si algo está borroso, dilo.",
+  "Extrae SOLO lo útil para diagnosticar de esta foto del banco, en pocas líneas.",
+  "Según lo que sea:",
+  "- Pantalla de escáner / Xentry: SOLO los códigos de falla (código + texto + estado",
+  "  actual/memorizado) y los valores en vivo relevantes (tensiones, etc.).",
+  "- Componente: cuál es y su estado (quemado, hinchado, marca de calor, corrosión,",
+  "  soldadura fría, pista dañada).",
+  "- Instrumento: el valor con su unidad (multímetro, o fuente y su consumo).",
+  "- Curva del trazador: la forma (abierta, en corto, deformada, simétrica).",
+  "NO describas la laptop, el sistema operativo, la barra de tareas, la fecha, la hora,",
+  "los reflejos ni el entorno. NO diagnostiques. Sé breve. Si algo no se lee, dilo.",
 ].join("\n");
 
 async function leerImagen(apiKey: string, modelo: string, file: File): Promise<string> {
