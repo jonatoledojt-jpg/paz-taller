@@ -6110,8 +6110,11 @@ function labMsg(t, b) { msg("labError", t, b); }
 async function labGuardar() {
   const reales = labMensajes.filter(m => m.contenido !== "…");
   if (reales.length < 2) return;
-  const titulo = (reales.find(m => m.rol === "user")?.contenido || "Consulta").slice(0, 80);
-  const fila = { titulo, mensajes: reales };
+  let titulo = reales.find(m => m.rol === "user")?.contenido || "Consulta";
+  if (titulo.startsWith("[")) titulo = "Foto del banco";
+  titulo = titulo.slice(0, 80);
+  // La URL local de la imagen es temporal y no se guarda; queda el texto leído.
+  const fila = { titulo, mensajes: reales.map(m => ({ rol: m.rol, contenido: m.contenido })) };
   try {
     if (labConvId) await db.from("ecu_conversaciones").update(fila).eq("id", labConvId);
     else {
@@ -6153,8 +6156,15 @@ function abrirLab() {
 }
 
 function labRender() {
-  $("labChat").innerHTML = labMensajes.map(m =>
-    `<div class="burbuja ${m.rol === "user" ? "yo" : "ella"}">${escapar(m.contenido)}</div>`).join("");
+  $("labChat").innerHTML = labMensajes.map(m => {
+    const esFoto = m.imagen || (typeof m.contenido === "string" &&
+      (m.contenido.startsWith("[Pantalla del escáner") || m.contenido.startsWith("[Foto del banco")));
+    if (esFoto) {
+      const img = m.imagen ? `<img src="${m.imagen}" alt="Foto del banco" style="max-width:180px;border-radius:10px;display:block;margin-top:4px">` : "";
+      return `<div class="burbuja yo">📷 Foto del banco${img}</div>`;
+    }
+    return `<div class="burbuja ${m.rol === "user" ? "yo" : "ella"}">${escapar(m.contenido)}</div>`;
+  }).join("");
   $("labChat").scrollTop = $("labChat").scrollHeight;
 }
 
@@ -6201,17 +6211,21 @@ async function labEnviar() {
 function labNuevo() { labMensajes = []; labConvId = null; $("labGuardadas").classList.add("oculto"); abrirLab(); }
 
 // Audio (Whisper) e imagen (visión) — mismo camino que el agente de terreno.
-async function labMultimedia(campo, blob, nombre) {
+async function labMultimedia(campo, blob, nombre, imagenUrl) {
   if (labOcupado) return;
   labOcupado = true;
   $("labProcesando").classList.remove("oculto");
   labMsg("");
+  const histPrev = labMensajes.filter(m => m.contenido !== "…").map(m => ({ role: m.rol, content: m.contenido }));
+  // Si es foto, se muestra la imagen al toque (no el texto largo de visión).
+  let idxImg = -1;
+  if (imagenUrl) { idxImg = labMensajes.push({ rol: "user", contenido: "", imagen: imagenUrl }) - 1; labRender(); }
   try {
     const { data: { session } } = await db.auth.getSession();
     if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
     const form = new FormData();
     form.append(campo, blob, nombre);
-    form.append("historial", JSON.stringify(labMensajes.filter(m => m.contenido !== "…").map(m => ({ role: m.rol, content: m.contenido }))));
+    form.append("historial", JSON.stringify(histPrev));
     const r = await fetchReintento(`${SUPABASE_URL}/functions/v1/laboratorio`, {
       method: "POST",
       headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
@@ -6219,11 +6233,16 @@ async function labMultimedia(campo, blob, nombre) {
     });
     const cuerpo = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(cuerpo.error || `El agente respondió con error ${r.status}.`);
-    if (cuerpo.texto_usuario) labMensajes.push({ rol: "user", contenido: cuerpo.texto_usuario });
+    // La foto sigue mostrándose; el texto que leyó la IA queda en contenido
+    // (invisible) solo para que el agente lo use.
+    if (imagenUrl && idxImg >= 0) labMensajes[idxImg].contenido = cuerpo.texto_usuario || "[Foto del banco]";
+    else if (cuerpo.texto_usuario) labMensajes.push({ rol: "user", contenido: cuerpo.texto_usuario });
     labMensajes.push({ rol: "assistant", contenido: cuerpo.respuesta || "(sin respuesta)" });
     labRender();
     labGuardar();
   } catch (e) {
+    if (imagenUrl && idxImg >= 0) labMensajes.splice(idxImg, 1);
+    labRender();
     labMsg(e.message || "No se pudo procesar.");
   } finally {
     labOcupado = false;
@@ -6259,8 +6278,10 @@ async function labGrabarToggle() {
 }
 
 async function labSubirImagen(file) {
-  try { labMultimedia("imagen", await comprimir(file), "foto.jpg"); }
-  catch (e) { labMsg(e.message || "No se pudo procesar la imagen."); }
+  try {
+    const blob = await comprimir(file);
+    labMultimedia("imagen", blob, "foto.jpg", URL.createObjectURL(blob));
+  } catch (e) { labMsg(e.message || "No se pudo procesar la imagen."); }
 }
 
 // Diagramas del módulo: lista de circuitos; cada SVG se abre en pestaña nueva.
