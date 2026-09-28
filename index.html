@@ -1328,6 +1328,17 @@ const msg = (el, texto, bien) => {
   e.className = "aviso" + (bien ? " bien" : "");
 };
 
+// El iPhone instalado a veces tira "Load failed" (corte de red del primer
+// intento con datos móviles) aunque el servidor esté perfecto. Reintenta UNA
+// vez ante ese fallo de red del fetch; un error HTTP lo maneja quien llama.
+async function fetchReintento(url, opts) {
+  try { return await fetch(url, opts); }
+  catch (_e) {
+    await new Promise(r => setTimeout(r, 900));
+    return await fetch(url, opts);
+  }
+}
+
 // ------------------------------------------------------------
 // Los cuatro ejes (17-09-2026), reemplazando el `estado` único.
 // Propuesta de Jonatan después de un día entero arreglando el mismo
@@ -5882,7 +5893,7 @@ async function dtSubirImagen(file) {
     const form = new FormData();
     form.append("imagen", blob, "escaner.jpg");
     form.append("transcripcion_previa", dtTranscripcion);
-    const r = await fetch(`${SUPABASE_URL}/functions/v1/terreno`, {
+    const r = await fetchReintento(`${SUPABASE_URL}/functions/v1/terreno`, {
       method: "POST",
       headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
       body: form,
@@ -5958,7 +5969,7 @@ async function dtEnviarAudio(blob) {
     const form = new FormData();
     form.append("audio", blob, "audio." + ext);
     form.append("transcripcion_previa", dtTranscripcion);
-    const r = await fetch(`${SUPABASE_URL}/functions/v1/terreno`, {
+    const r = await fetchReintento(`${SUPABASE_URL}/functions/v1/terreno`, {
       method: "POST",
       headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
       body: form,
@@ -5984,7 +5995,7 @@ async function dtEnviarTexto() {
     const nueva = [dtTranscripcion, t].filter(Boolean).join("\n");
     const { data: { session } } = await db.auth.getSession();
     if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
-    const r = await fetch(`${SUPABASE_URL}/functions/v1/terreno`, {
+    const r = await fetchReintento(`${SUPABASE_URL}/functions/v1/terreno`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ transcripcion: nueva }),
@@ -6100,7 +6111,7 @@ async function labEnviar() {
   try {
     const { data: { session } } = await db.auth.getSession();
     if (!session) throw new Error("Se cerró la sesión. Vuelve a entrar.");
-    const r = await fetch(`${SUPABASE_URL}/functions/v1/laboratorio`, {
+    const r = await fetchReintento(`${SUPABASE_URL}/functions/v1/laboratorio`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ historial: labMensajes.filter(m => m.contenido !== "…").map(m => ({ role: m.rol, content: m.contenido })) }),
@@ -6133,7 +6144,7 @@ async function labMultimedia(campo, blob, nombre) {
     const form = new FormData();
     form.append(campo, blob, nombre);
     form.append("historial", JSON.stringify(labMensajes.filter(m => m.contenido !== "…").map(m => ({ role: m.rol, content: m.contenido }))));
-    const r = await fetch(`${SUPABASE_URL}/functions/v1/laboratorio`, {
+    const r = await fetchReintento(`${SUPABASE_URL}/functions/v1/laboratorio`, {
       method: "POST",
       headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
       body: form,
