@@ -2334,17 +2334,42 @@ fábrica** — `ecu_mediciones.valor_medido` está vacío a propósito: lo llena
 taller con el **levantamiento** (trace curve, placa sana). El prompt obliga a
 dar toda tensión con su base y a no inventar puntos de prueba que no estén.
 
-**Cómo funciona el agente (v1):** conversa (chat). En cada mensaje, la función
-`laboratorio` **ubica en la base** lo que el técnico menciona (código, circuito
-por id, pin, componente por designador, canal PWM, síntoma) y le inyecta ese
-detalle al modelo como contexto, más un catálogo compacto de qué existe. El
-modelo razona con el prompt del diagnosticador (`ecu_config.prompt`, **cargado
-en la base, NO en el repo** porque es know-how). Pregunta primero las
-condiciones (actuador conectado/desconectado, banco/camión, código que vuelve)
-antes de dar un plan de descarte. **Pendiente, a propósito:** el visor de
-circuitos SVG interactivo (los 27 SVG están guardados en `ecu_circuitos.svg`),
-el tool-calling de verdad (hoy es inyección de contexto), el levantamiento (RPC
-para llenar `valor_medido`), y el resto de las hojas (5,6,8,9,10,17-21).
+**Cómo funciona el agente:** conversa (chat) con **tool-calling real** y
+**streaming**. El modelo razona con el prompt del diagnosticador
+(`ecu_config.prompt`, **cargado en la base, NO en el repo** porque es know-how)
+y **saca los datos él mismo** con herramientas: `ver_circuito`, `buscar_pin`,
+`buscar_componente`, `ver_canal`, `ver_sintoma`, `ver_zona`, `listar_circuitos`,
+`buscar_casos` (ecu_casos, hoy vacío) y **búsqueda web nativa de OpenAI**
+(`web_search`, para códigos/datasheets/equivalencias, último recurso y citando
+fuente). Antes era inyección de contexto y el agente terminaba **pidiéndole al
+técnico una foto del diagrama** que la base ya tenía (bug real que cazó Jonatan);
+con las herramientas, lo busca solo. La respuesta llega con **streaming** (se va
+escribiendo). Verificado que gpt-5.5 acepta tools + web_search (el modelo pidió
+`ver_circuito {"id":"iny-b1"}` solo).
+
+**Preguntas del prompt reescritas (28-09-2026):** la primera pregunta siempre es
+"¿cuál es la falla que describió el cliente?"; según sea global (no comunica, no
+parte → ver consumo) o de función puntual (un banco, una válvula → medir las
+etapas del circuito) va el camino. Se quitaron las de camión/arnés/escáner: en
+el banco no aplican (pedido de Jonatan).
+
+**Las conversaciones se guardan** en `ecu_conversaciones` (autosave; botón "Ver
+conversaciones guardadas"). **Diagramas:** botón "Ver diagramas del módulo" lista
+los 27 circuitos; cada SVG se abre en una pestaña nueva del navegador (antes solo
+el agente los veía). **La foto** se lee enfocada (solo códigos/valores, no la
+laptop ni Windows ni la fecha).
+
+**Detalle técnico del streaming + tools** (`laboratorio/index.ts`): la respuesta
+de texto se transmite (ReadableStream, `text/plain`); el front la lee con
+`getReader()` y la va escribiendo en la burbuja. Las entradas multimedia
+(audio/imagen) siguen devolviendo JSON (transcriben/leen primero, luego corren
+el loop juntando el texto). El loop (`correrLoop`) encadena turnos con
+`previous_response_id` hasta que el modelo deja de pedir herramientas.
+
+**Pendiente, a propósito:** el visor de circuitos SVG **interactivo** (hoy se ven
+como imagen en pestaña nueva; falta el clic en un componente para su ficha), el
+levantamiento (RPC para llenar `valor_medido`), y el resto de las hojas
+(5,6,8,9,10,17-21).
 
 ## Contexto de negocio que importa
 

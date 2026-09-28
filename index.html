@@ -6164,7 +6164,7 @@ async function labEnviar() {
   labOcupado = true;
   $("labTexto").value = "";
   labMensajes.push({ rol: "user", contenido: t });
-  labMensajes.push({ rol: "assistant", contenido: "…" });
+  const idx = labMensajes.push({ rol: "assistant", contenido: "…" }) - 1;
   labRender(); labMsg("");
   try {
     const { data: { session } } = await db.auth.getSession();
@@ -6172,16 +6172,25 @@ async function labEnviar() {
     const r = await fetchReintento(`${SUPABASE_URL}/functions/v1/laboratorio`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON, Authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ historial: labMensajes.filter(m => m.contenido !== "…").map(m => ({ role: m.rol, content: m.contenido })) }),
+      body: JSON.stringify({ historial: labMensajes.slice(0, idx).filter(m => m.contenido !== "…").map(m => ({ role: m.rol, content: m.contenido })) }),
     });
-    const cuerpo = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(cuerpo.error || `El agente respondió con error ${r.status}.`);
-    labMensajes.pop();
-    labMensajes.push({ rol: "assistant", contenido: cuerpo.respuesta || "(sin respuesta)" });
+    if (!r.ok || !r.body) { const c = await r.json().catch(() => ({})); throw new Error(c.error || `El agente respondió con error ${r.status}.`); }
+    // La respuesta llega en streaming: se va escribiendo sola.
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let acc = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      acc += dec.decode(value, { stream: true });
+      labMensajes[idx].contenido = acc || "…";
+      labRender();
+    }
+    labMensajes[idx].contenido = acc.trim() || "(sin respuesta)";
     labRender();
     labGuardar();
   } catch (e) {
-    labMensajes.pop();
+    if (labMensajes[idx] && labMensajes[idx].contenido === "…") labMensajes.splice(idx, 1);
     labRender();
     labMsg(e.message || "No se pudo consultar.");
   } finally {
