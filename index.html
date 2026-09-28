@@ -1116,6 +1116,18 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <button class="btn claro" id="btnDiagVolver">‹ Volver al diagnóstico</button>
     </section>
 
+    <!-- Ver un diagrama dentro de la app (iframe aislado), con Volver claro. -->
+    <section id="vDiagVer" class="oculto">
+      <div class="seccion-tit">
+        <h2 id="diagVerTit">Diagrama</h2>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn claro" id="btnDiagVerVolver" style="flex:1">‹ Volver a la lista</button>
+        <button class="btn claro" id="btnDiagVerNav" style="flex:1">Abrir en el navegador ⛶</button>
+      </div>
+      <div id="diagSvg"></div>
+    </section>
+
     <!-- Detalle de un caso -->
     <section id="vCaso" class="oculto">
       <div class="seccion-tit">
@@ -1337,7 +1349,7 @@ const $ = id => document.getElementById(id);
 const ver = (...ids) => {
   ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
    "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas","vPendientes",
-   "vAsistencia","vPago","vComprobante","vEditarOT","vDiagTerreno","vLab","vDiagramas"].forEach(v => $(v).classList.add("oculto"));
+   "vAsistencia","vPago","vComprobante","vEditarOT","vDiagTerreno","vLab","vDiagramas","vDiagVer"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
 };
 const msg = (el, texto, bien) => {
@@ -6301,19 +6313,28 @@ async function abrirDiagramas() {
     </button>`).join("");
   cont.querySelectorAll("button[data-id]").forEach(b => b.onclick = () => abrirDiagrama(b.dataset.id));
 }
+let diagActualHtml = "";
 async function abrirDiagrama(id) {
-  // Abrir la pestaña YA, dentro del toque, para que iOS no la bloquee.
-  const w = window.open("", "_blank");
   const { data, error } = await db.from("ecu_circuitos").select("svg,titulo").eq("id", id).single();
-  if (error || !data?.svg) { if (w) w.close(); return diagMsg("No se pudo abrir el diagrama."); }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapar(data.titulo)}</title><style>body{margin:0;background:#fff;display:flex;justify-content:center;padding:8px}svg{max-width:100%;height:auto}</style></head><body>${data.svg}</body></html>`;
-  if (w) { w.document.open(); w.document.write(html); w.document.close(); }
-  else { window.open(URL.createObjectURL(new Blob([html], { type: "text/html" })), "_blank"); }
+  if (error || !data?.svg) return diagMsg("No se pudo abrir el diagrama.");
+  $("diagVerTit").textContent = data.titulo || "Diagrama";
+  // Se muestra dentro de un iframe: aísla los estilos del SVG de la app y deja
+  // hacer zoom (pellizco) sobre el diagrama.
+  diagActualHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapar(data.titulo)}</title><style>body{margin:0;background:#fff;display:flex;justify-content:center;padding:8px}svg{max-width:100%;height:auto}</style></head><body>${data.svg}</body></html>`;
+  const url = URL.createObjectURL(new Blob([diagActualHtml], { type: "text/html" }));
+  $("diagSvg").innerHTML = `<iframe style="width:100%;height:72vh;border:1px solid var(--linea);background:#fff;border-radius:10px" src="${url}"></iframe>`;
+  ver("vDiagVer");
 }
 
 $("btnHerDiagLab").onclick = abrirLab;
 $("btnLabDiagramas").onclick = abrirDiagramas;
 $("btnDiagVolver").onclick = () => { ver("vLab"); labRender(); };
+$("btnDiagVerVolver").onclick = () => ver("vDiagramas");
+$("btnDiagVerNav").onclick = () => {
+  const w = window.open("", "_blank");
+  if (w) { w.document.open(); w.document.write(diagActualHtml); w.document.close(); }
+  else { window.open(URL.createObjectURL(new Blob([diagActualHtml], { type: "text/html" })), "_blank"); }
+};
 $("btnLabEnviar").onclick = labEnviar;
 $("btnLabNuevo").onclick = labNuevo;
 $("btnLabSalir").onclick = () => { ver("vTablero"); cambiarSeccion("agenda"); };
