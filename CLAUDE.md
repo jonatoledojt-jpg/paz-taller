@@ -89,6 +89,7 @@ sw.js                   service worker
 37-lab-esquema.sql           15 tablas ecu_* del agente de Diagnóstico de Laboratorio (paquete MCM2.1)
 38-lab-rls.sql               RLS de las ecu_* + ve_laboratorio() (dueño / coordinador laboratorio)
 39-lab-config.sql            ecu_config: prompt del diagnosticador (el prompt se carga aparte, no en el repo)
+40-lab-conversaciones.sql    ecu_conversaciones: guarda las conversaciones del agente de laboratorio
 25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null

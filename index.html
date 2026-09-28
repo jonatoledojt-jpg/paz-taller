@@ -1094,6 +1094,9 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div style="height:12px"></div>
       <button class="btn claro" id="btnLabNuevo">Empezar de nuevo</button>
       <div style="height:8px"></div>
+      <button class="btn claro" id="btnLabGuardadas">Ver conversaciones guardadas</button>
+      <div id="labGuardadas" class="oculto" style="margin-top:10px"></div>
+      <div style="height:8px"></div>
       <button class="btn claro" id="btnLabSalir">‹ Volver a Herramientas</button>
     </section>
 
@@ -6083,8 +6086,47 @@ $("dtFotoInput").onchange = e => { const f = e.target.files[0]; if (f) dtSubirIm
 // Lee el conocimiento de las tablas ecu_* vía la Edge Function `laboratorio`.
 // No toca OT, informe ni terreno.
 // ============================================================
-let labMensajes = [], labOcupado = false, labRec = null, labChunks = [];
+let labMensajes = [], labOcupado = false, labRec = null, labChunks = [], labConvId = null;
 function labMsg(t, b) { msg("labError", t, b); }
+
+// Guarda la conversación en la base (no solo en el teléfono). Se llama solo
+// tras cada intercambio; si falla, no rompe el chat.
+async function labGuardar() {
+  const reales = labMensajes.filter(m => m.contenido !== "…");
+  if (reales.length < 2) return;
+  const titulo = (reales.find(m => m.rol === "user")?.contenido || "Consulta").slice(0, 80);
+  const fila = { titulo, mensajes: reales };
+  try {
+    if (labConvId) await db.from("ecu_conversaciones").update(fila).eq("id", labConvId);
+    else {
+      const { data } = await db.from("ecu_conversaciones").insert(fila).select("id").single();
+      if (data) labConvId = data.id;
+    }
+  } catch (_e) { /* el guardado no debe romper el chat */ }
+}
+
+async function labCargarGuardadas() {
+  const { data, error } = await db.from("ecu_conversaciones")
+    .select("id,titulo,actualizado_en").order("actualizado_en", { ascending: false }).limit(30);
+  const cont = $("labGuardadas");
+  if (error) { cont.innerHTML = ""; return labMsg("No se pudo cargar: " + error.message); }
+  if (!data.length) { cont.innerHTML = '<div class="pista">No hay conversaciones guardadas.</div>'; return; }
+  cont.innerHTML = data.map(c => `
+    <button type="button" class="btn claro" style="text-align:left;width:100%;margin-bottom:8px" data-id="${c.id}">
+      <strong>${escapar(c.titulo || "Consulta")}</strong><br>
+      <span style="opacity:.7;font-size:13px">${escapar(fechaCL(c.actualizado_en))}</span>
+    </button>`).join("");
+  cont.querySelectorAll("button[data-id]").forEach(b => b.onclick = () => labAbrirGuardada(b.dataset.id));
+}
+
+async function labAbrirGuardada(id) {
+  const { data, error } = await db.from("ecu_conversaciones").select("id,mensajes").eq("id", id).single();
+  if (error || !data) return labMsg("No se pudo abrir: " + (error?.message || ""));
+  labConvId = data.id;
+  labMensajes = Array.isArray(data.mensajes) ? data.mensajes : [];
+  $("labGuardadas").classList.add("oculto");
+  labRender(); labMsg("");
+}
 
 function abrirLab() {
   ver("vLab");
@@ -6121,6 +6163,7 @@ async function labEnviar() {
     labMensajes.pop();
     labMensajes.push({ rol: "assistant", contenido: cuerpo.respuesta || "(sin respuesta)" });
     labRender();
+    labGuardar();
   } catch (e) {
     labMensajes.pop();
     labRender();
@@ -6130,7 +6173,7 @@ async function labEnviar() {
   }
 }
 
-function labNuevo() { labMensajes = []; abrirLab(); }
+function labNuevo() { labMensajes = []; labConvId = null; $("labGuardadas").classList.add("oculto"); abrirLab(); }
 
 // Audio (Whisper) e imagen (visión) — mismo camino que el agente de terreno.
 async function labMultimedia(campo, blob, nombre) {
@@ -6154,6 +6197,7 @@ async function labMultimedia(campo, blob, nombre) {
     if (cuerpo.texto_usuario) labMensajes.push({ rol: "user", contenido: cuerpo.texto_usuario });
     labMensajes.push({ rol: "assistant", contenido: cuerpo.respuesta || "(sin respuesta)" });
     labRender();
+    labGuardar();
   } catch (e) {
     labMsg(e.message || "No se pudo procesar.");
   } finally {
@@ -6202,6 +6246,12 @@ $("labTexto").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preve
 $("btnLabGrabar").onclick = labGrabarToggle;
 $("btnLabFoto").onclick = () => $("labFotoInput").click();
 $("labFotoInput").onchange = e => { const f = e.target.files[0]; if (f) labSubirImagen(f); e.target.value = ""; };
+$("btnLabGuardadas").onclick = () => {
+  const g = $("labGuardadas");
+  const abrir = g.classList.contains("oculto");
+  g.classList.toggle("oculto", !abrir);
+  if (abrir) labCargarGuardadas();
+};
 
 db.auth.getSession().then(({ data }) => { if (data.session) iniciar(); });
 
