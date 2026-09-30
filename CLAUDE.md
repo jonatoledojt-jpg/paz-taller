@@ -2371,6 +2371,55 @@ como imagen en pestaña nueva; falta el clic en un componente para su ficha), el
 levantamiento (RPC para llenar `valor_medido`), y el resto de las hojas
 (5,6,8,9,10,17-21).
 
+### Paquete rev4 — de 27 a 93 circuitos (30-09-2026)
+
+Jonatan depuró y volvió a entregar el paquete MCM2.1 (revisión 4). Se
+**borraron los 27 circuitos viejos** y se cargó el nuevo entero (pedido
+explícito: "elimina los esquemas antiguos ya cargados para no confundir al
+agente"). Conteos verificados en la base tras la carga: **93 circuitos** (los
+93 con SVG), 1.297 componentes, 120 pines, 23 hojas, 31 zonas, 430 etapas, 203
+mediciones, 43 ramas, 13 síntomas, 1 código, 1 caso seed, 18 canales PV.
+
+- **`41-lab-rev4-esquema.sql`** — esquema rev4 idempotente. Agrega 3 tablas:
+  `ecu_equivalencias` (equivalente comercial de un PN Continental — lo que el
+  técnico puede comprar), `ecu_reglas_banco` (reglas de seguridad del banco; la
+  primera salió de quemar un componente: nunca una ampolleta como carga) y
+  `ecu_feedback` ("esto no cuadra con la placa" — la tabla que va convirtiendo
+  lecturas de plano en datos verificados). Suma a `ecu_circuitos` las columnas
+  `lecturas_independientes`/`verificado_en_placa`/`confianza_nota`.
+- **`42-lab-rev4-rls.sql`** — `ecu_componentes.circuitos text[]` (en qué
+  circuitos aparece cada componente) + RLS de las 3 tablas nuevas
+  (`ve_laboratorio()` para leer equivalencias/reglas; feedback lo crea
+  laboratorio y lo resuelve el dueño).
+- **`43-lab-etapa-tipo-proteccion.sql`** — el enum de `ecu_etapas.tipo` sumó
+  `proteccion` (el paquete rev4 lo usa).
+- **8 equivalencias, 5 reglas de banco** cargadas. **Ningún circuito está
+  verificado en placa** (`verificado_en_placa = false` en los 93, a propósito):
+  todos vienen de leer el plano, y la interfaz/agente tiene que decirlo.
+
+**El paquete NO está en el repo** (`mcm21/` está en `.gitignore`): son 5.8 MB
+de know-how del banco (circuitos, mediciones, componentes) y el repo es
+público — mismo criterio que el prompt del agente. Los datos viven en Supabase
+(RLS `ve_laboratorio`) y la carpeta queda local. Para recargar cuando el
+paquete se actualice: `mcm21/cargar.py` (genera `mcm21/ecu-load.sql`, ~2.400
+statements, 93 circuitos), que **borra primero** las tablas de referencia
+(no toca `ecu_config`/`ecu_conversaciones`/`ecu_feedback`) y vuelve a cargar.
+
+**El agente ya usa lo nuevo** (`laboratorio/index.ts`): `ver_circuito` muestra
+la confianza de cada circuito ("NO verificado en placa"); `buscar_componente`
+trae el equivalente comercial y en qué circuitos aparece; herramienta nueva
+`ver_reglas_banco` (el prompt le pide llamarla antes de energizar un circuito
+de potencia). Los diagramas y el chat tomaron los 93 sin tocar más código
+(las columnas del esquema no cambiaron).
+
+**Pendiente del encargo (`mcm21/INSTRUCCIONES-PARA-CODEX.md`), en orden:**
+entrada por síntoma (13, la principal), por componente (con equivalencias),
+por pin; buscador global; formulario de realimentación (`ecu_feedback`); y las
+3 advertencias de `discrepancias.json` (el pinout de 120 es de la variante DDC
+y miente en varios pines; no existe el pinout del conector de 21; ningún
+circuito verificado en placa). Se acordó "empieza por 1 y 2 y muéstrame algo
+funcionando antes de seguir" — fase 1 (datos) lista.
+
 ## Contexto de negocio que importa
 
 Jonatan es el cuello de botella técnico: el mecánico escanea en terreno y le

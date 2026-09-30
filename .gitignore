@@ -3,3 +3,8 @@ supabase/.temp/
 respaldos/
 .claude/
 /NEXA/
+# Paquete MCM2.1 (know-how del banco): circuitos, mediciones, componentes y
+# el SQL de carga. El repo es público — esto NO se sube. Los datos viven en
+# Supabase (protegidos por RLS ve_laboratorio) y la carpeta queda solo local,
+# igual que el prompt del agente. Para recargar: mcm21/cargar.py + ecu-load.sql.
+/mcm21/

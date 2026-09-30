@@ -92,6 +92,7 @@ const HERRAMIENTAS = [
   { type: "function", name: "ver_sintoma", description: "Una ruta de diagnóstico por síntoma (id), con sus pasos y circuitos.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } },
   { type: "function", name: "ver_zona", description: "Una zona de la placa (1-31).", parameters: { type: "object", properties: { n: { type: "integer" } }, required: ["n"], additionalProperties: false } },
   { type: "function", name: "buscar_casos", description: "Reparaciones reales del taller. Los de resultado confirmado mandan sobre el análisis del circuito; uno en proceso es solo hipótesis del taller.", parameters: { type: "object", properties: { consulta: { type: "string" } }, additionalProperties: false } },
+  { type: "function", name: "ver_reglas_banco", description: "Reglas de seguridad del banco, obligatorias antes de energizar un circuito de potencia. La primera salió de quemar un componente de verdad.", parameters: { type: "object", properties: {}, additionalProperties: false } },
   // Búsqueda web nativa de OpenAI: códigos de falla, hojas de datos y
   // equivalencias. El prompt la pone como último recurso y siempre citando
   // la fuente; los foros de camioneros no valen como dato del esquema.
@@ -100,6 +101,7 @@ const HERRAMIENTAS = [
 
 function textoCircuito(ci: any, et: any[], med: any[], ram: any[]): string {
   let t = `CIRCUITO ${ci.id} — ${ci.titulo} (hoja ${ci.hoja})\n${ci.funcion ?? ""}\ncobertura: ${ci.cobertura ?? "—"}`;
+  t += `\nCONFIANZA: ${ci.verificado_en_placa ? "verificado midiendo en placa" : "NO verificado en placa (solo lectura del plano)"}${ci.confianza_nota ? " — " + ci.confianza_nota : ""}`;
   if (ci.alimentacion) t += `\nalimentación: ${ci.alimentacion}`;
   if ((ci.no_dibujados_componentes ?? []).length) t += `\nNO dibujados (no ofrezcas su ficha): ${ci.no_dibujados_componentes.join(", ")}`;
   if ((ci.sin_ficha_en_el_listado ?? []).length) t += `\nsin ficha en el listado: ${ci.sin_ficha_en_el_listado.join(", ")}`;
@@ -134,9 +136,24 @@ async function ejecutarHerramienta(admin: any, name: string, args: any): Promise
     if (name === "buscar_componente") {
       const q = String(args?.consulta ?? "").trim();
       if (!q) return "Falta la consulta.";
-      const { data } = await admin.from("ecu_componentes").select("designador,nombre,parte,valor,descripcion,hoja").eq("modulo_id", MOD)
+      const { data } = await admin.from("ecu_componentes").select("designador,nombre,parte,valor,descripcion,hoja,circuitos").eq("modulo_id", MOD)
         .or(`designador.ilike.%${q}%,descripcion.ilike.%${q}%,nombre.ilike.%${q}%`).limit(20);
-      return (data ?? []).map((c: any) => `${c.designador}: ${c.nombre ?? ""} ${c.valor ? "(" + c.valor + ")" : ""} — parte ${c.parte ?? "—"} · hoja ${c.hoja ?? "—"}${c.descripcion ? " · " + c.descripcion : ""}`).join("\n") || `Sin resultados para "${q}".`;
+      if (!data || !data.length) return `Sin resultados para "${q}".`;
+      // Equivalente comercial: lo que el técnico puede comprar. Se cruza por designador.
+      const { data: eqs } = await admin.from("ecu_equivalencias").select("equivalente_comercial,que_es,conseguir,designadores,ojo");
+      const eqMap: Record<string, any> = {};
+      for (const e of eqs ?? []) for (const d of (e.designadores ?? [])) eqMap[d] = e;
+      return data.map((c: any) => {
+        let l = `${c.designador}: ${c.nombre ?? ""} ${c.valor ? "(" + c.valor + ")" : ""} — parte ${c.parte ?? "—"} · hoja ${c.hoja ?? "—"}${c.descripcion ? " · " + c.descripcion : ""}${(c.circuitos ?? []).length ? " · circuitos: " + c.circuitos.join(", ") : ""}`;
+        const e = eqMap[c.designador];
+        if (e) l += `\n   EQUIVALENTE COMERCIAL (lo que se compra): ${e.equivalente_comercial}${e.que_es ? " — " + e.que_es : ""}${e.conseguir ? " · " + e.conseguir : ""}${e.ojo ? " · ojo: " + e.ojo : ""}`;
+        return l;
+      }).join("\n");
+    }
+    if (name === "ver_reglas_banco") {
+      const { data } = await admin.from("ecu_reglas_banco").select("n,regla,por_que,que_hacer").order("n");
+      if (!data || !data.length) return "No hay reglas de banco cargadas.";
+      return "REGLAS DE BANCO (obligatorias antes de energizar):\n" + data.map((r: any) => `${r.n}. ${r.regla}${r.por_que ? " — " + r.por_que : ""}${r.que_hacer ? " → " + r.que_hacer : ""}`).join("\n");
     }
     if (name === "ver_canal") {
       const canal = String(args?.canal ?? "").toUpperCase().replace(/\s/g, "");
@@ -284,7 +301,8 @@ Deno.serve(async (req) => {
 
     const { data: circs } = await admin.from("ecu_circuitos").select("id").order("id");
     const instrucciones = prompt +
-      "\n\nTIENES HERRAMIENTAS DE VERDAD: úsalas para sacar tú mismo los datos del módulo (ver_circuito, buscar_pin, buscar_componente, ver_canal, ver_sintoma, ver_zona, listar_circuitos). NUNCA le pidas al técnico una foto de un diagrama ni pines que puedes obtener con ver_circuito. Los diagramas y datos ya están en el sistema; búscalos tú." +
+      "\n\nTIENES HERRAMIENTAS DE VERDAD: úsalas para sacar tú mismo los datos del módulo (ver_circuito, buscar_pin, buscar_componente, ver_canal, ver_sintoma, ver_zona, listar_circuitos, ver_reglas_banco). NUNCA le pidas al técnico una foto de un diagrama ni pines que puedes obtener con ver_circuito. Los diagramas y datos ya están en el sistema; búscalos tú." +
+      "\n\nHONESTIDAD DEL DATO: ningún circuito está verificado midiendo en placa (ver_circuito te dice la confianza de cada uno). Toda tensión trae su base; si dice 'supuesto', avísale que hay que confirmarla midiendo. buscar_componente ya te da el equivalente comercial (lo que se compra) cuando existe. Antes de proponer energizar un circuito de potencia, llama ver_reglas_banco y dísela al técnico — la primera salió de quemar un componente de verdad (nunca una ampolleta como carga de prueba)." +
       "\n\nCircuitos disponibles (id para ver_circuito): " + (circs ?? []).map((c: any) => c.id).join(", ");
 
     const input = hist.map((m: any) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
