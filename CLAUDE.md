@@ -1762,13 +1762,24 @@ Piezas:
 - **`ANTHROPIC_API_KEY` también es secreto del proyecto (desde 18-10-2026):**
   apunta a la organización con los **$100/mes de crédito API** del plan Claude de
   Jonatan. Se está moviendo a Claude, de a uno, lo que hoy paga OpenAI, para
-  aprovechar ese crédito en vez de pagar aparte. **Ya en Claude: `informe` y
-  `nexa`** (solo cambió su `llamarIA` + la llave + el modelo a
-  `claude-sonnet-5-5`; prompts, acciones y datos quedaron igual). **Siguen en
-  OpenAI: `whatsapp` (PAZ — cliente-facing y en modo escucha, NO tocar),
-  `terreno` y `laboratorio`** (usan Whisper y/o tools de OpenAI; moverlos es
-  parcial). Nota: `nexa_config.modelo` sigue siendo un modelo OpenAI (lo usa la
-  función `whatsapp`); `informe` y `nexa` ya NO lo leen, fijan Claude directo.
+  aprovechar ese crédito en vez de pagar aparte. **MIGRACIÓN COMPLETA
+  (18-10-2026): las 5 Edge Functions de IA ya razonan con Claude
+  (`claude-sonnet-5-5`), fijado directo en cada función — ya NO leen
+  `nexa_config.modelo`/`ecu_config.modelo` (que siguen siendo modelos OpenAI,
+  sin uso).**
+  - `informe`, `nexa`: texto puro → Claude (`llamarIA` → `/v1/messages`).
+  - `whatsapp` (PAZ): razonamiento/ficha → Claude; **audio → Whisper (OpenAI)**.
+    Sigue en modo escucha, cliente-facing — el flujo no cambió.
+  - `terreno`: razonamiento + **visión** (lee el escáner) → Claude; audio → Whisper.
+  - `laboratorio`: tool-loop + búsqueda web + visión → Claude; audio → Whisper.
+    El tool-loop quedó **no-streaming** (más robusto con las herramientas); el
+    texto se entrega por vuelta, no token a token.
+  - **Whisper (transcripción de audio) se queda en OpenAI** en PAZ, terreno y
+    laboratorio — Claude no transcribe; es baratísimo (~US$0,006/min). Por eso
+    `OPENAI_API_KEY` sigue siendo secreto necesario (solo para audio).
+  - Las 5 usan un normalizador `aMensajesClaude()` para la alternancia
+    user/assistant que exige Claude. Visión = imagen base64 (`type:"image"`).
+    Respaldos del código OpenAI de cada una en el scratchpad de la sesión.
 - El prompt vive en `nexa_config.prompt`, **no en el repo**: tiene precios y
   reglas comerciales y el repo es público. Por eso `12-nexa.sql` lo deja vacío
   y se carga aparte con un `update`.
