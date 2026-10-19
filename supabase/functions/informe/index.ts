@@ -10,8 +10,13 @@
 // en CLAUDE.md).
 //
 // Va en una función aparte de `nexa` a propósito: es independiente del chat
-// con clientes y no depende de que PAZ esté activa. Comparte solo el secreto
-// OPENAI_API_KEY (del proyecto), con su propio prompt separado (REGLAS).
+// con clientes y no depende de que PAZ esté activa. Tiene su propio prompt
+// separado (REGLAS).
+//
+// MODELO: usa CLAUDE (claude-sonnet-5-5) con el secreto ANTHROPIC_API_KEY
+// (del proyecto), que apunta a la organización con el crédito del plan de
+// Jonatan — así el redactor sale del crédito y no se paga a OpenAI aparte
+// (migrado 18-10-2026; antes usaba OPENAI_API_KEY + nexa_config.modelo).
 //
 // Desplegar:  .\.tools\supabase.exe functions deploy informe --use-api
 
@@ -51,16 +56,22 @@ function extraerTexto(data: any): string {
 }
 
 async function llamarIA(apiKey: string, modelo: string, instrucciones: string, entrada: unknown) {
-  const r = await fetch("https://api.openai.com/v1/responses", {
+  const texto = typeof entrada === "string" ? entrada : JSON.stringify(entrada);
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: modelo, instructions: instrucciones, input: entrada }),
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: modelo, max_tokens: 4096, system: instrucciones,
+      messages: [{ role: "user", content: texto }],
+    }),
   });
   if (!r.ok) {
     const detalle = await r.text();
     throw new Error(`La IA respondió ${r.status}: ${detalle.slice(0, 300)}`);
   }
-  return extraerTexto(await r.json());
+  const data = await r.json();
+  const bloque = (data?.content ?? []).find((b: any) => b?.type === "text");
+  return (bloque?.text ?? "").trim();
 }
 
 function leerJSON(salida: string): any {
@@ -183,12 +194,12 @@ Deno.serve(async (req) => {
       return json({ error: "No tienes permiso para usar el Redactor IA." }, 403);
     }
 
-    const apiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!apiKey) return json({ error: "Falta configurar OPENAI_API_KEY." }, 503);
+    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!apiKey) return json({ error: "Falta configurar ANTHROPIC_API_KEY." }, 503);
 
-    const admin = createClient(URL_SUPABASE, SERVICE);
-    const { data: cfg } = await admin.from("nexa_config").select("modelo").eq("id", 1).single();
-    const modelo = cfg?.modelo?.trim() || "gpt-5.5";
+    // Redactor movido a Claude (usa el crédito del plan). nexa_config.modelo
+    // guarda un modelo de OpenAI, así que acá se usa un modelo de Claude fijo.
+    const modelo = "claude-sonnet-5-5";
 
     const { accion = "redactar", orden_id, fuente = "", fuente_hash = "", respuestas = "", texto = "" } =
       await req.json();
