@@ -2188,10 +2188,17 @@ lee el informe imprimible); `informes_ia` es el rastro.
 
 **La Edge Function `informe` va aparte de `nexa`** a propósito: es independiente
 del chat con clientes, no debe romperse ni depender de que PAZ esté activa.
-Comparte el secreto `OPENAI_API_KEY` (es del proyecto) y el modelo de
-`nexa_config.modelo` (hoy gpt-5.5, con fallback). Verifica sesión + rol
-dueño/coordinador igual que `nexa`. Desplegar:
-`.\.tools\supabase.exe functions deploy informe --use-api`.
+**Desde el 18-10-2026 usa CLAUDE (`claude-sonnet-5-5`) con el secreto
+`ANTHROPIC_API_KEY`** (apunta a la organización con los $100 de crédito API del
+plan de Jonatan, así el redactor sale del crédito y no se paga a OpenAI aparte).
+Antes usaba `OPENAI_API_KEY` + `nexa_config.modelo` (gpt-5.5) vía la Responses
+API; se cambió solo `llamarIA` (ahora `api.anthropic.com/v1/messages`) + la key
++ el modelo; reglas, ejemplo, acciones y auditoría quedaron igual. Probado: JSON
+de 6 campos, calidad profesional, separa resultado de conclusión, no inventa.
+Verifica sesión + rol dueño/coordinador igual que `nexa`. Desplegar:
+`.\.tools\supabase.exe functions deploy informe --use-api`. (Primer agente del
+taller movido a Claude para aprovechar el crédito; **PAZ WhatsApp NO se tocó** —
+sigue en modo escucha y es cliente-facing, queda para el final o nunca.)
 
 **El formato del informe imprimible no cambió** — sigue leyendo de
 `diagnosticos`/`ordenes` como siempre (ver "Formato del informe técnico"). Esto
