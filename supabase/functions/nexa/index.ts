@@ -6,7 +6,9 @@
 // repo es público.
 //
 // Desplegar:  supabase functions deploy nexa --use-api
-// Llave:      supabase secrets set OPENAI_API_KEY=...
+// Llave:      ANTHROPIC_API_KEY (Claude, sobre el crédito del plan). Migrado de
+//             OpenAI a Claude el 18-10-2026 — solo cambió llamarIA + la llave +
+//             el modelo; prompts, acciones y datos quedaron igual.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -77,17 +79,45 @@ async function responderWhatsApp(telefono: string, texto: string) {
   return { ok: r.ok, status: r.status, cuerpo };
 }
 
+// La `entrada` puede ser un string o un arreglo de mensajes {role,content}
+// (una conversación entera). Claude exige que los mensajes alternen
+// user/assistant y que el primero sea user, así que se normaliza: todo lo
+// que no sea "assistant" pasa a "user", se fusionan los consecutivos del
+// mismo rol y se descarta cualquier assistant inicial.
+function aMensajesClaude(entrada: unknown): { role: "user" | "assistant"; content: string }[] {
+  const arr = typeof entrada === "string"
+    ? [{ role: "user", content: entrada }]
+    : Array.isArray(entrada) ? entrada : [{ role: "user", content: String(entrada ?? "") }];
+  const norm = arr
+    .map((m: any) => ({ role: (m?.role === "assistant" ? "assistant" : "user") as "user" | "assistant", content: String(m?.content ?? "").trim() }))
+    .filter((m) => m.content);
+  const out: { role: "user" | "assistant"; content: string }[] = [];
+  for (const m of norm) {
+    const ult = out[out.length - 1];
+    if (ult && ult.role === m.role) ult.content += "\n\n" + m.content;
+    else out.push({ ...m });
+  }
+  while (out.length && out[0].role !== "user") out.shift();
+  if (!out.length) out.push({ role: "user", content: "(sin contenido)" });
+  return out;
+}
+
 async function llamarIA(apiKey: string, modelo: string, instrucciones: string, entrada: unknown) {
-  const r = await fetch("https://api.openai.com/v1/responses", {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: modelo, instructions: instrucciones, input: entrada }),
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: modelo, max_tokens: 4096, system: instrucciones,
+      messages: aMensajesClaude(entrada),
+    }),
   });
   if (!r.ok) {
     const detalle = await r.text();
     throw new Error(`La IA respondió ${r.status}: ${detalle.slice(0, 300)}`);
   }
-  return extraerTexto(await r.json());
+  const data = await r.json();
+  const bloque = (data?.content ?? []).find((b: any) => b?.type === "text");
+  return (bloque?.text ?? "").trim();
 }
 
 // Los aprendizajes no son todos del mismo tipo: unos son reglas de proceso
@@ -145,7 +175,10 @@ Deno.serve(async (req) => {
     const { data: cfg } = await admin
       .from("nexa_config").select("prompt,prompt_ficha,modelo,activa").eq("id", 1).single();
 
-    const apiKey = Deno.env.get("OPENAI_API_KEY");
+    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    // Redactor/Nexa en Claude (usa el crédito del plan). nexa_config.modelo
+    // guarda un modelo de OpenAI, así que acá se fija un modelo de Claude.
+    const MODELO_CLAUDE = "claude-sonnet-5-5";
 
     const {
       accion = "responder", historial = [], texto = "",
@@ -164,7 +197,7 @@ Deno.serve(async (req) => {
       }
       if (!apiKey) {
         return json({
-          error: "Falta configurar la llave de la IA. Corre: supabase secrets set OPENAI_API_KEY=tu-llave",
+          error: "Falta configurar la llave de la IA. Corre: supabase secrets set ANTHROPIC_API_KEY=tu-llave",
         }, 503);
       }
     }
@@ -230,7 +263,7 @@ Deno.serve(async (req) => {
         "- No inventes nada que no esté en el texto.",
       ].join("\n");
 
-      const crudo = await llamarIA(apiKey, cfg.modelo, instrucciones, [
+      const crudo = await llamarIA(apiKey, MODELO_CLAUDE, instrucciones, [
         { role: "user", content: texto },
       ]);
       const limpio = crudo.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
@@ -334,7 +367,7 @@ Deno.serve(async (req) => {
           "  se comunica, no sobre inventar un número distinto.",
         ].join("\n");
 
-        const texto = await llamarIA(apiKey, cfg.modelo, instrucciones, [
+        const texto = await llamarIA(apiKey, MODELO_CLAUDE, instrucciones, [
           { role: "user", content: instruccion },
         ]);
         if (!texto) return json({ error: "La IA no devolvió nada. Reintenta." }, 502);
@@ -460,7 +493,7 @@ Deno.serve(async (req) => {
         "No repitas lo ya confirmado ni dejes la conversación colgada.",
       ].filter(Boolean).join("\n");
 
-      const respuestaNueva = await llamarIA(apiKey, cfg.modelo, instrucciones, historialParaReintento);
+      const respuestaNueva = await llamarIA(apiKey, MODELO_CLAUDE, instrucciones, historialParaReintento);
       if (!respuestaNueva) return json({ error: "La IA no devolvió nada. Reintenta." }, 502);
 
       return json({
@@ -476,7 +509,7 @@ Deno.serve(async (req) => {
 
     if (accion === "responder") {
       const texto = await llamarIA(
-        apiKey, cfg.modelo, `${cfg.prompt}\n\n${CONTEXTO_APP}`, historial);
+        apiKey, MODELO_CLAUDE, `${cfg.prompt}\n\n${CONTEXTO_APP}`, historial);
       if (!texto) return json({ error: "La IA no devolvió respuesta. Reintenta." }, 502);
       return json({ respuesta: texto.replaceAll("**", "").replaceAll("*", "") });
     }
@@ -492,7 +525,7 @@ Deno.serve(async (req) => {
       if (!cfg.prompt_ficha?.trim()) {
         return json({ error: "Faltan las instrucciones de la ficha en nexa_config." }, 503);
       }
-      const texto = await llamarIA(apiKey, cfg.modelo, cfg.prompt_ficha, historial);
+      const texto = await llamarIA(apiKey, MODELO_CLAUDE, cfg.prompt_ficha, historial);
       const limpio = texto.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
       try {
         const datos = JSON.parse(limpio);
