@@ -9,7 +9,10 @@
 // Desplegar:  supabase functions deploy whatsapp --use-api --no-verify-jwt
 //
 // Secretos que necesita:
-//   OPENAI_API_KEY         llave de la IA
+//   ANTHROPIC_API_KEY      razonamiento/redacción con Claude (crédito del plan,
+//                          desde 18-10-2026). Antes era OPENAI_API_KEY.
+//   OPENAI_API_KEY         SOLO para transcribir audios con Whisper (Claude no
+//                          transcribe). Es baratísimo (~US$0,006/min).
 //   WHATSAPP_TOKEN         token de acceso de la app de Meta
 //   WHATSAPP_PHONE_ID      identificador del número (Phone Number ID)
 //   WHATSAPP_APP_SECRET    clave secreta de la app, para validar la firma
@@ -98,16 +101,44 @@ function extraerTexto(data: any): string {
   return typeof viejo === "string" ? viejo.trim() : "";
 }
 
+// La `entrada` puede ser un string o un arreglo de mensajes {role,content}.
+// Claude exige que los mensajes alternen user/assistant y empiecen en user, así
+// que se normaliza (lo mismo que en nexa).
+function aMensajesClaude(entrada: unknown): { role: "user" | "assistant"; content: string }[] {
+  const arr = typeof entrada === "string"
+    ? [{ role: "user", content: entrada }]
+    : Array.isArray(entrada) ? entrada : [{ role: "user", content: String(entrada ?? "") }];
+  const norm = arr
+    .map((m: any) => ({ role: (m?.role === "assistant" ? "assistant" : "user") as "user" | "assistant", content: String(m?.content ?? "").trim() }))
+    .filter((m) => m.content);
+  const out: { role: "user" | "assistant"; content: string }[] = [];
+  for (const m of norm) {
+    const ult = out[out.length - 1];
+    if (ult && ult.role === m.role) ult.content += "\n\n" + m.content;
+    else out.push({ ...m });
+  }
+  while (out.length && out[0].role !== "user") out.shift();
+  if (!out.length) out.push({ role: "user", content: "(sin contenido)" });
+  return out;
+}
+
+// Razonamiento/redacción: CLAUDE (crédito del plan). El AUDIO se transcribe
+// aparte con Whisper de OpenAI (ver transcribirAudio) — Claude no transcribe.
 async function llamarIA(modelo: string, instrucciones: string, entrada: unknown) {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("Falta OPENAI_API_KEY.");
-  const r = await fetch("https://api.openai.com/v1/responses", {
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) throw new Error("Falta ANTHROPIC_API_KEY.");
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: modelo, instructions: instrucciones, input: entrada }),
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: modelo, max_tokens: 4096, system: instrucciones,
+      messages: aMensajesClaude(entrada),
+    }),
   });
   if (!r.ok) throw new Error(`La IA respondió ${r.status}: ${(await r.text()).slice(0, 300)}`);
-  return extraerTexto(await r.json());
+  const data = await r.json();
+  const bloque = (data?.content ?? []).find((b: any) => b?.type === "text");
+  return (bloque?.text ?? "").trim();
 }
 
 // Los aprendizajes no son todos del mismo tipo: unos son reglas de proceso
@@ -562,7 +593,7 @@ async function procesarMensaje(paz: any, msj: any) {
   if (cfg.responde_whatsapp) {
     const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, contexto]
       .filter(Boolean).join("\n\n");
-    const texto = await llamarIA(cfg.modelo, instrucciones, historial);
+    const texto = await llamarIA("claude-sonnet-5-5", instrucciones, historial);
     const limpio = texto.replaceAll("**", "").replaceAll("*", "");
     if (limpio) {
       await responderWhatsApp(telefono, limpio);
@@ -577,7 +608,7 @@ async function procesarMensaje(paz: any, msj: any) {
   // Los casos se arman igual, conteste PAZ o no: sirven para que el
   // equipo vea de qué se trata sin leer toda la conversación.
   try {
-    const crudo = await llamarIA(cfg.modelo, cfg.prompt_ficha, historial);
+    const crudo = await llamarIA("claude-sonnet-5-5", cfg.prompt_ficha, historial);
     const limpio = crudo.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
     const { casos } = JSON.parse(limpio);
     if (Array.isArray(casos) && casos.length) {

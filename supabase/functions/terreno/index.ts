@@ -13,7 +13,9 @@
 // (Fase 2, después: el agente asiste al técnico desde estos casos. No ahora.)
 //
 // Solo el dueño (mismo criterio que la RLS de 35-agente-terreno.sql).
-// Comparte con el resto solo OPENAI_API_KEY y el modelo de nexa_config.
+// LLAVES: razonamiento y visión (lectura del escáner) con CLAUDE
+// (ANTHROPIC_API_KEY, crédito del plan, desde 18-10-2026); el AUDIO se
+// transcribe con Whisper de OpenAI (OPENAI_API_KEY) — Claude no transcribe.
 //
 // Desplegar:  .\.tools\supabase.exe functions deploy terreno --use-api
 
@@ -53,17 +55,42 @@ function extraerTexto(data: any): string {
   return typeof viejo === "string" ? viejo.trim() : "";
 }
 
+function aMensajesClaude(entrada: unknown): { role: "user" | "assistant"; content: string }[] {
+  const arr = typeof entrada === "string"
+    ? [{ role: "user", content: entrada }]
+    : Array.isArray(entrada) ? entrada : [{ role: "user", content: String(entrada ?? "") }];
+  const norm = arr
+    .map((m: any) => ({ role: (m?.role === "assistant" ? "assistant" : "user") as "user" | "assistant", content: String(m?.content ?? "").trim() }))
+    .filter((m) => m.content);
+  const out: { role: "user" | "assistant"; content: string }[] = [];
+  for (const m of norm) {
+    const ult = out[out.length - 1];
+    if (ult && ult.role === m.role) ult.content += "\n\n" + m.content;
+    else out.push({ ...m });
+  }
+  while (out.length && out[0].role !== "user") out.shift();
+  if (!out.length) out.push({ role: "user", content: "(sin contenido)" });
+  return out;
+}
+
+// Razonamiento con CLAUDE (crédito del plan). El audio se transcribe aparte con
+// Whisper de OpenAI (ver transcribir).
 async function llamarIA(apiKey: string, modelo: string, instrucciones: string, entrada: unknown) {
-  const r = await fetch("https://api.openai.com/v1/responses", {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: modelo, instructions: instrucciones, input: entrada }),
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: modelo, max_tokens: 2000, system: instrucciones,
+      messages: aMensajesClaude(entrada),
+    }),
   });
   if (!r.ok) {
     const detalle = await r.text();
     throw new Error(`La IA respondió ${r.status}: ${detalle.slice(0, 300)}`);
   }
-  return extraerTexto(await r.json());
+  const data = await r.json();
+  const bloque = (data?.content ?? []).find((b: any) => b?.type === "text");
+  return (bloque?.text ?? "").trim();
 }
 
 function leerJSON(salida: string): any {
@@ -104,21 +131,23 @@ const REGLAS_OJOS = [
 
 async function leerImagen(apiKey: string, modelo: string, file: File): Promise<string> {
   const buf = new Uint8Array(await file.arrayBuffer());
-  const dataUrl = `data:${file.type || "image/jpeg"};base64,${encodeBase64(buf)}`;
-  const r = await fetch("https://api.openai.com/v1/responses", {
+  const b64 = encodeBase64(buf);
+  const mt = (file.type && file.type.startsWith("image/")) ? file.type : "image/jpeg";
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({
-      model: modelo,
-      instructions: REGLAS_OJOS,
-      input: [{ role: "user", content: [
-        { type: "input_text", text: "Lee esta pantalla del escáner." },
-        { type: "input_image", image_url: dataUrl },
+      model: modelo, max_tokens: 1500, system: REGLAS_OJOS,
+      messages: [{ role: "user", content: [
+        { type: "text", text: "Lee esta pantalla del escáner." },
+        { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
       ] }],
     }),
   });
   if (!r.ok) throw new Error(`No se pudo leer la imagen: ${(await r.text()).slice(0, 200)}`);
-  return extraerTexto(await r.json()).trim();
+  const data = await r.json();
+  const bloque = (data?.content ?? []).find((b: any) => b?.type === "text");
+  return (bloque?.text ?? "").trim();
 }
 
 // Identidad + reglas duras. FASE 1 = capturar, no diagnosticar.
@@ -161,12 +190,10 @@ Deno.serve(async (req) => {
       return json({ error: "El Diagnóstico de terreno es solo para el dueño." }, 403);
     }
 
-    const apiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!apiKey) return json({ error: "Falta configurar OPENAI_API_KEY." }, 503);
-
-    const admin = createClient(URL_SUPABASE, SERVICE);
-    const { data: cfg } = await admin.from("nexa_config").select("modelo").eq("id", 1).single();
-    const modelo = cfg?.modelo?.trim() || "gpt-5.5";
+    const apiKey = Deno.env.get("OPENAI_API_KEY");           // Whisper (audio)
+    const apiKeyClaude = Deno.env.get("ANTHROPIC_API_KEY");  // razonamiento + visión
+    if (!apiKeyClaude) return json({ error: "Falta configurar ANTHROPIC_API_KEY." }, 503);
+    const modelo = "claude-sonnet-5-5";
 
     // Tope por hora, sobre ia_uso (misma tabla que el Redactor).
     const hace1h = new Date(Date.now() - 3600_000).toISOString();
@@ -189,9 +216,10 @@ Deno.serve(async (req) => {
       const imagen = form.get("imagen");
       const previa = String(form.get("transcripcion_previa") ?? "").trim();
       if (audio instanceof File) {
+        if (!apiKey) return json({ error: "Falta OPENAI_API_KEY para transcribir el audio." }, 503);
         textoNuevo = await transcribir(apiKey, audio);
       } else if (imagen instanceof File) {
-        const lectura = await leerImagen(apiKey, modelo, imagen);
+        const lectura = await leerImagen(apiKeyClaude, modelo, imagen);
         textoNuevo = lectura ? `[Pantalla del escáner] ${lectura}` : "";
       } else {
         return json({ error: "No llegó ni audio ni imagen." }, 400);
@@ -231,7 +259,7 @@ Deno.serve(async (req) => {
       "Usa null en lo que no se haya dicho. No inventes ni deduzcas nada.",
     ].join("\n");
 
-    const salida = await llamarIA(apiKey, modelo, instrucciones, transcripcion);
+    const salida = await llamarIA(apiKeyClaude, modelo, instrucciones, transcripcion);
     let f: any;
     try { f = leerJSON(salida); } catch {
       return json({ error: "La IA no devolvió una ficha legible. Reintenta.", transcripcion, texto_nuevo: textoNuevo }, 502);
