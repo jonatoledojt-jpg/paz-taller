@@ -4,11 +4,17 @@
 // electrónicos en el banco (hoy el MCM2.1). Lo usan Diego y Jonatan.
 //
 // El conocimiento vive en las tablas ecu_* (37/38) cargadas del paquete
-// verificado. El agente tiene HERRAMIENTAS reales (function calling): busca
-// solo los circuitos, pines, componentes, canales, síntomas y zonas que
-// necesita -- ya no le pide al técnico lo que la base ya tiene. La respuesta
-// va con STREAMING (aparece escribiéndose). Toda tensión con su base; no hay
-// medición de fábrica y así hay que darlo.
+// verificado. El agente tiene HERRAMIENTAS reales (tool-calling de Claude):
+// busca solo los circuitos, pines, componentes, canales, síntomas y zonas que
+// necesita -- ya no le pide al técnico lo que la base ya tiene. Toda tensión
+// con su base; no hay medición de fábrica y así hay que darlo.
+//
+// LLAVES (migrado a Claude el 18-10-2026, sobre el crédito del plan): el
+// razonamiento, las herramientas, la búsqueda web (nativa de Anthropic) y la
+// visión van con ANTHROPIC_API_KEY (claude-sonnet-5-5); el AUDIO se transcribe
+// con Whisper de OpenAI (OPENAI_API_KEY) — Claude no transcribe. El tool-loop es
+// NO-streaming (más robusto con las herramientas), pero el texto de cada vuelta
+// se entrega al cliente a medida que llega (antes era streaming token a token).
 //
 // Solo dueño / coordinador de laboratorio (ve_laboratorio()).
 // Desplegar:  .\.tools\supabase.exe functions deploy laboratorio --use-api
@@ -30,11 +36,21 @@ const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const MOD = "mcm2.1-hdep-eu";
 const TOPE_POR_HORA = 60;
 
-function extraerTexto(data: any): string {
-  if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text.trim();
-  const partes: string[] = [];
-  for (const item of data?.output ?? []) for (const c of item?.content ?? []) if (typeof c?.text === "string") partes.push(c.text);
-  return partes.join("\n").trim();
+// Normaliza una conversación a la alternancia user/assistant que exige Claude
+// (fusiona consecutivos del mismo rol, empieza en user). Solo mensajes de texto.
+function aMensajesClaude(arr: any[]): { role: "user" | "assistant"; content: string }[] {
+  const norm = (Array.isArray(arr) ? arr : [])
+    .map((m: any) => ({ role: (m?.role === "assistant" ? "assistant" : "user") as "user" | "assistant", content: String(m?.content ?? "").trim() }))
+    .filter((m) => m.content);
+  const out: { role: "user" | "assistant"; content: string }[] = [];
+  for (const m of norm) {
+    const ult = out[out.length - 1];
+    if (ult && ult.role === m.role) ult.content += "\n\n" + m.content;
+    else out.push({ ...m });
+  }
+  while (out.length && out[0].role !== "user") out.shift();
+  if (!out.length) out.push({ role: "user", content: "(sin contenido)" });
+  return out;
 }
 
 // --- Audio (Whisper) y foto (visión), para las entradas multimedia ---
@@ -66,37 +82,40 @@ const REGLAS_OJOS_LAB = [
 
 async function leerImagen(apiKey: string, modelo: string, file: File): Promise<string> {
   const buf = new Uint8Array(await file.arrayBuffer());
-  const dataUrl = `data:${file.type || "image/jpeg"};base64,${encodeBase64(buf)}`;
-  const r = await fetch("https://api.openai.com/v1/responses", {
+  const b64 = encodeBase64(buf);
+  const mt = (file.type && file.type.startsWith("image/")) ? file.type : "image/jpeg";
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({
-      model: modelo, instructions: REGLAS_OJOS_LAB,
-      input: [{ role: "user", content: [
-        { type: "input_text", text: "Describe esta foto del banco." },
-        { type: "input_image", image_url: dataUrl },
+      model: modelo, max_tokens: 1500, system: REGLAS_OJOS_LAB,
+      messages: [{ role: "user", content: [
+        { type: "text", text: "Describe esta foto del banco." },
+        { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
       ] }],
     }),
   });
   if (!r.ok) throw new Error(`No se pudo leer la imagen: ${(await r.text()).slice(0, 200)}`);
-  return extraerTexto(await r.json()).trim();
+  const data = await r.json();
+  const bloque = (data?.content ?? []).find((b: any) => b?.type === "text");
+  return (bloque?.text ?? "").trim();
 }
 
-// --- Herramientas (function calling): el agente saca los datos SOLO ---
+// --- Herramientas (tool-calling de Claude): el agente saca los datos SOLO ---
+// Formato Claude: { name, description, input_schema }. La búsqueda web es la
+// herramienta nativa de Anthropic (server-side). El prompt la pone como último
+// recurso y siempre citando la fuente; los foros de camioneros no valen.
 const HERRAMIENTAS = [
-  { type: "function", name: "listar_circuitos", description: "Lista los circuitos trazados disponibles (id y título).", parameters: { type: "object", properties: {}, additionalProperties: false } },
-  { type: "function", name: "ver_circuito", description: "Topología de un circuito: etapas, señales, mediciones esperadas (con su base), ramas, cobertura y lo no dibujado.", parameters: { type: "object", properties: { id: { type: "string", description: "id del circuito, ej: iny-b1, imv, ckp, can1" } }, required: ["id"], additionalProperties: false } },
-  { type: "function", name: "buscar_pin", description: "Función de uno o varios pines del conector (1-120).", parameters: { type: "object", properties: { pines: { type: "array", items: { type: "integer" } } }, required: ["pines"], additionalProperties: false } },
-  { type: "function", name: "buscar_componente", description: "Busca componentes del listado de fábrica por designador o texto.", parameters: { type: "object", properties: { consulta: { type: "string" } }, required: ["consulta"], additionalProperties: false } },
-  { type: "function", name: "ver_canal", description: "Un canal de válvula proporcional (PWM1..PWM18): su cadena y pin de salida.", parameters: { type: "object", properties: { canal: { type: "string" } }, required: ["canal"], additionalProperties: false } },
-  { type: "function", name: "ver_sintoma", description: "Una ruta de diagnóstico por síntoma (id), con sus pasos y circuitos.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } },
-  { type: "function", name: "ver_zona", description: "Una zona de la placa (1-31).", parameters: { type: "object", properties: { n: { type: "integer" } }, required: ["n"], additionalProperties: false } },
-  { type: "function", name: "buscar_casos", description: "Reparaciones reales del taller. Los de resultado confirmado mandan sobre el análisis del circuito; uno en proceso es solo hipótesis del taller.", parameters: { type: "object", properties: { consulta: { type: "string" } }, additionalProperties: false } },
-  { type: "function", name: "ver_reglas_banco", description: "Reglas de seguridad del banco, obligatorias antes de energizar un circuito de potencia. La primera salió de quemar un componente de verdad.", parameters: { type: "object", properties: {}, additionalProperties: false } },
-  // Búsqueda web nativa de OpenAI: códigos de falla, hojas de datos y
-  // equivalencias. El prompt la pone como último recurso y siempre citando
-  // la fuente; los foros de camioneros no valen como dato del esquema.
-  { type: "web_search" },
+  { name: "listar_circuitos", description: "Lista los circuitos trazados disponibles (id y título).", input_schema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "ver_circuito", description: "Topología de un circuito: etapas, señales, mediciones esperadas (con su base), ramas, cobertura y lo no dibujado.", input_schema: { type: "object", properties: { id: { type: "string", description: "id del circuito, ej: iny-b1, imv, ckp, can1" } }, required: ["id"], additionalProperties: false } },
+  { name: "buscar_pin", description: "Función de uno o varios pines del conector (1-120).", input_schema: { type: "object", properties: { pines: { type: "array", items: { type: "integer" } } }, required: ["pines"], additionalProperties: false } },
+  { name: "buscar_componente", description: "Busca componentes del listado de fábrica por designador o texto.", input_schema: { type: "object", properties: { consulta: { type: "string" } }, required: ["consulta"], additionalProperties: false } },
+  { name: "ver_canal", description: "Un canal de válvula proporcional (PWM1..PWM18): su cadena y pin de salida.", input_schema: { type: "object", properties: { canal: { type: "string" } }, required: ["canal"], additionalProperties: false } },
+  { name: "ver_sintoma", description: "Una ruta de diagnóstico por síntoma (id), con sus pasos y circuitos.", input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } },
+  { name: "ver_zona", description: "Una zona de la placa (1-31).", input_schema: { type: "object", properties: { n: { type: "integer" } }, required: ["n"], additionalProperties: false } },
+  { name: "buscar_casos", description: "Reparaciones reales del taller. Los de resultado confirmado mandan sobre el análisis del circuito; uno en proceso es solo hipótesis del taller.", input_schema: { type: "object", properties: { consulta: { type: "string" } }, additionalProperties: false } },
+  { name: "ver_reglas_banco", description: "Reglas de seguridad del banco, obligatorias antes de energizar un circuito de potencia. La primera salió de quemar un componente de verdad.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
+  { type: "web_search_20250305", name: "web_search", max_uses: 4 },
 ];
 
 function textoCircuito(ci: any, et: any[], med: any[], ram: any[]): string {
@@ -190,59 +209,44 @@ async function ejecutarHerramienta(admin: any, name: string, args: any): Promise
   }
 }
 
-// Corre UN turno del modelo con streaming. Relaya el texto por onText y
-// junta los function_call que pida. Devuelve el id de respuesta (para
-// encadenar con previous_response_id) y los llamados a herramientas.
-async function streamTurno(apiKey: string, body: any, onText: (t: string) => Promise<void>) {
-  const r = await fetch("https://api.openai.com/v1/responses", {
+// Un turno NO-streaming de Claude con herramientas. Devuelve el content
+// completo (bloques text / tool_use / server tools) y el stop_reason.
+async function turnoClaude(apiKey: string, modelo: string, system: string, messages: any[]) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ ...body, stream: true }),
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model: modelo, max_tokens: 4096, system, messages, tools: HERRAMIENTAS }),
   });
-  if (!r.ok || !r.body) throw new Error(`La IA respondió ${r.status}: ${(await r.text()).slice(0, 300)}`);
-  const reader = r.body.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  let responseId: string | null = null;
-  const fns: any[] = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const partes = buf.split("\n\n");
-    buf = partes.pop() ?? "";
-    for (const p of partes) {
-      const linea = p.split("\n").find((l) => l.startsWith("data:"));
-      if (!linea) continue;
-      const s = linea.slice(5).trim();
-      if (!s || s === "[DONE]") continue;
-      let ev: any; try { ev = JSON.parse(s); } catch { continue; }
-      if (ev.type === "response.output_text.delta" && typeof ev.delta === "string") {
-        await onText(ev.delta);
-      } else if (ev.type === "response.output_item.done" && ev.item?.type === "function_call") {
-        fns.push({ name: ev.item.name, arguments: ev.item.arguments, call_id: ev.item.call_id });
-      } else if (ev.type === "response.completed") {
-        responseId = ev.response?.id ?? responseId;
-      }
-    }
-  }
-  return { responseId, functionCalls: fns };
+  if (!r.ok) throw new Error(`La IA respondió ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  const d = await r.json();
+  return { content: d?.content ?? [], stop: d?.stop_reason };
 }
 
-// El agente conversa y usa herramientas hasta dar la respuesta final; el texto
-// se va entregando por onText a medida que se genera.
-async function correrLoop(apiKey: string, admin: any, modelo: string, instrucciones: string, inputInicial: any, onText: (t: string) => Promise<void>) {
-  let body: any = { model: modelo, instructions: instrucciones, input: inputInicial, tools: HERRAMIENTAS };
-  for (let ronda = 0; ronda < 6; ronda++) {
-    const { responseId, functionCalls } = await streamTurno(apiKey, body, onText);
-    if (!functionCalls.length) return;
-    const outputs: any[] = [];
-    for (const fc of functionCalls) {
-      let args: any = {}; try { args = JSON.parse(fc.arguments || "{}"); } catch { /* deja {} */ }
-      const res = await ejecutarHerramienta(admin, fc.name, args);
-      outputs.push({ type: "function_call_output", call_id: fc.call_id, output: String(res).slice(0, 6000) });
+// El agente conversa y usa herramientas hasta dar la respuesta final. Las
+// herramientas propias (ver_circuito, etc.) las ejecuto yo y le devuelvo el
+// resultado; la búsqueda web la resuelve Claude solo (server tool). El texto
+// de cada vuelta se entrega por onText a medida que llega.
+async function correrLoop(apiKey: string, admin: any, modelo: string, system: string, mensajesIniciales: any[], onText: (t: string) => Promise<void>) {
+  const messages: any[] = [...mensajesIniciales];
+  for (let ronda = 0; ronda < 8; ronda++) {
+    const { content, stop } = await turnoClaude(apiKey, modelo, system, messages);
+    for (const b of content) {
+      if (b?.type === "text" && b.text) await onText(b.text);
     }
-    body = { model: modelo, previous_response_id: responseId, input: outputs, tools: HERRAMIENTAS };
+    const usos = content.filter((b: any) => b?.type === "tool_use"); // solo herramientas propias
+    if (stop === "tool_use" && usos.length) {
+      messages.push({ role: "assistant", content });
+      const resultados: any[] = [];
+      for (const tu of usos) {
+        const res = await ejecutarHerramienta(admin, tu.name, tu.input ?? {});
+        resultados.push({ type: "tool_result", tool_use_id: tu.id, content: String(res).slice(0, 6000) });
+      }
+      messages.push({ role: "user", content: resultados });
+      continue;
+    }
+    // pause_turn: la búsqueda web quedó a medias; se reenvía el parcial y sigue.
+    if (stop === "pause_turn") { messages.push({ role: "assistant", content }); continue; }
+    return; // end_turn / max_tokens / etc.
   }
 }
 
@@ -259,13 +263,13 @@ Deno.serve(async (req) => {
     const puede = perfil && (perfil.rol === "dueno" || (perfil.rol === "coordinador" && perfil.area === "laboratorio"));
     if (!puede) return json({ error: "El Diagnóstico de laboratorio es solo para el dueño o el encargado de laboratorio." }, 403);
 
-    const apiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!apiKey) return json({ error: "Falta configurar OPENAI_API_KEY." }, 503);
+    const apiKey = Deno.env.get("OPENAI_API_KEY");           // Whisper (audio)
+    const apiKeyClaude = Deno.env.get("ANTHROPIC_API_KEY");  // razonamiento, herramientas, visión, web
+    if (!apiKeyClaude) return json({ error: "Falta configurar ANTHROPIC_API_KEY." }, 503);
+    const modelo = "claude-sonnet-5-5";
 
     const admin = createClient(URL_SUPABASE, SERVICE);
-    const { data: cfg } = await admin.from("ecu_config").select("prompt,modelo").eq("id", 1).single();
-    let modelo = cfg?.modelo?.trim();
-    if (!modelo) { const { data: nx } = await admin.from("nexa_config").select("modelo").eq("id", 1).single(); modelo = nx?.modelo?.trim() || "gpt-5.5"; }
+    const { data: cfg } = await admin.from("ecu_config").select("prompt").eq("id", 1).single();
     const prompt = cfg?.prompt?.trim();
     if (!prompt) return json({ error: "El agente de laboratorio no está configurado (falta el prompt)." }, 503);
 
@@ -288,8 +292,11 @@ Deno.serve(async (req) => {
       hist = Array.isArray(hist) ? hist.filter((m: any) => m && typeof m.content === "string") : [];
       const audio = form.get("audio");
       const imagen = form.get("imagen");
-      if (audio instanceof File) textoUsuario = await transcribir(apiKey, audio);
-      else if (imagen instanceof File) { const d = await leerImagen(apiKey, modelo, imagen); textoUsuario = d ? `[Pantalla del escáner / foto del banco] ${d}` : ""; }
+      if (audio instanceof File) {
+        if (!apiKey) return json({ error: "Falta OPENAI_API_KEY para transcribir el audio." }, 503);
+        textoUsuario = await transcribir(apiKey, audio);
+      }
+      else if (imagen instanceof File) { const d = await leerImagen(apiKeyClaude, modelo, imagen); textoUsuario = d ? `[Pantalla del escáner / foto del banco] ${d}` : ""; }
       else return json({ error: "No llegó ni audio ni imagen." }, 400);
       if (!textoUsuario) return json({ error: "No se entendió el audio o la imagen. Reintenta." }, 400);
       hist.push({ role: "user", content: textoUsuario });
@@ -305,13 +312,14 @@ Deno.serve(async (req) => {
       "\n\nHONESTIDAD DEL DATO: ningún circuito está verificado midiendo en placa (ver_circuito te dice la confianza de cada uno). Toda tensión trae su base; si dice 'supuesto', avísale que hay que confirmarla midiendo. buscar_componente ya te da el equivalente comercial (lo que se compra) cuando existe. Antes de proponer energizar un circuito de potencia, llama ver_reglas_banco y dísela al técnico — la primera salió de quemar un componente de verdad (nunca una ampolleta como carga de prueba)." +
       "\n\nCircuitos disponibles (id para ver_circuito): " + (circs ?? []).map((c: any) => c.id).join(", ");
 
-    const input = hist.map((m: any) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
+    const input = aMensajesClaude(hist);
 
     // Multipart: se corre el loop juntando el texto y se devuelve JSON (con lo
-    // que se transcribió/leyó). Texto: se transmite con streaming.
+    // que se transcribió/leyó). Texto: se va entregando por el stream a medida
+    // que Claude termina cada vuelta.
     if (esMultipart) {
       let out = "";
-      await correrLoop(apiKey, admin, modelo, instrucciones, input, async (t) => { out += t; });
+      await correrLoop(apiKeyClaude, admin, modelo, instrucciones, input, async (t) => { out += t; });
       return json({ texto_usuario: textoUsuario, respuesta: out.replaceAll("**", "") });
     }
 
@@ -319,7 +327,7 @@ Deno.serve(async (req) => {
       async start(controller) {
         const enc = new TextEncoder();
         try {
-          await correrLoop(apiKey, admin, modelo, instrucciones, input, async (t) => controller.enqueue(enc.encode(t.replaceAll("**", ""))));
+          await correrLoop(apiKeyClaude, admin, modelo, instrucciones, input, async (t) => controller.enqueue(enc.encode(t.replaceAll("**", ""))));
         } catch (e) {
           controller.enqueue(enc.encode("\n[Error: " + (e instanceof Error ? e.message : e) + "]"));
         } finally {
