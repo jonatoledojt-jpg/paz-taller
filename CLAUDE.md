@@ -1759,6 +1759,16 @@ Piezas:
 
 - La llave de OpenAI es un secreto de Supabase (`OPENAI_API_KEY`). Nunca en el
   `index.html`, que es público.
+- **`ANTHROPIC_API_KEY` también es secreto del proyecto (desde 18-10-2026):**
+  apunta a la organización con los **$100/mes de crédito API** del plan Claude de
+  Jonatan. Se está moviendo a Claude, de a uno, lo que hoy paga OpenAI, para
+  aprovechar ese crédito en vez de pagar aparte. **Ya en Claude: `informe` y
+  `nexa`** (solo cambió su `llamarIA` + la llave + el modelo a
+  `claude-sonnet-5-5`; prompts, acciones y datos quedaron igual). **Siguen en
+  OpenAI: `whatsapp` (PAZ — cliente-facing y en modo escucha, NO tocar),
+  `terreno` y `laboratorio`** (usan Whisper y/o tools de OpenAI; moverlos es
+  parcial). Nota: `nexa_config.modelo` sigue siendo un modelo OpenAI (lo usa la
+  función `whatsapp`); `informe` y `nexa` ya NO lo leen, fijan Claude directo.
 - El prompt vive en `nexa_config.prompt`, **no en el repo**: tiene precios y
   reglas comerciales y el repo es público. Por eso `12-nexa.sql` lo deja vacío
   y se carga aparte con un `update`.
