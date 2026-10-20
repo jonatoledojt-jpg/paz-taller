@@ -74,9 +74,18 @@ function chile(d = new Date()) {
 // jefe aunque sea de un módulo; luego módulo/laboratorio; luego agenda.
 function rutear(c: any): string {
   const m = (c.motivo_alerta || "").toLowerCase();
+  // Coordinar una visita/día (agenda) es de Osores, AUNQUE se mencione el
+  // precio: un pre-compra en terreno que hay que agendar el sábado va a
+  // coordinación, no al dueño por nombrar "valor".
+  const esCoordinacion = /agend|visit|coordin|cu[aá]ndo|qu[eé] d[ií]a|s[aá]bado|domingo|fin de semana|disponib|pasar|ir a|hora para|turno|ruta/.test(m)
+    || (c.atencion === "terreno" && /d[ií]a|hora|cu[aá]ndo|fecha/.test(m));
+  if (esCoordinacion) return "coordinacion";
+  // Plata pura (sin coordinación de visita) la ve el jefe.
   if (/factura|boleta|pago|transfer|precio|valor|cuesta|cuá?nto|cobr|dinero|plata/.test(m)) return "dueno";
+  // Módulo / banco -> laboratorio.
   if (c.modulo || /m[oó]dulo|recep|banco|reparad|repar|placa/.test(m)) return "laboratorio";
-  if (c.atencion === "terreno" || /agend|visit|terreno|d[ií]a|hora|cu[aá]ndo|pasar|ir a|disponib|ruta/.test(m)) return "coordinacion";
+  // Cualquier otra cosa de terreno -> coordinación.
+  if (c.atencion === "terreno") return "coordinacion";
   return "dueno";
 }
 
