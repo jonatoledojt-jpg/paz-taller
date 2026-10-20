@@ -46,6 +46,7 @@ function herramientas(esJefe: boolean) {
     { name: "pendientes", description: "Lo que está esperando acción ahora: casos de WhatsApp que necesitan respuesta humana, y módulos por recepcionar.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "agenda", description: "Qué hay agendado (visitas a terreno o llegadas de módulo). Por defecto los próximos 7 días.", input_schema: { type: "object", properties: { dias: { type: "integer", description: "días hacia adelante, por defecto 7" } }, additionalProperties: false } },
     { name: "historial_patente", description: "Las últimas OT de una patente.", input_schema: { type: "object", properties: { patente: { type: "string" } }, required: ["patente"], additionalProperties: false } },
+    { name: "escribir_al_cliente", description: "Le envías TÚ (PAZ) un WhatsApp a un CLIENTE de parte del taller, cuando el equipo te lo pide (ej: 'mándale al cliente de la OT X los datos de pago con factura'). Sirve para que el equipo NO tenga que entrar al chat del cliente: la única voz hacia el cliente eres tú. Para los datos de pago usa los DATOS DE PAGO DEL TALLER del system, y recuerda: el equipo decide con/sin factura, tú no. Solo funciona si el cliente escribió al taller en las últimas 24h.", input_schema: { type: "object", properties: { destino: { type: "string", description: "OT, cliente, patente o número de teléfono del cliente" }, mensaje: { type: "string", description: "el mensaje que le envías al cliente, redactado por ti, claro y cordial" } }, required: ["destino", "mensaje"], additionalProperties: false } },
     { name: "generar_informe", description: "Redacta el borrador del informe técnico de una OT a partir del DETALLE del trabajo que te cuenta el usuario (qué se revisó, cambió, solucionó) y lo deja guardado en la app para revisar. Si no te han dado el detalle del trabajo, NO lo llames: pídeselo primero. Nunca inventes lo que se hizo.", input_schema: { type: "object", properties: { ot: { type: "string", description: "número de OT, patente o cliente" }, detalle: { type: "string", description: "lo que se hizo en el trabajo, dictado por el técnico (real, no inventado)" } }, required: ["ot", "detalle"], additionalProperties: false } },
     { name: "avisar_a_area", description: "Le escribes TÚ (PAZ) un WhatsApp al responsable de un área del equipo (laboratorio=Diego, coordinacion=Osores, dueno=el jefe). Úsalo cuando haya que pedirle o avisarle algo a alguien del equipo (ej: 'avísale a Diego que revise la OT X'). Redacta el mensaje en PRIMERA PERSONA, como la coordinadora que les pide/instruye: directo, breve, cercano pero con autoridad. NUNCA digas 'de parte de' nadie — el mensaje es tuyo.", input_schema: { type: "object", properties: { area: { type: "string", enum: ["laboratorio", "coordinacion", "dueno"] }, mensaje: { type: "string", description: "el mensaje que TÚ le escribes, en primera persona, sin 'de parte de'" } }, required: ["area", "mensaje"], additionalProperties: false } },
   ];
@@ -114,6 +115,37 @@ async function buscarOrdenes(q: string, esJefe: boolean) {
   return data ?? [];
 }
 
+// Ubica el WhatsApp de un cliente para escribirle: por número directo, o por
+// OT/cliente/patente (OT -> caso -> conversación -> teléfono). Devuelve también
+// la conversación, para chequear la ventana de 24h y dejar registrado lo que
+// PAZ le mandó (así la PAZ cara al cliente no se contradice después).
+async function destinoCliente(destino: string) {
+  const raw = limpiar(destino);
+  const dig = raw.replace(/\D/g, "");
+  if (dig.length >= 8 && /^\+?[\d\s-]+$/.test(raw)) {
+    const sig = dig.slice(-8);
+    const { data: convs } = await admin.from("nexa_conversaciones").select("id,telefono").limit(2000);
+    const c = (convs ?? []).find((x: any) => String(x.telefono || "").replace(/\D/g, "").includes(sig));
+    return { telefono: dig, conversacion_id: c?.id ?? null };
+  }
+  let cid: number | null = null;
+  const ots = await buscarOrdenes(destino, false);
+  if (ots.length) {
+    const { data } = await admin.from("casos").select("conversacion_id")
+      .in("orden_id", ots.map((o: any) => o.id)).not("conversacion_id", "is", null).limit(1);
+    cid = data?.[0]?.conversacion_id ?? null;
+  }
+  if (!cid) {
+    const { data } = await admin.from("casos").select("conversacion_id")
+      .or(`cliente_nombre.ilike.%${raw}%,patente.ilike.%${raw.toUpperCase()}%`)
+      .not("conversacion_id", "is", null).order("actualizado_en", { ascending: false }).limit(1);
+    cid = data?.[0]?.conversacion_id ?? null;
+  }
+  if (!cid) return { telefono: null, conversacion_id: null };
+  const { data: c } = await admin.from("nexa_conversaciones").select("telefono").eq("id", cid).maybeSingle();
+  return { telefono: c?.telefono ? String(c.telefono).replace(/\D/g, "") : null, conversacion_id: cid };
+}
+
 async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante: string, simular: boolean): Promise<string> {
   // Doble llave: aunque la herramienta no debería existir para no-jefes,
   // el ejecutor vuelve a cortar la plata.
@@ -168,6 +200,40 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
           conclusion: b.causa_conclusion, observaciones: b.observaciones,
         },
       });
+    }
+    if (nombre === "escribir_al_cliente") {
+      const mensaje = String(input?.mensaje ?? "").trim();
+      if (!mensaje) return "Falta el mensaje que hay que enviarle al cliente.";
+      const { telefono, conversacion_id } = await destinoCliente(String(input?.destino ?? ""));
+      if (!telefono) {
+        return "No tengo el número de WhatsApp de ese cliente (no te ha escrito al taller). Pásame el número, o pídele que le mande un 'hola' al +56 9 3374 0440 y ahí le escribo.";
+      }
+      // Ventana de 24h: PAZ (por la API) solo puede escribir si el cliente
+      // escribió al taller en las últimas 24h. Si no, haría falta plantilla.
+      let abierta = false;
+      if (conversacion_id) {
+        const { data: ult } = await admin.from("nexa_mensajes")
+          .select("creado_en").eq("conversacion_id", conversacion_id).eq("rol", "user")
+          .order("creado_en", { ascending: false }).limit(1).maybeSingle();
+        abierta = !!(ult && (Date.now() - Date.parse(ult.creado_en)) < 24 * 3600 * 1000);
+      }
+      if (!abierta) {
+        return "No le puedo escribir ahora: ese cliente no te ha escrito al WhatsApp del taller en las últimas 24h, y WhatsApp no deja iniciar sin una plantilla aprobada. Pídele que te mande un 'hola' al +56 9 3374 0440 y se lo envío al tiro.";
+      }
+      if (simular) return `(simulado, no se envió) habría escrito al cliente (${telefono}): ${mensaje}`;
+      const ok = await enviarWA(telefono, mensaje);
+      if (ok && conversacion_id) {
+        // Se registra como mensaje de PAZ (humano_asistido) para que la PAZ
+        // cara al cliente lo vea y no se contradiga en el siguiente turno.
+        await admin.from("nexa_mensajes")
+          .insert({ conversacion_id, rol: "assistant", contenido: mensaje, humano_asistido: true })
+          .then(() => {}, () => {});
+      }
+      await admin.from("wa_log").insert({
+        metodo: "ASISTENTE-CLIENTE", firma_ok: ok,
+        nota: `${solicitante} → cliente ${telefono}`, cuerpo: mensaje.slice(0, 1000),
+      }).then(() => {}, () => {});
+      return ok ? "Listo, le envié el mensaje al cliente." : "No pude enviarle el mensaje al cliente (error de WhatsApp).";
     }
     if (nombre === "buscar_ot") {
       const q = input?.consulta ?? "";
@@ -287,6 +353,11 @@ Deno.serve(async (req) => {
   if (!miembro) return Response.json({ error: "no es del equipo" }, { status: 403 });
   const esJefe = miembro.area === "dueno";
 
+  // Datos de pago del taller (con/sin factura), para que PAZ se los pueda
+  // enviar al cliente cuando el equipo se lo pida. El equipo decide cuál.
+  const { data: cfgPago } = await admin.from("nexa_config").select("datos_pago").eq("id", 1).maybeSingle();
+  const datosPago = (cfgPago?.datos_pago ?? "").trim();
+
   const system = [
     `Eres PAZ, la coordinadora del taller Paz Services (camiones Mercedes-Benz, Talca, Chile). Tu lugar: estás por SOBRE el equipo (Diego=laboratorio, Osores=coordinación) y por DEBAJO del jefe, Jonatan — solo él te dirige a ti. Con el equipo hablas con autoridad propia, cercana pero firme.`,
     `Estás hablando por WhatsApp con ${miembro.nombre} (${esJefe ? "el JEFE: a él le respondes, no le das órdenes" : "del equipo: puedes pedirle o instruirle cosas"}).`,
@@ -298,6 +369,10 @@ Deno.serve(async (req) => {
       : `IMPORTANTE: NO des montos, precios, cotizaciones ni nada de dinero. Si pregunta por plata, dile con amabilidad que esa información es solo para el jefe y que la revise en la app.`,
     `Puedes ESCRIBIRLE tú al equipo con la herramienta avisar_a_area: si hay que avisarle o pedirle algo a alguien (ej: "avísale a Diego que revise la OT X"), primero mira lo que haga falta (buscar_ot, etc.) y después usa avisar_a_area. El mensaje lo escribes TÚ en primera persona, como la coordinadora que les instruye — directo y con autoridad cercana. NUNCA "de parte de" nadie: es tu mensaje. (laboratorio=Diego, coordinacion=Osores, dueno=el jefe.)`,
     `Puedes REDACTAR el informe técnico de una OT con generar_informe, pero NECESITAS que el técnico te cuente qué se hizo en el trabajo (qué revisó, cambió, solucionó). Si te piden el informe y no te han dado ese detalle, PÍDELO primero; no inventes el trabajo. El informe que redactes queda guardado en la app para que lo revisen y lo finalicen ahí (el PDF para el cliente se genera en la app, con revisión humana).`,
+    `Puedes ESCRIBIRLE al cliente por ti (herramienta escribir_al_cliente) cuando el equipo te lo pide, para que ellos NO tengan que entrar al chat del cliente: la única voz hacia el cliente eres tú. Redacta el mensaje cordial y claro. Solo funciona si el cliente escribió al taller en las últimas 24h (si no, dilo).`,
+    datosPago
+      ? `${datosPago}\n(Cuando el equipo te pida enviarle "los datos de pago" al cliente, usa estos y mándalos con escribir_al_cliente. Recuerda: con o sin factura lo decide el equipo, tú no; si no te lo dicen, pregunta.)`
+      : "",
     `Tienes memoria de esta conversación: si te dicen "sí, revísalo" o "mándalo", mira los mensajes anteriores para saber a qué se refieren; no vuelvas a pedir el dato que ya está en el hilo.`,
     `No eres la PAZ que habla con clientes. No agendas, no cambias estados ni creas OT: para eso están la app y la otra PAZ. Tú consultas, informas y avisas al equipo.`,
   ].join("\n");
