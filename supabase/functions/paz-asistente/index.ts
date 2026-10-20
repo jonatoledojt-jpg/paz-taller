@@ -47,7 +47,7 @@ function herramientas(esJefe: boolean) {
     { name: "pendientes", description: "Lo que está esperando acción ahora: casos de WhatsApp que necesitan respuesta humana, y módulos por recepcionar.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "agenda", description: "Qué hay agendado (visitas a terreno o llegadas de módulo). Por defecto los próximos 7 días.", input_schema: { type: "object", properties: { dias: { type: "integer", description: "días hacia adelante, por defecto 7" } }, additionalProperties: false } },
     { name: "historial_patente", description: "Las últimas OT de una patente.", input_schema: { type: "object", properties: { patente: { type: "string" } }, required: ["patente"], additionalProperties: false } },
-    { name: "avisar_a_area", description: "Le envía un mensaje de WhatsApp al responsable de un área del equipo (laboratorio=Diego, coordinacion=Osores, dueno=el jefe). Úsalo cuando quien te habla te pide avisarle o pedirle algo a otra persona/área (ej: 'avísale a Diego que revise la OT X'). Redacta tú el mensaje, claro y breve, diciendo de parte de quién va.", input_schema: { type: "object", properties: { area: { type: "string", enum: ["laboratorio", "coordinacion", "dueno"] }, mensaje: { type: "string", description: "el mensaje a enviarle, redactado por ti" } }, required: ["area", "mensaje"], additionalProperties: false } },
+    { name: "avisar_a_area", description: "Le escribes TÚ (PAZ) un WhatsApp al responsable de un área del equipo (laboratorio=Diego, coordinacion=Osores, dueno=el jefe). Úsalo cuando haya que pedirle o avisarle algo a alguien del equipo (ej: 'avísale a Diego que revise la OT X'). Redacta el mensaje en PRIMERA PERSONA, como la coordinadora que les pide/instruye: directo, breve, cercano pero con autoridad. NUNCA digas 'de parte de' nadie — el mensaje es tuyo.", input_schema: { type: "object", properties: { area: { type: "string", enum: ["laboratorio", "coordinacion", "dueno"] }, mensaje: { type: "string", description: "el mensaje que TÚ le escribes, en primera persona, sin 'de parte de'" } }, required: ["area", "mensaje"], additionalProperties: false } },
   ];
   if (esJefe) base.push(
     { name: "montos_ot", description: "SOLO JEFE. Los montos (plata) de una OT: cotizado, final cobrado y número de factura.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, cliente o patente" } }, required: ["consulta"], additionalProperties: false } },
@@ -90,8 +90,8 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
       if (!dest) return `No hay nadie activo en el área ${area}.`;
       const abierta = dest.ultimo_inbound_en && (Date.now() - Date.parse(dest.ultimo_inbound_en)) < 24 * 3600 * 1000;
       if (!abierta) return `No le puedo escribir a ${dest.nombre} ahora: su ventana de WhatsApp está cerrada (tiene que escribirle algo a PAZ para abrirla). Avísale por otro medio o inténtalo cuando él escriba.`;
-      if (simular) return `(simulado, no se envió) habría avisado a ${dest.nombre}: ${mensaje}`;
-      const ok = await enviarWA(dest.telefono, `👋 ${dest.nombre}, mensaje de ${solicitante} vía PAZ: ${mensaje}`);
+      if (simular) return `(simulado, no se envió) habría escrito a ${dest.nombre}: ${mensaje}`;
+      const ok = await enviarWA(dest.telefono, mensaje);
       await admin.from("wa_log").insert({
         metodo: "ASISTENTE-AVISO", firma_ok: ok,
         nota: `${solicitante} → ${dest.nombre} (${area})`, cuerpo: mensaje.slice(0, 1000),
@@ -209,15 +209,15 @@ Deno.serve(async (req) => {
   const esJefe = miembro.area === "dueno";
 
   const system = [
-    `Eres PAZ, la asistente del taller Paz Services (camiones Mercedes-Benz, Talca, Chile).`,
-    `Estás hablando por WhatsApp con ${miembro.nombre}, del equipo (${esJefe ? "el JEFE" : "no es el jefe"}).`,
+    `Eres PAZ, la coordinadora del taller Paz Services (camiones Mercedes-Benz, Talca, Chile). Tu lugar: estás por SOBRE el equipo (Diego=laboratorio, Osores=coordinación) y por DEBAJO del jefe, Jonatan — solo él te dirige a ti. Con el equipo hablas con autoridad propia, cercana pero firme.`,
+    `Estás hablando por WhatsApp con ${miembro.nombre} (${esJefe ? "el JEFE: a él le respondes, no le das órdenes" : "del equipo: puedes pedirle o instruirle cosas"}).`,
     `Responde su consulta operativa usando las herramientas para mirar la base (la misma que ve la app): estado de OT, pendientes, agenda, historial de una patente.`,
     `Habla español chileno, directo y BREVE (es WhatsApp): sin rodeos, sin markdown, frases cortas.`,
     `Nunca inventes. Si una herramienta no encuentra nada, dilo claro. Si no entiendes la consulta, pide que la precise.`,
     esJefe
       ? `${miembro.nombre} es el jefe: puedes darle montos y lo facturado del mes con las herramientas de plata.`
       : `IMPORTANTE: NO des montos, precios, cotizaciones ni nada de dinero. Si pregunta por plata, dile con amabilidad que esa información es solo para el jefe y que la revise en la app.`,
-    `Puedes AVISARLE a otra persona del equipo con la herramienta avisar_a_area: si ${miembro.nombre} te pide avisarle o pedirle algo a alguien (ej: "avísale a Diego que revise la OT X"), primero mira lo que haga falta (buscar_ot, etc.) y después usa avisar_a_area para mandarle el mensaje al responsable (laboratorio=Diego, coordinacion=Osores, dueno=el jefe). Redacta el aviso claro y breve.`,
+    `Puedes ESCRIBIRLE tú al equipo con la herramienta avisar_a_area: si hay que avisarle o pedirle algo a alguien (ej: "avísale a Diego que revise la OT X"), primero mira lo que haga falta (buscar_ot, etc.) y después usa avisar_a_area. El mensaje lo escribes TÚ en primera persona, como la coordinadora que les instruye — directo y con autoridad cercana. NUNCA "de parte de" nadie: es tu mensaje. (laboratorio=Diego, coordinacion=Osores, dueno=el jefe.)`,
     `Tienes memoria de esta conversación: si te dicen "sí, revísalo" o "mándalo", mira los mensajes anteriores para saber a qué se refieren; no vuelvas a pedir el dato que ya está en el hilo.`,
     `No eres la PAZ que habla con clientes. No agendas, no cambias estados ni creas OT: para eso están la app y la otra PAZ. Tú consultas, informas y avisas al equipo.`,
   ].join("\n");
