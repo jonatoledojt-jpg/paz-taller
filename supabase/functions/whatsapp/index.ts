@@ -844,6 +844,14 @@ async function procesarMensaje(paz: any, msj: any) {
         await pedirDatoAlEquipo(conversacion_id, casos[casos.length - 1]).catch((e) =>
           console.error("No se pudo pedir el dato al equipo:", e));
       }
+      // Si algún caso necesita a un humano (aprobación/ayuda), avisar al
+      // equipo YA, sin esperar el cron de 15 min — se pide al instante.
+      if (casos.some((c: any) => c?.requiere_humano)) {
+        await fetch(`${URL_SUPABASE}/functions/v1/paz-equipo?a=alertas`, {
+          method: "POST",
+          headers: { "x-paz-key": Deno.env.get("PAZ_EQUIPO_KEY") ?? "" },
+        }).catch((e) => console.error("No se pudo disparar el aviso inmediato:", e));
+      }
     }
   } catch (e) {
     console.error("No se pudieron armar los casos:", e);

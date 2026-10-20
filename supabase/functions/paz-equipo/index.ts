@@ -137,9 +137,22 @@ async function tick() {
     }
   }
 
-  // 3: alertas de casos de producción que necesitan a un humano. PAZ le da la
-  // ORDEN completa ahí en el WhatsApp (cliente, vehículo, qué pasa, dónde, qué
-  // necesita), para que el responsable pueda actuar sin ni abrir la app.
+  // 3: alertas de casos de producción que necesitan a un humano.
+  const alertAcciones = await procesarAlertas(miembros);
+  acciones.push(...alertAcciones);
+
+  return { ok: true, hora_chile: horaCL, fecha_chile: hoyCL, miembros: miembros.length, acciones };
+}
+
+// Avisos al equipo: casos de producción que necesitan a un humano. PAZ le da
+// la ORDEN completa por WhatsApp (cliente, vehículo, qué pasa, dónde, qué
+// necesita) para que actúe sin abrir la app. Se llama en el tick (cada 15 min)
+// Y al instante desde la función whatsapp cuando se levanta una alerta nueva.
+async function procesarAlertas(miembros: any[]): Promise<string[]> {
+  const ahora = Date.now();
+  const abierta = (m: any) => m.ultimo_inbound_en && (ahora - Date.parse(m.ultimo_inbound_en)) < VENTANA_MS;
+  const acciones: string[] = [];
+
   const { data: casos } = await admin.from("casos")
     .select("id,numero_caso,cliente_nombre,patente,vehiculo_modelo,modulo,sistema,atencion,falla_reportada,ubicacion_texto,ubicacion_gps,resumen_tecnico,motivo_alerta,notificado_motivo")
     .eq("modo", "produccion").eq("archivado", false).eq("requiere_respuesta_humana", true);
@@ -168,9 +181,6 @@ async function tick() {
       await admin.from("casos")
         .update({ notificado_equipo_en: new Date().toISOString(), notificado_motivo: c.motivo_alerta })
         .eq("id", c.id);
-      // Se guarda en la memoria del chat de PAZ con esa persona, para que
-      // cuando responda "dile al cliente que..." PAZ sepa de qué cliente/caso
-      // habla. Se agrega una referencia resoluble (cliente/patente/caso).
       const refCliente = c.patente || c.cliente_nombre || c.numero_caso;
       await admin.from("paz_equipo_chat").insert({
         telefono: destino.telefono, rol: "assistant",
@@ -179,16 +189,30 @@ async function tick() {
       acciones.push(`alerta ${c.numero_caso}→${destino.nombre}`);
     }
   }
-
-  return { ok: true, hora_chile: horaCL, fecha_chile: hoyCL, miembros: miembros.length, acciones };
+  return acciones;
 }
 
 Deno.serve(async (req) => {
   if (req.headers.get("x-paz-key") !== Deno.env.get("PAZ_EQUIPO_KEY")) {
     return new Response("no autorizado", { status: 401 });
   }
+  const params = new URL(req.url).searchParams;
+  // ?a=alertas: solo reenvía las alertas pendientes, al instante (lo llama la
+  // función whatsapp apenas se levanta una alerta, sin esperar el cron). NO
+  // hace saludos ni recordatorios.
+  if (params.get("a") === "alertas") {
+    try {
+      const { data: equipo } = await admin.from("paz_equipo")
+        .select("id,telefono,nombre,area,ultimo_inbound_en").eq("activo", true);
+      const acciones = await procesarAlertas(equipo ?? []);
+      return Response.json({ ok: true, acciones });
+    } catch (e) {
+      console.error("paz-equipo alertas error:", e);
+      return Response.json({ ok: false, error: String(e) }, { status: 500 });
+    }
+  }
   // ?dry=1 calcula sin enviar nada (para probar sin molestar al equipo).
-  const dry = new URL(req.url).searchParams.get("dry") === "1";
+  const dry = params.get("dry") === "1";
   if (dry) {
     const ahora = Date.now();
     const { data: equipo } = await admin.from("paz_equipo")
