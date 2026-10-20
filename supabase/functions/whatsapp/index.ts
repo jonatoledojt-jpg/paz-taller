@@ -744,6 +744,28 @@ async function sincronizarCasos(paz: any, conversacion_id: number, telefono: str
   });
 }
 
+// ECHO (Coexistencia): cuando el equipo le escribe al cliente DESDE el
+// WhatsApp Business del teléfono, Meta nos reenvía ese mensaje saliente
+// (un "echo"). Lo guardamos en la conversación como mensaje del equipo, para
+// que PAZ vea lo que ustedes mandaron a mano y no se cruce ni repita. Va
+// marcado en el texto y como assistant/humano_asistido. El wa_id (único)
+// evita guardarlo dos veces si Meta lo reintenta.
+async function procesarEcho(paz: any, echo: any) {
+  const to = String(echo?.to ?? echo?.recipient_id ?? "").trim();
+  if (!to) return;
+  let contenido = "";
+  if (echo?.type === "text") contenido = String(echo?.text?.body ?? "").trim();
+  else if (echo?.type) contenido = `[el equipo envió ${echo.type} desde el teléfono]`;
+  if (!contenido) return;
+  const conversacion_id = await conversacionDe(paz, to);
+  const { error } = await paz.rpc("paz_guardar_mensaje", {
+    p_conversacion_id: conversacion_id, p_rol: "assistant",
+    p_contenido: `[enviado por el equipo desde el teléfono] ${contenido}`,
+    p_wa_id: echo?.id ?? null, p_humano_asistido: true,
+  });
+  if (error) console.error("No se pudo guardar el echo:", error);
+}
+
 Deno.serve(async (req) => {
   const url = new URL(req.url);
 
@@ -797,17 +819,31 @@ Deno.serve(async (req) => {
   try { datos = JSON.parse(cuerpo); } catch { return new Response("ok", { status: 200 }); }
 
   const mensajes: any[] = [];
+  const echoes: any[] = [];
   for (const entrada of datos?.entry ?? []) {
     for (const cambio of entrada?.changes ?? []) {
       // value.statuses son acuses de entrega; no interesan.
       for (const m of cambio?.value?.messages ?? []) mensajes.push(m);
+      // Coexistencia: mensajes que el equipo mandó desde el teléfono.
+      for (const e of cambio?.value?.message_echoes ?? []) echoes.push(e);
+      // Instrumentación: si llega un `value` con llaves que no conocemos
+      // (ej. otro nombre para los echoes), lo anotamos para verlo en wa_log.
+      const v = cambio?.value ?? {};
+      const extra = Object.keys(v).filter((k) =>
+        !["messaging_product", "metadata", "contacts", "messages", "statuses", "message_echoes"].includes(k));
+      if (extra.length) {
+        admin.from("wa_log").insert({
+          metodo: "WEBHOOK-KEYS", firma_ok: true,
+          nota: `value trae: ${extra.join(", ")}`, cuerpo: JSON.stringify(v).slice(0, 3500),
+        }).then(() => {}, () => {});
+      }
     }
   }
 
   // Meta reintenta si no le respondemos rápido, y la IA se demora varios
   // segundos. Se le contesta al tiro y el trabajo sigue por detrás.
   const trabajo = (async () => {
-    if (!mensajes.length) return;
+    if (!mensajes.length && !echoes.length) return;
     let paz;
     try {
       paz = await iniciarSesionPaz();
@@ -826,9 +862,12 @@ Deno.serve(async (req) => {
     // 26-09). En paralelo, los dos se insertan casi al tiempo antes de que
     // cualquiera termine su espera, y el debounce deja responder solo al mas
     // nuevo (el resto se retira al ver uno con creado_en mayor).
-    await Promise.all(mensajes.map((m) =>
-      procesarMensaje(paz, m).catch((e) => console.error("Error procesando:", e))
-    ));
+    await Promise.all([
+      ...mensajes.map((m) =>
+        procesarMensaje(paz, m).catch((e) => console.error("Error procesando:", e))),
+      ...echoes.map((e) =>
+        procesarEcho(paz, e).catch((err) => console.error("Error con echo:", err))),
+    ]);
   })();
   // @ts-ignore: lo provee el runtime de Supabase
   if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(trabajo);
