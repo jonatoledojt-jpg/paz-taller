@@ -43,6 +43,7 @@ const limpiar = (s: string) => String(s ?? "").replace(/[(),]/g, " ").trim();
 function herramientas(esJefe: boolean) {
   const base = [
     { name: "buscar_ot", description: "Busca órdenes de trabajo (OT) y clientes por número de OT, nombre de cliente, patente o TELÉFONO del cliente. Sirve para '¿ves a este cliente?' o '¿de quién es este número?': devuelve los clientes que calzan (aunque no tengan OT) y, si hay, sus OT con estado, ubicación física, si está cobrada, patente y vehículo.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, nombre de cliente, patente o teléfono" } }, required: ["consulta"], additionalProperties: false } },
+    { name: "ver_conversacion_cliente", description: "Muestra los últimos mensajes de la conversación de WhatsApp con un cliente: lo que el cliente escribió y lo que YA se le respondió o envió (por PAZ o por el equipo). Úsalo ANTES de escribirle para no repetir, y cuando te pregunten qué se le dijo al cliente. Por OT, cliente, patente o teléfono.", input_schema: { type: "object", properties: { destino: { type: "string", description: "OT, cliente, patente o teléfono del cliente" } }, required: ["destino"], additionalProperties: false } },
     { name: "pendientes", description: "Lo que está esperando acción ahora: casos de WhatsApp que necesitan respuesta humana, y módulos por recepcionar.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "agenda", description: "Qué hay agendado (visitas a terreno o llegadas de módulo). Por defecto los próximos 7 días.", input_schema: { type: "object", properties: { dias: { type: "integer", description: "días hacia adelante, por defecto 7" } }, additionalProperties: false } },
     { name: "historial_patente", description: "Las últimas OT de una patente.", input_schema: { type: "object", properties: { patente: { type: "string" } }, required: ["patente"], additionalProperties: false } },
@@ -249,6 +250,19 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
       }).then(() => {}, () => {});
       return ok ? "Listo, le envié el mensaje al cliente." : "No pude enviarle el mensaje al cliente (error de WhatsApp).";
     }
+    if (nombre === "ver_conversacion_cliente") {
+      const { telefono, conversacion_id } = await destinoCliente(String(input?.destino ?? ""));
+      if (!conversacion_id) return "No encuentro una conversación de WhatsApp con ese cliente.";
+      const { data: msgs } = await admin.from("nexa_mensajes")
+        .select("rol,contenido,humano_asistido,creado_en")
+        .eq("conversacion_id", conversacion_id).order("creado_en", { ascending: false }).limit(15);
+      const orden = (msgs ?? []).reverse().map((m: any) => ({
+        de: m.rol === "user" ? "cliente" : (m.humano_asistido ? "equipo (vía PAZ)" : "PAZ automática"),
+        texto: String(m.contenido || "").slice(0, 300),
+        cuando: m.creado_en,
+      }));
+      return JSON.stringify({ telefono, mensajes: orden });
+    }
     if (nombre === "buscar_ot") {
       const q = input?.consulta ?? "";
       const [ots, cls, wa] = await Promise.all([
@@ -383,7 +397,7 @@ Deno.serve(async (req) => {
       : `IMPORTANTE: NO des montos, precios, cotizaciones ni nada de dinero. Si pregunta por plata, dile con amabilidad que esa información es solo para el jefe y que la revise en la app.`,
     `Puedes ESCRIBIRLE tú al equipo con la herramienta avisar_a_area: si hay que avisarle o pedirle algo a alguien (ej: "avísale a Diego que revise la OT X"), primero mira lo que haga falta (buscar_ot, etc.) y después usa avisar_a_area. El mensaje lo escribes TÚ en primera persona, como la coordinadora que les instruye — directo y con autoridad cercana. NUNCA "de parte de" nadie: es tu mensaje. (laboratorio=Diego, coordinacion=Osores, dueno=el jefe.)`,
     `Puedes REDACTAR el informe técnico de una OT con generar_informe, pero NECESITAS que el técnico te cuente qué se hizo en el trabajo (qué revisó, cambió, solucionó). Si te piden el informe y no te han dado ese detalle, PÍDELO primero; no inventes el trabajo. El informe que redactes queda guardado en la app para que lo revisen y lo finalicen ahí (el PDF para el cliente se genera en la app, con revisión humana).`,
-    `Puedes ESCRIBIRLE al cliente por ti (herramienta escribir_al_cliente) cuando el equipo te lo pide, para que ellos NO tengan que entrar al chat del cliente: la única voz hacia el cliente eres tú. Redacta el mensaje cordial y claro. Solo funciona si el cliente escribió al taller en las últimas 24h (si no, dilo). CUANDO EL TOOL TE DIGA "Listo, le envié", YA SE ENVIÓ DE VERDAD: confía en eso, no lo mandes otra vez aunque dudes o te reconfirmen. Si el tool te avisa que ya le escribiste hace poco, NO reenvíes: avísale al equipo y reenvía (forzar) solo si te lo confirman explícito. Nunca le mandes dos mensajes casi iguales al cliente.`,
+    `Puedes ESCRIBIRLE al cliente por ti (herramienta escribir_al_cliente) cuando el equipo te lo pide, para que ellos NO tengan que entrar al chat del cliente: la única voz hacia el cliente eres tú. Redacta el mensaje cordial y claro. Solo funciona si el cliente escribió al taller en las últimas 24h (si no, dilo). CUANDO EL TOOL TE DIGA "Listo, le envié", YA SE ENVIÓ DE VERDAD: confía en eso, no lo mandes otra vez aunque dudes o te reconfirmen. Si el tool te avisa que ya le escribiste hace poco, NO reenvíes: avísale al equipo y reenvía (forzar) solo si te lo confirman explícito. Nunca le mandes dos mensajes casi iguales al cliente. Cuando dudes si ya se le escribió algo al cliente, o te pregunten qué se le dijo, usa ver_conversacion_cliente para MIRAR la conversación real (ahí ves lo que el cliente escribió y lo que ya se le mandó) en vez de adivinar o dudar.`,
     datosPago
       ? `${datosPago}\n(Cuando el equipo te pida enviarle "los datos de pago" al cliente, usa estos y mándalos con escribir_al_cliente. Con o sin factura lo decide el EQUIPO, no tú y NUNCA el cliente: si no te lo dijeron, pregúntaselo A QUIEN TE ESTÁ ESCRIBIENDO (el equipo) en ESTE chat, jamás al cliente. Al cliente mándale solo los datos ya elegidos, cordial, SIN preguntarle nada de factura ni mencionarle que había opciones.)`
       : "",
