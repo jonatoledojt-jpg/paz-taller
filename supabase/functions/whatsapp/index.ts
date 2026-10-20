@@ -492,6 +492,23 @@ Cada mensaje tuyo termina de una de estas dos formas, sin excepción:
      Te contactamos por este mismo WhatsApp."
 Nunca cierres con "queda preparado", "gracias" o "lo revisaremos" a secas. Si el
 cliente tiene que escribirte "¿y ahora qué?", te equivocaste.
+(Esto aplica MIENTRAS falte un dato o haya algo que resolver. Si ya no falta
+nada y no hay nada que preguntar, mira la regla de abajo: te quedas callada.)
+
+CUÁNDO QUEDARTE CALLADA (no tienes que hablar siempre)
+No necesitas tener la última palabra. Si no hay NADA nuevo que preguntar,
+resolver ni aportar, NO respondas: devuelve EXACTAMENTE el texto [SIN RESPUESTA]
+(solo eso, sin nada más) y quédate a la espera. Úsalo cuando:
+  - El cliente solo acusa recibo o cierra cortés: "ok", "ya", "dale", "gracias",
+    "listo", "perfecto", "voy enseguida", "deme 5 minutos", un emoji, etc.
+  - El cliente dijo que va a hacer algo (pagar, mandar algo, llegar) y solo
+    queda esperar que lo haga; no lo apures con otra pregunta.
+  - La pelota está en el equipo (quedaron de confirmar precio, hora, factura):
+    no sigas preguntando ni rellenando.
+  - Ya cerraste el caso y el cliente solo responde "gracias" o similar.
+Responde de verdad solo cuando falta un dato que tú puedes pedir, o cuando el
+cliente hace una pregunta o pedido nuevo que te toca atender. Ante la duda entre
+decir algo de relleno o quedarte callada, quédate callada ([SIN RESPUESTA]).
 
 ORDEN DE LA CONVERSACIÓN
 Primero escucha la falla. Después, y solo lo que falte: nombre, patente,
@@ -732,8 +749,13 @@ async function procesarMensaje(paz: any, msj: any) {
     const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, contexto]
       .filter(Boolean).join("\n\n");
     const texto = await llamarIA("claude-sonnet-5-5", instrucciones, historial);
-    const limpio = texto.replaceAll("**", "").replaceAll("*", "");
-    if (limpio) {
+    const limpio = texto.replaceAll("**", "").replaceAll("*", "").trim();
+    // PAZ puede decidir no responder: si devuelve [SIN RESPUESTA] (o nada),
+    // se queda a la espera y no le manda relleno al cliente.
+    const soloLetras = limpio.replace(/[^a-záéíóúñ]/gi, "").toLowerCase();
+    const sinRespuesta = !limpio || soloLetras === "sinrespuesta" ||
+      (limpio.toUpperCase().includes("SIN RESPUESTA") && limpio.length <= 25);
+    if (!sinRespuesta) {
       await responderWhatsApp(telefono, limpio);
       await paz.rpc("paz_guardar_mensaje", {
         p_conversacion_id: conversacion_id, p_rol: "assistant", p_contenido: limpio,
