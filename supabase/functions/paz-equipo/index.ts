@@ -72,19 +72,20 @@ function chile(d = new Date()) {
 
 // A quién le toca una alerta. Prioridad: plata/factura/personal es del
 // jefe aunque sea de un módulo; luego módulo/laboratorio; luego agenda.
+// El aviso va DIRECTO al que corresponde, según lo que el cliente necesita:
+//   VISITA / coordinación (día, ir a verlo, agendar, sábado) -> Osores
+//   MÓDULO / reparación (estado, listo, banco)               -> Diego
+//   FACTURA / plata (factura, precio, pago, transferencia)   -> el jefe
+// Se mira primero la visita (una visita a terreno que de paso menciona el
+// precio igual es de Osores), luego el módulo, luego la plata.
 function rutear(c: any): string {
   const m = (c.motivo_alerta || "").toLowerCase();
-  // Coordinar una visita/día (agenda) es de Osores, AUNQUE se mencione el
-  // precio: un pre-compra en terreno que hay que agendar el sábado va a
-  // coordinación, no al dueño por nombrar "valor".
-  const esCoordinacion = /agend|visit|coordin|cu[aá]ndo|qu[eé] d[ií]a|s[aá]bado|domingo|fin de semana|disponib|pasar|ir a|hora para|turno|ruta/.test(m)
-    || (c.atencion === "terreno" && /d[ií]a|hora|cu[aá]ndo|fecha/.test(m));
-  if (esCoordinacion) return "coordinacion";
-  // Plata pura (sin coordinación de visita) la ve el jefe.
-  if (/factura|boleta|pago|transfer|precio|valor|cuesta|cuá?nto|cobr|dinero|plata/.test(m)) return "dueno";
-  // Módulo / banco -> laboratorio.
-  if (c.modulo || /m[oó]dulo|recep|banco|reparad|repar|placa/.test(m)) return "laboratorio";
-  // Cualquier otra cosa de terreno -> coordinación.
+  const esVisita = /visit|ir a ver|pasan a|a terreno|qu[eé] d[ií]a|cu[aá]ndo (van|vienen|pueden ir|pasan|ir[aá]n)|agend|coordin.*(visit|d[ií]a|hora)|disponib|s[aá]bado|domingo|fin de semana|turno|ruta/.test(m);
+  const esModulo = !!c.modulo || /m[oó]dulo|reparaci|est[aá] listo|lo tienen listo|banco|placa|recep/.test(m);
+  const esPlata = /factura|boleta|pago|transfer|precio|valor|cuesta|cu[aá]nto cuesta|cobr|dinero|plata/.test(m);
+  if (esVisita) return "coordinacion";
+  if (esModulo) return "laboratorio";
+  if (esPlata) return "dueno";
   if (c.atencion === "terreno") return "coordinacion";
   return "dueno";
 }
@@ -141,7 +142,63 @@ async function tick() {
   const alertAcciones = await procesarAlertas(miembros);
   acciones.push(...alertAcciones);
 
+  // 4: si Diego u Osores no atendieron un aviso en un rato, se lo escala al jefe.
+  const escAcciones = await escalarSinAtender(miembros);
+  acciones.push(...escAcciones);
+
   return { ok: true, hora_chile: horaCL, fecha_chile: hoyCL, miembros: miembros.length, acciones };
+}
+
+// Escalada: cuando PAZ avisó a Diego u Osores de un caso y pasó un rato
+// (~45 min) sin que nadie lo tomara —ni contactó al cliente del teléfono ni le
+// respondió a PAZ— le avisa al JEFE para que intervenga y vea por qué no
+// responden. Una sola escalada por caso.
+const ESCALA_MS = 45 * 60 * 1000;
+async function escalarSinAtender(miembros: any[]): Promise<string[]> {
+  const ahora = Date.now();
+  const acciones: string[] = [];
+  const jefe = miembros.find((m) => m.area === "dueno");
+  if (!jefe || !(jefe.ultimo_inbound_en && (ahora - Date.parse(jefe.ultimo_inbound_en)) < VENTANA_MS)) return acciones;
+
+  const limite = new Date(ahora - ESCALA_MS).toISOString();
+  const { data: casos } = await admin.from("casos")
+    .select("id,numero_caso,cliente_nombre,patente,vehiculo_modelo,modulo,atencion,motivo_alerta,conversacion_id,notificado_equipo_en")
+    .eq("modo", "produccion").eq("archivado", false).eq("requiere_respuesta_humana", true)
+    .not("notificado_equipo_en", "is", null).lt("notificado_equipo_en", limite);
+
+  for (const c of casos ?? []) {
+    const area = rutear(c);
+    if (area === "dueno") continue; // ya le tocaba al jefe: no hay a quién escalar
+    const { data: yaEsc } = await admin.from("wa_log").select("id")
+      .eq("metodo", "PAZ-ESCALA").ilike("nota", `conv ${c.conversacion_id}:%`).limit(1).maybeSingle();
+    if (yaEsc) continue; // ya se escaló este caso
+
+    const desde = c.notificado_equipo_en;
+    // ¿el asignado ya actuó? (contactó al cliente desde el teléfono, o le respondió a PAZ)
+    const { data: echo } = await admin.from("nexa_mensajes").select("id")
+      .eq("conversacion_id", c.conversacion_id).eq("rol", "assistant").eq("humano_asistido", true)
+      .ilike("contenido", "%el equipo desde%").gte("creado_en", desde).limit(1).maybeSingle();
+    const asignado = miembros.find((m) => m.area === area);
+    let respondio = null;
+    if (asignado) {
+      const r = await admin.from("paz_equipo_chat").select("id")
+        .eq("telefono", asignado.telefono).eq("rol", "user").gte("creado_en", desde).limit(1).maybeSingle();
+      respondio = r.data;
+    }
+    if (echo || respondio) continue; // alguien está en ello
+
+    const mins = Math.round((ahora - Date.parse(desde)) / 60000);
+    const quien = asignado ? (String(asignado.nombre).split(" ")[0] || asignado.nombre) : area;
+    const txt = `⚠️ Le avisé a ${quien} hace ~${mins} min sobre ${c.cliente_nombre || "un cliente"}${c.patente ? ` (${c.patente})` : ""} y sigue sin atenderse (${c.numero_caso}: ${c.motivo_alerta}). Quizás no lo vio. ¿Lo revisas o lo empujas?`;
+    if (await enviarWA(jefe.telefono, txt)) {
+      await admin.from("wa_log").insert({
+        metodo: "PAZ-ESCALA", firma_ok: true,
+        nota: `conv ${c.conversacion_id}: escalado al jefe (${quien} sin atender)`.slice(0, 500), cuerpo: "",
+      }).then(() => {}, () => {});
+      acciones.push(`escala ${c.numero_caso}→jefe`);
+    }
+  }
+  return acciones;
 }
 
 // Avisos al equipo: casos de producción que necesitan a un humano. PAZ le da
