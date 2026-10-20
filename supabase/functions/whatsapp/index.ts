@@ -47,6 +47,16 @@ const GRAPH        = "https://graph.facebook.com/v21.0";
 // número no pueden costarnos la cuota de la IA.
 const TOPE_POR_HORA = 30;
 
+// Pausa (debounce) antes de contestar: PAZ espera a que el cliente termine
+// su ráfaga de mensajes antes de responder. Varias vueltas porque un audio
+// o una foto tardan en bajarse e insertarse. Subido a ~12s (20-10-2026, a
+// pedido de Jonatan: PAZ se apuraba y contestaba a mitad de la ráfaga). Si
+// durante la espera llega un mensaje más nuevo, este se retira y contesta
+// el más nuevo por todos. No afecta a Meta: ya le respondimos 200 y el
+// trabajo sigue por detrás.
+const DEBOUNCE_VUELTAS = 3;
+const DEBOUNCE_MS = 4000;
+
 const admin = createClient(URL_SUPABASE, SERVICE);
 
 // Sesión de PAZ, una por invocación del webhook (no por mensaje: un
@@ -653,7 +663,7 @@ async function procesarMensaje(paz: any, msj: any) {
     }
   }
 
-  // Pausa antes de contestar, en dos pasadas de 2.5s. Sin esto, cuando el
+  // Pausa antes de contestar, en varias pasadas (ver DEBOUNCE_*). Sin esto, cuando el
   // cliente manda varios mensajes seguidos (pasó de verdad: "Cuáles son
   // las que te envié" y "?" tres segundos después), cada uno dispara su
   // propia llamada a la IA y su propio envío por WhatsApp — el cliente
@@ -668,8 +678,8 @@ async function procesarMensaje(paz: any, msj: any) {
   // tiempo (una ubicación, por ejemplo). Pasó de verdad: un audio seguido
   // de una ubicación generó dos respuestas porque la ubicación se insertó
   // 4.2s después del audio — fuera de una sola ventana de 2.5s.
-  for (let vuelta = 0; vuelta < 2; vuelta++) {
-    await new Promise((r) => setTimeout(r, 2500));
+  for (let vuelta = 0; vuelta < DEBOUNCE_VUELTAS; vuelta++) {
+    await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
     const { data: masReciente } = await paz.from("nexa_mensajes")
       .select("creado_en").eq("conversacion_id", conversacion_id).eq("rol", "user")
       .order("creado_en", { ascending: false }).limit(1).maybeSingle();
