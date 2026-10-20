@@ -168,6 +168,14 @@ async function tick() {
       await admin.from("casos")
         .update({ notificado_equipo_en: new Date().toISOString(), notificado_motivo: c.motivo_alerta })
         .eq("id", c.id);
+      // Se guarda en la memoria del chat de PAZ con esa persona, para que
+      // cuando responda "dile al cliente que..." PAZ sepa de qué cliente/caso
+      // habla. Se agrega una referencia resoluble (cliente/patente/caso).
+      const refCliente = c.patente || c.cliente_nombre || c.numero_caso;
+      await admin.from("paz_equipo_chat").insert({
+        telefono: destino.telefono, rol: "assistant",
+        contenido: `${txt}\n[si me respondes "dile al cliente ..." es sobre este caso: ${c.cliente_nombre || "cliente"} ${c.patente ? `patente ${c.patente}` : ""} (${c.numero_caso}); para escribirle usa destino "${refCliente}".]`,
+      }).then(() => {}, () => {});
       acciones.push(`alerta ${c.numero_caso}→${destino.nombre}`);
     }
   }
