@@ -255,7 +255,7 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
       if (!conversacion_id) return "No encuentro una conversación de WhatsApp con ese cliente.";
       const { data: msgs } = await admin.from("nexa_mensajes")
         .select("rol,contenido,humano_asistido,creado_en")
-        .eq("conversacion_id", conversacion_id).order("creado_en", { ascending: false }).limit(15);
+        .eq("conversacion_id", conversacion_id).order("creado_en", { ascending: false }).limit(40);
       const orden = (msgs ?? []).reverse().map((m: any) => ({
         de: m.rol === "user" ? "cliente" : (m.humano_asistido ? "equipo (vía PAZ)" : "PAZ automática"),
         texto: String(m.contenido || "").slice(0, 300),
