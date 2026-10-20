@@ -137,9 +137,11 @@ async function tick() {
     }
   }
 
-  // 3: alertas de casos de producción que necesitan a un humano.
+  // 3: alertas de casos de producción que necesitan a un humano. PAZ le da la
+  // ORDEN completa ahí en el WhatsApp (cliente, vehículo, qué pasa, dónde, qué
+  // necesita), para que el responsable pueda actuar sin ni abrir la app.
   const { data: casos } = await admin.from("casos")
-    .select("id,numero_caso,cliente_nombre,patente,vehiculo_modelo,modulo,sistema,atencion,motivo_alerta,notificado_motivo")
+    .select("id,numero_caso,cliente_nombre,patente,vehiculo_modelo,modulo,sistema,atencion,falla_reportada,ubicacion_texto,ubicacion_gps,resumen_tecnico,motivo_alerta,notificado_motivo")
     .eq("modo", "produccion").eq("archivado", false).eq("requiere_respuesta_humana", true);
 
   for (const c of casos ?? []) {
@@ -150,8 +152,18 @@ async function tick() {
       ?? miembros.find((m) => m.area === "dueno");
     if (!destino) continue;
     if (!abierta(destino)) continue; // sin ventana no se puede avisar; se reintenta al próximo tick cuando abra
-    const ref = c.patente || c.vehiculo_modelo || "";
-    const txt = `👋 PAZ te necesita. ${c.cliente_nombre || "Un cliente"}${ref ? ` (${ref})` : ""}: ${c.motivo_alerta} — revisa la app para responder (${c.numero_caso}).`;
+    const nombre = String(destino.nombre || "").split(" ")[0] || destino.nombre;
+    const veh = [c.vehiculo_modelo, c.patente].filter(Boolean).join(" ");
+    const falla = c.falla_reportada || c.sistema || c.modulo || "";
+    const ubic = c.ubicacion_texto || (c.ubicacion_gps ? "compartió ubicación por WhatsApp" : "");
+    const txt = [
+      `👋 ${nombre}, te paso este cliente para que lo tomes:`,
+      `• Cliente: ${c.cliente_nombre || "sin nombre"}${veh ? ` — ${veh}` : ""}`,
+      falla ? `• Qué pasa: ${falla}` : "",
+      ubic ? `• Dónde: ${ubic}` : "",
+      `• Lo que necesita: ${c.motivo_alerta}`,
+      `(${c.numero_caso} — el detalle completo está en la app si lo necesitas.)`,
+    ].filter(Boolean).join("\n");
     if (await enviarWA(destino.telefono, txt)) {
       await admin.from("casos")
         .update({ notificado_equipo_en: new Date().toISOString(), notificado_motivo: c.motivo_alerta })
