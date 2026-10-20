@@ -451,6 +451,26 @@ async function procesarMensaje(paz: any, msj: any) {
   const telefono = String(msj.from ?? "").trim();
   if (!telefono) return;
 
+  // ¿Es un miembro del equipo (Jonatan, Diego, Osores), no un cliente?
+  // PAZ NO los trata como clientes: no les abre caso ni les responde como
+  // clienta. Su mensaje solo sirve para renovar su ventana de 24h (así PAZ
+  // les puede escribir los saludos y las alertas). El saludo matutino, el
+  // cuida-ventana y el reenvío de alertas los maneja la función aparte
+  // `paz-equipo` (por cron), no esta. Ver 44-paz-equipo.sql. Se usa `admin`
+  // porque paz_equipo no está abierta a escritura para el rol agente.
+  const { data: miembro } = await admin.from("paz_equipo")
+    .select("id").eq("telefono", telefono).eq("activo", true).maybeSingle();
+  if (miembro) {
+    await admin.from("paz_equipo")
+      .update({ ultimo_inbound_en: new Date().toISOString() })
+      .eq("id", miembro.id);
+    await admin.from("wa_log").insert({
+      metodo: "EQUIPO", firma_ok: true,
+      nota: `mensaje del equipo (${telefono}) — ventana renovada`, cuerpo: "",
+    }).then(() => {}, () => {});
+    return;
+  }
+
   const conversacion_id = await conversacionDe(paz, telefono);
 
   // Tope por hora. Se cuenta antes de guardar y antes de llamar a la IA.
