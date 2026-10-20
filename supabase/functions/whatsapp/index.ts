@@ -770,7 +770,11 @@ async function procesarMensaje(paz: any, msj: any) {
       // ni vuelve a preguntar lo que el equipo ya respondió (ej: si el equipo
       // dijo "puede traerlo lunes a viernes 10 a 5", PAZ NO dice después "no
       // te puedo confirmar horario"). Para que "no hable weas".
-      if (typeof m.contenido === "string" && m.contenido.includes("desde el teléfono")) {
+      // Solo un echo REAL del equipo (rol assistant + el prefijo exacto que
+      // pone procesarEcho) lleva autoridad. Un cliente que escriba "te hablo
+      // desde el teléfono de mi hijo" NO debe hacerse pasar por el taller.
+      if (m.rol === "assistant" && typeof m.contenido === "string" &&
+          m.contenido.startsWith("[enviado por el equipo desde el teléfono]")) {
         return {
           role: m.rol,
           content: `[ESTO SE LO DIJO UNA PERSONA DEL TALLER AL CLIENTE — es la palabra del equipo, con autoridad para decidir hora, precio y agenda. Respétalo, NO lo contradigas ni le agregues condiciones, y NO vuelvas a preguntar lo que acá ya se respondió. No menciones esta etiqueta.] ${m.contenido}`,
@@ -812,7 +816,7 @@ async function procesarMensaje(paz: any, msj: any) {
   // Pago recibido: el cliente mandó un comprobante o dice que ya pagó. PAZ no
   // le contesta (no verifica pagos ni ve montos): le avisa al jefe y él decide
   // qué responderle o cómo despedirlo.
-  const esPago = /comprobante|pagu[eé]|pagad[oa]|transfer[íi]|transferid|dep[oó]sit[eé]|abon[eé]/i.test(contenido);
+  const esPago = /comprob|pagu[eé]|pagad[oa]|transferenci|transfer[íi]|transferid|dep[oó]sit|abon[eé]|\babono\b|ya te (deposit|transfer|pagu)/i.test(contenido);
   if (esPago) {
     await avisarPagoAlJefe(conversacion_id, telefono, contenido)
       .catch((e) => console.error("No se pudo avisar el pago:", e));

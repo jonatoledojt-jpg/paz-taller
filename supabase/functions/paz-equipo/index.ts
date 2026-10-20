@@ -84,8 +84,8 @@ function rutear(c: any): string {
   const esModulo = !!c.modulo || /m[oó]dulo|reparaci|est[aá] listo|lo tienen listo|banco|placa|recep/.test(m);
   const esPlata = /factura|boleta|pago|transfer|precio|valor|cuesta|cu[aá]nto cuesta|cobr|dinero|plata/.test(m);
   if (esVisita) return "coordinacion";
+  if (esPlata) return "dueno";   // plata/factura gana al módulo (el precio es del jefe)
   if (esModulo) return "laboratorio";
-  if (esPlata) return "dueno";
   if (c.atencion === "terreno") return "coordinacion";
   return "dueno";
 }
@@ -210,8 +210,13 @@ async function escalarSinAtender(miembros: any[]): Promise<string[]> {
       `• Lo que necesita: ${c.motivo_alerta}`,
       `(${c.numero_caso} — detalle en la app.)`,
     ].filter(Boolean).join("\n");
+    // Claim atómico del salto (por si dos ticks del cron se solapan): solo uno
+    // avanza escala_area; el otro ve que ya cambió y no reescala.
+    const { data: salto } = await admin.rpc("paz_claim_escala", {
+      p_id: c.id, p_desde: c.escala_area, p_next: siguiente.area,
+    });
+    if (!salto) continue;
     if (await enviarWA(destino.telefono, txt)) {
-      await admin.from("casos").update({ escala_area: siguiente.area, escala_en: new Date().toISOString() }).eq("id", c.id);
       const refCliente = c.patente || c.cliente_nombre || c.numero_caso;
       await admin.from("paz_equipo_chat").insert({
         telefono: destino.telefono, rol: "assistant",
@@ -222,6 +227,9 @@ async function escalarSinAtender(miembros: any[]): Promise<string[]> {
         nota: `conv ${c.conversacion_id}: ${quienAntes}→${nombre} (${cadena[idx].min}min sin tomar)`.slice(0, 500), cuerpo: "",
       }).then(() => {}, () => {});
       acciones.push(`escala ${c.numero_caso}: ${c.escala_area}→${siguiente.area}`);
+    } else {
+      // no salió el WhatsApp: revertir el salto para reintentar al próximo tick
+      await admin.rpc("paz_unclaim_escala", { p_id: c.id, p_desde: c.escala_area, p_desde_en: c.escala_en });
     }
   }
   return acciones;
@@ -260,20 +268,24 @@ async function procesarAlertas(miembros: any[]): Promise<string[]> {
       `• Lo que necesita: ${c.motivo_alerta}`,
       `(${c.numero_caso} — el detalle completo está en la app si lo necesitas.)`,
     ].filter(Boolean).join("\n");
+    // Claim atómico: entre la alerta inmediata (whatsapp) y el cron (rondas),
+    // solo UNO gana el derecho a avisar este motivo, así el equipo no recibe el
+    // mismo aviso dos veces. escala_area queda con el área que DE VERDAD recibe
+    // (destino.area), no la ruteada, para que la escalada sea correcta (#3).
+    const { data: ganado } = await admin.rpc("paz_claim_alerta", {
+      p_id: c.id, p_motivo: c.motivo_alerta, p_area: destino.area,
+    });
+    if (!ganado) continue; // otro proceso ya lo tomó en esta misma ventana
     if (await enviarWA(destino.telefono, txt)) {
-      const ahoraISO = new Date().toISOString();
-      await admin.from("casos")
-        .update({
-          notificado_equipo_en: ahoraISO, notificado_motivo: c.motivo_alerta,
-          escala_area: area, escala_en: ahoraISO,   // arranca la cadena de escalada acá
-        })
-        .eq("id", c.id);
       const refCliente = c.patente || c.cliente_nombre || c.numero_caso;
       await admin.from("paz_equipo_chat").insert({
         telefono: destino.telefono, rol: "assistant",
         contenido: `${txt}\n[si me respondes "dile al cliente ..." es sobre este caso: ${c.cliente_nombre || "cliente"} ${c.patente ? `patente ${c.patente}` : ""} (${c.numero_caso}); para escribirle usa destino "${refCliente}".]`,
       }).then(() => {}, () => {});
       acciones.push(`alerta ${c.numero_caso}→${destino.nombre}`);
+    } else {
+      // el WhatsApp no salió: soltar el claim para reintentar al próximo tick
+      await admin.rpc("paz_unclaim_alerta", { p_id: c.id });
     }
   }
   return acciones;
