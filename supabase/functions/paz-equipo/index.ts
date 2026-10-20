@@ -197,8 +197,8 @@ async function escalarSinAtender(miembros: any[]): Promise<string[]> {
     const siguiente = cadena[idx + 1];
     const destino = miembros.find((m) => m.area === siguiente.area);
     if (!destino || !abierta(destino)) continue; // sin ventana: se reintenta al próximo tick
-    const nombre = String(destino.nombre || "").split(" ")[0] || destino.nombre;
-    const quienAntes = actual ? (String(actual.nombre).split(" ")[0] || actual.nombre) : c.escala_area;
+    const nombre = destino.area === "dueno" ? "jefe" : (String(destino.nombre || "").split(" ")[0] || destino.nombre);
+    const quienAntes = actual ? (actual.area === "dueno" ? "el jefe" : (String(actual.nombre).split(" ")[0] || actual.nombre)) : c.escala_area;
     const veh = [c.vehiculo_modelo, c.patente].filter(Boolean).join(" ");
     const falla = c.falla_reportada || c.sistema || c.modulo || "";
     const ubic = c.ubicacion_texto || (c.ubicacion_gps ? "compartió ubicación por WhatsApp" : "");
@@ -248,7 +248,7 @@ async function procesarAlertas(miembros: any[]): Promise<string[]> {
       ?? miembros.find((m) => m.area === "dueno");
     if (!destino) continue;
     if (!abierta(destino)) continue; // sin ventana no se puede avisar; se reintenta al próximo tick cuando abra
-    const nombre = String(destino.nombre || "").split(" ")[0] || destino.nombre;
+    const nombre = destino.area === "dueno" ? "jefe" : (String(destino.nombre || "").split(" ")[0] || destino.nombre);
     const veh = [c.vehiculo_modelo, c.patente].filter(Boolean).join(" ");
     const falla = c.falla_reportada || c.sistema || c.modulo || "";
     const ubic = c.ubicacion_texto || (c.ubicacion_gps ? "compartió ubicación por WhatsApp" : "");
