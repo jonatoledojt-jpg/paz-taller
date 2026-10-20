@@ -505,6 +505,10 @@ resolver ni aportar, NO respondas: devuelve EXACTAMENTE el texto [SIN RESPUESTA]
     queda esperar que lo haga; no lo apures con otra pregunta.
   - La pelota está en el equipo (quedaron de confirmar precio, hora, factura):
     no sigas preguntando ni rellenando.
+  - Ves mensajes recientes marcados "[enviado por el equipo desde el teléfono]":
+    significa que una PERSONA del taller ya está atendiendo esta conversación en
+    vivo. Hazte a un lado: NO contestes por encima de ella ni repreguntes lo que
+    el equipo ya está coordinando. Quédate callada ([SIN RESPUESTA]).
   - Ya cerraste el caso y el cliente solo responde "gracias" o similar.
 Responde de verdad solo cuando falta un dato que tú puedes pedir, o cuando el
 cliente hace una pregunta o pedido nuevo que te toca atender. Ante la duda entre
@@ -745,7 +749,25 @@ async function procesarMensaje(paz: any, msj: any) {
 
   const contexto = await contextoDelSistema(paz, telefono, historial, conversacion_id);
 
-  if (cfg.responde_whatsapp) {
+  // Si el equipo está atendiendo en vivo DESDE EL TELÉFONO (mandó algo por
+  // Coexistencia hace poco), PAZ se hace a un lado y NO contesta por encima:
+  // una persona ya está en la conversación. Pasó de verdad — PAZ preguntaba
+  // el año/el tablero mientras el equipo coordinaba la visita en paralelo.
+  const haceRato = new Date(Date.now() - 10 * 60000).toISOString();
+  const { data: equipoAtendiendo } = await paz.from("nexa_mensajes")
+    .select("id").eq("conversacion_id", conversacion_id)
+    .eq("rol", "assistant").eq("humano_asistido", true)
+    .ilike("contenido", "%el equipo desde%").gte("creado_en", haceRato)
+    .limit(1).maybeSingle();
+
+  if (cfg.responde_whatsapp && equipoAtendiendo) {
+    await admin.from("wa_log").insert({
+      metodo: "PAZ-CEDE", firma_ok: true,
+      nota: `el equipo atiende del teléfono (${telefono}); PAZ no responde`, cuerpo: "",
+    }).then(() => {}, () => {});
+  }
+
+  if (cfg.responde_whatsapp && !equipoAtendiendo) {
     const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, contexto]
       .filter(Boolean).join("\n\n");
     const texto = await llamarIA("claude-sonnet-5-5", instrucciones, historial);
