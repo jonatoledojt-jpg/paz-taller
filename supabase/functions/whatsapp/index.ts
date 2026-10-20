@@ -481,15 +481,33 @@ async function procesarMensaje(paz: any, msj: any) {
         /^(hola|buenas|buen[oa]s? d[ií]as?|buen[oa]s? tardes?|gracias|ok|oka|okay|dale|listo|ya|perfecto|bien|todo bien|👍|🙌|💪|🙏|👋|✅)\b/.test(base)) ||
       /^[\s👍🙌💪🙏👋✅😀🙂👌]+$/u.test(texto);
     if (texto && !esAck) {
+      await admin.from("wa_log").insert({
+        metodo: "EQUIPO-CONSULTA", firma_ok: true,
+        nota: `consulta del equipo (${telefono})`, cuerpo: texto.slice(0, 2000),
+      }).then(() => {}, () => {});
       try {
-        await fetch(`${URL_SUPABASE}/functions/v1/paz-asistente`, {
+        const rr = await fetch(`${URL_SUPABASE}/functions/v1/paz-asistente`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-paz-key": Deno.env.get("PAZ_EQUIPO_KEY") ?? "" },
           body: JSON.stringify({ telefono, texto }),
         });
+        if (!rr.ok) {
+          await admin.from("wa_log").insert({
+            metodo: "EQUIPO-CONSULTA", firma_ok: false,
+            nota: `paz-asistente respondió ${rr.status}`, cuerpo: (await rr.text()).slice(0, 2000),
+          }).then(() => {}, () => {});
+        }
       } catch (e) {
-        console.error("No se pudo invocar paz-asistente:", e);
+        await admin.from("wa_log").insert({
+          metodo: "EQUIPO-CONSULTA", firma_ok: false,
+          nota: `fetch a paz-asistente falló: ${e instanceof Error ? e.message : e}`, cuerpo: "",
+        }).then(() => {}, () => {});
       }
+    } else if (texto) {
+      await admin.from("wa_log").insert({
+        metodo: "EQUIPO-ACK", firma_ok: true,
+        nota: `tratado como saludo/ack (${telefono})`, cuerpo: texto.slice(0, 500),
+      }).then(() => {}, () => {});
     }
     return;
   }

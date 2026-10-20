@@ -47,6 +47,7 @@ function herramientas(esJefe: boolean) {
     { name: "pendientes", description: "Lo que está esperando acción ahora: casos de WhatsApp que necesitan respuesta humana, y módulos por recepcionar.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "agenda", description: "Qué hay agendado (visitas a terreno o llegadas de módulo). Por defecto los próximos 7 días.", input_schema: { type: "object", properties: { dias: { type: "integer", description: "días hacia adelante, por defecto 7" } }, additionalProperties: false } },
     { name: "historial_patente", description: "Las últimas OT de una patente.", input_schema: { type: "object", properties: { patente: { type: "string" } }, required: ["patente"], additionalProperties: false } },
+    { name: "avisar_a_area", description: "Le envía un mensaje de WhatsApp al responsable de un área del equipo (laboratorio=Diego, coordinacion=Osores, dueno=el jefe). Úsalo cuando quien te habla te pide avisarle o pedirle algo a otra persona/área (ej: 'avísale a Diego que revise la OT X'). Redacta tú el mensaje, claro y breve, diciendo de parte de quién va.", input_schema: { type: "object", properties: { area: { type: "string", enum: ["laboratorio", "coordinacion", "dueno"] }, mensaje: { type: "string", description: "el mensaje a enviarle, redactado por ti" } }, required: ["area", "mensaje"], additionalProperties: false } },
   ];
   if (esJefe) base.push(
     { name: "montos_ot", description: "SOLO JEFE. Los montos (plata) de una OT: cotizado, final cobrado y número de factura.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, cliente o patente" } }, required: ["consulta"], additionalProperties: false } },
@@ -73,13 +74,30 @@ async function buscarOrdenes(q: string, esJefe: boolean) {
   return data ?? [];
 }
 
-async function ejecutar(nombre: string, input: any, esJefe: boolean): Promise<string> {
+async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante: string, simular: boolean): Promise<string> {
   // Doble llave: aunque la herramienta no debería existir para no-jefes,
   // el ejecutor vuelve a cortar la plata.
   if ((nombre === "montos_ot" || nombre === "facturado_mes") && !esJefe) {
     return "No autorizado: la información de dinero es solo para el jefe.";
   }
   try {
+    if (nombre === "avisar_a_area") {
+      const area = String(input?.area ?? "").trim();
+      const mensaje = String(input?.mensaje ?? "").trim();
+      if (!area || !mensaje) return "Falta el área o el mensaje.";
+      const { data: dest } = await admin.from("paz_equipo")
+        .select("telefono,nombre,ultimo_inbound_en").eq("area", area).eq("activo", true).maybeSingle();
+      if (!dest) return `No hay nadie activo en el área ${area}.`;
+      const abierta = dest.ultimo_inbound_en && (Date.now() - Date.parse(dest.ultimo_inbound_en)) < 24 * 3600 * 1000;
+      if (!abierta) return `No le puedo escribir a ${dest.nombre} ahora: su ventana de WhatsApp está cerrada (tiene que escribirle algo a PAZ para abrirla). Avísale por otro medio o inténtalo cuando él escriba.`;
+      if (simular) return `(simulado, no se envió) habría avisado a ${dest.nombre}: ${mensaje}`;
+      const ok = await enviarWA(dest.telefono, `👋 ${dest.nombre}, mensaje de ${solicitante} vía PAZ: ${mensaje}`);
+      await admin.from("wa_log").insert({
+        metodo: "ASISTENTE-AVISO", firma_ok: ok,
+        nota: `${solicitante} → ${dest.nombre} (${area})`, cuerpo: mensaje.slice(0, 1000),
+      }).then(() => {}, () => {});
+      return ok ? `Listo, le envié el mensaje a ${dest.nombre}.` : `No pude enviarle el mensaje a ${dest.nombre} (error de WhatsApp).`;
+    }
     if (nombre === "buscar_ot") {
       const r = await buscarOrdenes(input?.consulta ?? "", false);
       return r.length ? JSON.stringify(r) : "No encontré ninguna OT con eso.";
@@ -148,9 +166,8 @@ async function turno(apiKey: string, system: string, messages: any[], tools: any
   return { content: d?.content ?? [], stop: d?.stop_reason };
 }
 
-async function responder(apiKey: string, system: string, texto: string, esJefe: boolean): Promise<string> {
+async function responder(apiKey: string, system: string, messages: any[], esJefe: boolean, solicitante: string, simular: boolean): Promise<string> {
   const tools = herramientas(esJefe);
-  const messages: any[] = [{ role: "user", content: texto }];
   let salida = "";
   for (let ronda = 0; ronda < 6; ronda++) {
     const { content, stop } = await turno(apiKey, system, messages, tools);
@@ -160,7 +177,7 @@ async function responder(apiKey: string, system: string, texto: string, esJefe: 
       messages.push({ role: "assistant", content });
       const resultados: any[] = [];
       for (const tu of usos) {
-        const res = await ejecutar(tu.name, tu.input ?? {}, esJefe);
+        const res = await ejecutar(tu.name, tu.input ?? {}, esJefe, solicitante, simular);
         resultados.push({ type: "tool_result", tool_use_id: tu.id, content: String(res).slice(0, 6000) });
       }
       messages.push({ role: "user", content: resultados });
@@ -200,17 +217,53 @@ Deno.serve(async (req) => {
     esJefe
       ? `${miembro.nombre} es el jefe: puedes darle montos y lo facturado del mes con las herramientas de plata.`
       : `IMPORTANTE: NO des montos, precios, cotizaciones ni nada de dinero. Si pregunta por plata, dile con amabilidad que esa información es solo para el jefe y que la revise en la app.`,
-    `No eres la PAZ que habla con clientes: acá ayudas al equipo. No agendas ni cambias nada, solo consultas e informas.`,
+    `Puedes AVISARLE a otra persona del equipo con la herramienta avisar_a_area: si ${miembro.nombre} te pide avisarle o pedirle algo a alguien (ej: "avísale a Diego que revise la OT X"), primero mira lo que haga falta (buscar_ot, etc.) y después usa avisar_a_area para mandarle el mensaje al responsable (laboratorio=Diego, coordinacion=Osores, dueno=el jefe). Redacta el aviso claro y breve.`,
+    `Tienes memoria de esta conversación: si te dicen "sí, revísalo" o "mándalo", mira los mensajes anteriores para saber a qué se refieren; no vuelvas a pedir el dato que ya está en el hilo.`,
+    `No eres la PAZ que habla con clientes. No agendas, no cambias estados ni creas OT: para eso están la app y la otra PAZ. Tú consultas, informas y avisas al equipo.`,
   ].join("\n");
 
+  // Memoria: el hilo reciente de ESTE miembro, para que los "sí, revísalo"
+  // tengan contexto. Se guarda aparte de las conversaciones de clientes.
+  const { data: hist } = await admin.from("paz_equipo_chat")
+    .select("rol,contenido").eq("telefono", telefono)
+    .order("creado_en", { ascending: false }).limit(12);
+  const previos = (hist ?? []).reverse().map((h: any) => ({ role: h.rol, content: h.contenido }));
+  // Alternancia que exige Claude: fusiona roles repetidos y arranca en user.
+  const crudo = [...previos, { role: "user", content: texto }];
+  const messages: any[] = [];
+  for (const m of crudo) {
+    if (messages.length && messages[messages.length - 1].role === m.role) {
+      messages[messages.length - 1].content += "\n" + m.content;
+    } else messages.push({ role: m.role, content: m.content });
+  }
+  while (messages.length && messages[0].role !== "user") messages.shift();
+
   try {
-    const respuesta = await responder(apiKey, system, texto, esJefe);
+    const respuesta = await responder(apiKey, system, messages, esJefe, miembro.nombre, probar);
     const txt = respuesta || "No pude armar una respuesta. ¿Me lo preguntas de otra forma?";
-    if (!probar) await enviarWA(telefono, txt);
+    if (!probar) {
+      await enviarWA(telefono, txt);
+      await admin.from("paz_equipo_chat").insert([
+        { telefono, rol: "user", contenido: texto },
+        { telefono, rol: "assistant", contenido: txt },
+      ]).then(() => {}, () => {});
+      await admin.from("wa_log").insert({
+        metodo: "ASISTENTE", firma_ok: true,
+        nota: `${miembro.nombre} (jefe=${esJefe}) preguntó: ${texto.slice(0, 200)}`,
+        cuerpo: txt.slice(0, 3000),
+      }).then(() => {}, () => {});
+    }
     return Response.json({ ok: true, jefe: esJefe, respuesta: txt });
   } catch (e) {
     console.error("paz-asistente error:", e);
-    if (!probar) await enviarWA(telefono, "Uf, no pude revisar eso ahora. Inténtalo de nuevo en un rato.");
+    if (!probar) {
+      await enviarWA(telefono, "Uf, no pude revisar eso ahora. Inténtalo de nuevo en un rato.");
+      await admin.from("wa_log").insert({
+        metodo: "ASISTENTE", firma_ok: false,
+        nota: `error con ${miembro.nombre}: ${texto.slice(0, 160)}`,
+        cuerpo: String(e).slice(0, 2500),
+      }).then(() => {}, () => {});
+    }
     return Response.json({ ok: false, error: String(e) }, { status: 500 });
   }
 });
