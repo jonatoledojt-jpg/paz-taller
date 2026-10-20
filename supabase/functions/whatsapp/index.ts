@@ -540,6 +540,11 @@ LO QUE NO HACES
 - No prometes horario ni visita.
 - No dices que ya avisaste a alguien del equipo.
 - No das un precio final cerrado.
+- No verificas ni confirmas pagos, y NUNCA dices que un pago "coincide" con el
+  monto de la OT, que quedó pagado el total, ni cuánto falta: no ves los montos.
+  Si el cliente manda un comprobante o dice que ya pagó/transfirió, NO le
+  respondas: eso lo revisa y lo cierra una persona del taller (tú solo avisas
+  al equipo, por dentro, no al cliente).
 - No recomiendas una reparación que no esté en tus instrucciones.
 - No confirmas que una visita quedó cancelada, dada de baja o reprogramada.
   Cancelar es una decisión igual de seria que agendar: si un caso ya tiene
@@ -789,6 +794,15 @@ async function procesarMensaje(paz: any, msj: any) {
     .ilike("contenido", "%el equipo desde%").gte("creado_en", haceRato)
     .limit(1).maybeSingle();
 
+  // Pago recibido: el cliente mandó un comprobante o dice que ya pagó. PAZ no
+  // le contesta (no verifica pagos ni ve montos): le avisa al jefe y él decide
+  // qué responderle o cómo despedirlo.
+  const esPago = /comprobante|pagu[eé]|pagad[oa]|transfer[íi]|transferid|dep[oó]sit[eé]|abon[eé]/i.test(contenido);
+  if (esPago) {
+    await avisarPagoAlJefe(conversacion_id, telefono, contenido)
+      .catch((e) => console.error("No se pudo avisar el pago:", e));
+  }
+
   if (cfg.responde_whatsapp && equipoAtendiendo) {
     await admin.from("wa_log").insert({
       metodo: "PAZ-CEDE", firma_ok: true,
@@ -796,7 +810,7 @@ async function procesarMensaje(paz: any, msj: any) {
     }).then(() => {}, () => {});
   }
 
-  if (cfg.responde_whatsapp && !equipoAtendiendo) {
+  if (cfg.responde_whatsapp && !equipoAtendiendo && !esPago) {
     const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, contexto]
       .filter(Boolean).join("\n\n");
     const texto = await llamarIA("claude-sonnet-5-5", instrucciones, historial);
@@ -957,6 +971,32 @@ async function pedirDatoAlEquipo(conversacion_id: number, caso: any) {
   await admin.from("wa_log").insert({
     metodo: "PAZ-PIDE-DATO", firma_ok: ok.ok,
     nota: `conv ${conversacion_id}: ${dest.nombre} <- ${faltan.join(", ")}`.slice(0, 500), cuerpo: "",
+  }).then(() => {}, () => {});
+}
+
+// Pago recibido: cuando el cliente manda un comprobante o dice que ya pagó,
+// PAZ NO le contesta (no verifica pagos ni ve montos, no debe adelantarse ni
+// despedirlo). Le avisa al JEFE para que revise el pago y decida qué
+// responderle al cliente. Dedup por conversación (1h), respeta la ventana.
+async function avisarPagoAlJefe(conversacion_id: number, telefono: string, contenido: string) {
+  const hace1h = new Date(Date.now() - 3600_000).toISOString();
+  const { data: ya } = await admin.from("wa_log").select("id")
+    .eq("metodo", "PAZ-AVISA-PAGO").ilike("nota", `conv ${conversacion_id}:%`)
+    .gte("creado_en", hace1h).limit(1).maybeSingle();
+  if (ya) return;
+
+  const { data: jefe } = await admin.from("paz_equipo")
+    .select("telefono,nombre,ultimo_inbound_en").eq("area", "dueno").eq("activo", true).limit(1).maybeSingle();
+  if (!jefe) return;
+  const abierta = jefe.ultimo_inbound_en && (Date.now() - Date.parse(jefe.ultimo_inbound_en)) < 24 * 3600 * 1000;
+  if (!abierta) return;
+
+  const monto = (contenido.match(/\$\s?[\d][\d.\s]{2,}/) || [])[0]?.trim() || "";
+  const txt = `💸 Pagaron: el cliente ${telefono} mandó un comprobante de pago${monto ? ` (${monto})` : ""}. Revísalo y me dices qué le respondo al cliente, o si lo despides tú. No le contesté para no adelantarme con la plata.`;
+  const ok = await responderWhatsApp(jefe.telefono, txt);
+  await admin.from("wa_log").insert({
+    metodo: "PAZ-AVISA-PAGO", firma_ok: ok.ok,
+    nota: `conv ${conversacion_id}: aviso a ${jefe.nombre}`.slice(0, 500), cuerpo: "",
   }).then(() => {}, () => {});
 }
 
