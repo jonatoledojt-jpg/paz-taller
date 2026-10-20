@@ -152,50 +152,76 @@ async function tick() {
 // Escalada: cuando PAZ avisó a Diego u Osores de un caso y pasó un rato
 // (~45 min) sin que nadie lo tomara —ni contactó al cliente del teléfono ni le
 // respondió a PAZ— le avisa al JEFE para que intervenga y vea por qué no
-// responden. Una sola escalada por caso.
-const ESCALA_MS = 45 * 60 * 1000;
+// responden. La velocidad de respuesta es la que hace ganar, así que la
+// cadena pasa rápido al siguiente. Por tema:
+//   Módulo:  Diego (5 min) → Osores (15 min) → jefe
+//   Visita:  Osores (5 min) → jefe
+//   Factura: jefe  (5 min) → Osores
+// "Tomarlo" = contactó al cliente desde el teléfono, o le respondió a PAZ.
+function cadenaDe(area: string): { area: string; min: number }[] {
+  if (area === "laboratorio") return [{ area: "laboratorio", min: 5 }, { area: "coordinacion", min: 15 }, { area: "dueno", min: 0 }];
+  if (area === "coordinacion") return [{ area: "coordinacion", min: 5 }, { area: "dueno", min: 0 }];
+  return [{ area: "dueno", min: 5 }, { area: "coordinacion", min: 0 }];
+}
+
 async function escalarSinAtender(miembros: any[]): Promise<string[]> {
   const ahora = Date.now();
+  const abierta = (m: any) => m.ultimo_inbound_en && (ahora - Date.parse(m.ultimo_inbound_en)) < VENTANA_MS;
   const acciones: string[] = [];
-  const jefe = miembros.find((m) => m.area === "dueno");
-  if (!jefe || !(jefe.ultimo_inbound_en && (ahora - Date.parse(jefe.ultimo_inbound_en)) < VENTANA_MS)) return acciones;
 
-  const limite = new Date(ahora - ESCALA_MS).toISOString();
   const { data: casos } = await admin.from("casos")
-    .select("id,numero_caso,cliente_nombre,patente,vehiculo_modelo,modulo,atencion,motivo_alerta,conversacion_id,notificado_equipo_en")
+    .select("id,numero_caso,cliente_nombre,patente,vehiculo_modelo,modulo,sistema,atencion,falla_reportada,ubicacion_texto,ubicacion_gps,motivo_alerta,conversacion_id,escala_area,escala_en")
     .eq("modo", "produccion").eq("archivado", false).eq("requiere_respuesta_humana", true)
-    .not("notificado_equipo_en", "is", null).lt("notificado_equipo_en", limite);
+    .not("escala_area", "is", null).not("escala_en", "is", null);
 
   for (const c of casos ?? []) {
-    const area = rutear(c);
-    if (area === "dueno") continue; // ya le tocaba al jefe: no hay a quién escalar
-    const { data: yaEsc } = await admin.from("wa_log").select("id")
-      .eq("metodo", "PAZ-ESCALA").ilike("nota", `conv ${c.conversacion_id}:%`).limit(1).maybeSingle();
-    if (yaEsc) continue; // ya se escaló este caso
+    const cadena = cadenaDe(rutear(c));
+    const idx = cadena.findIndex((p) => p.area === c.escala_area);
+    if (idx < 0 || idx + 1 >= cadena.length || !cadena[idx].min) continue; // último de la cadena
+    const desde = c.escala_en;
+    if (ahora - Date.parse(desde) < cadena[idx].min * 60000) continue; // aún dentro del plazo
 
-    const desde = c.notificado_equipo_en;
-    // ¿el asignado ya actuó? (contactó al cliente desde el teléfono, o le respondió a PAZ)
+    // ¿el que lo tiene ya lo tomó? (contactó al cliente del teléfono, o le respondió a PAZ)
     const { data: echo } = await admin.from("nexa_mensajes").select("id")
       .eq("conversacion_id", c.conversacion_id).eq("rol", "assistant").eq("humano_asistido", true)
       .ilike("contenido", "%el equipo desde%").gte("creado_en", desde).limit(1).maybeSingle();
-    const asignado = miembros.find((m) => m.area === area);
+    const actual = miembros.find((m) => m.area === c.escala_area);
     let respondio = null;
-    if (asignado) {
+    if (actual) {
       const r = await admin.from("paz_equipo_chat").select("id")
-        .eq("telefono", asignado.telefono).eq("rol", "user").gte("creado_en", desde).limit(1).maybeSingle();
+        .eq("telefono", actual.telefono).eq("rol", "user").gte("creado_en", desde).limit(1).maybeSingle();
       respondio = r.data;
     }
-    if (echo || respondio) continue; // alguien está en ello
+    if (echo || respondio) continue; // está en ello, no escalar
 
-    const mins = Math.round((ahora - Date.parse(desde)) / 60000);
-    const quien = asignado ? (String(asignado.nombre).split(" ")[0] || asignado.nombre) : area;
-    const txt = `⚠️ Le avisé a ${quien} hace ~${mins} min sobre ${c.cliente_nombre || "un cliente"}${c.patente ? ` (${c.patente})` : ""} y sigue sin atenderse (${c.numero_caso}: ${c.motivo_alerta}). Quizás no lo vio. ¿Lo revisas o lo empujas?`;
-    if (await enviarWA(jefe.telefono, txt)) {
+    const siguiente = cadena[idx + 1];
+    const destino = miembros.find((m) => m.area === siguiente.area);
+    if (!destino || !abierta(destino)) continue; // sin ventana: se reintenta al próximo tick
+    const nombre = String(destino.nombre || "").split(" ")[0] || destino.nombre;
+    const quienAntes = actual ? (String(actual.nombre).split(" ")[0] || actual.nombre) : c.escala_area;
+    const veh = [c.vehiculo_modelo, c.patente].filter(Boolean).join(" ");
+    const falla = c.falla_reportada || c.sistema || c.modulo || "";
+    const ubic = c.ubicacion_texto || (c.ubicacion_gps ? "compartió ubicación por WhatsApp" : "");
+    const txt = [
+      `⚠️ ${nombre}, ${quienAntes} no alcanzó a tomar esto y el cliente espera. Tómalo tú:`,
+      `• Cliente: ${c.cliente_nombre || "sin nombre"}${veh ? ` — ${veh}` : ""}`,
+      falla ? `• Qué pasa: ${falla}` : "",
+      ubic ? `• Dónde: ${ubic}` : "",
+      `• Lo que necesita: ${c.motivo_alerta}`,
+      `(${c.numero_caso} — detalle en la app.)`,
+    ].filter(Boolean).join("\n");
+    if (await enviarWA(destino.telefono, txt)) {
+      await admin.from("casos").update({ escala_area: siguiente.area, escala_en: new Date().toISOString() }).eq("id", c.id);
+      const refCliente = c.patente || c.cliente_nombre || c.numero_caso;
+      await admin.from("paz_equipo_chat").insert({
+        telefono: destino.telefono, rol: "assistant",
+        contenido: `${txt}\n[si me respondes "dile al cliente ..." es sobre este caso: ${c.cliente_nombre || "cliente"} ${c.patente ? `patente ${c.patente}` : ""} (${c.numero_caso}); para escribirle usa destino "${refCliente}".]`,
+      }).then(() => {}, () => {});
       await admin.from("wa_log").insert({
         metodo: "PAZ-ESCALA", firma_ok: true,
-        nota: `conv ${c.conversacion_id}: escalado al jefe (${quien} sin atender)`.slice(0, 500), cuerpo: "",
+        nota: `conv ${c.conversacion_id}: ${quienAntes}→${nombre} (${cadena[idx].min}min sin tomar)`.slice(0, 500), cuerpo: "",
       }).then(() => {}, () => {});
-      acciones.push(`escala ${c.numero_caso}→jefe`);
+      acciones.push(`escala ${c.numero_caso}: ${c.escala_area}→${siguiente.area}`);
     }
   }
   return acciones;
@@ -235,8 +261,12 @@ async function procesarAlertas(miembros: any[]): Promise<string[]> {
       `(${c.numero_caso} — el detalle completo está en la app si lo necesitas.)`,
     ].filter(Boolean).join("\n");
     if (await enviarWA(destino.telefono, txt)) {
+      const ahoraISO = new Date().toISOString();
       await admin.from("casos")
-        .update({ notificado_equipo_en: new Date().toISOString(), notificado_motivo: c.motivo_alerta })
+        .update({
+          notificado_equipo_en: ahoraISO, notificado_motivo: c.motivo_alerta,
+          escala_area: area, escala_en: ahoraISO,   // arranca la cadena de escalada acá
+        })
         .eq("id", c.id);
       const refCliente = c.patente || c.cliente_nombre || c.numero_caso;
       await admin.from("paz_equipo_chat").insert({
@@ -257,14 +287,19 @@ Deno.serve(async (req) => {
   // ?a=alertas: solo reenvía las alertas pendientes, al instante (lo llama la
   // función whatsapp apenas se levanta una alerta, sin esperar el cron). NO
   // hace saludos ni recordatorios.
-  if (params.get("a") === "alertas") {
+  if (params.get("a") === "alertas" || params.get("a") === "rondas") {
+    // "alertas": solo reenvía alertas pendientes (lo llama whatsapp al instante).
+    // "rondas": alertas + escalada (lo llama un cron frecuente, cada 1-2 min),
+    // para que la cadena Diego/Osores/jefe avance rápido — la velocidad gana.
     try {
       const { data: equipo } = await admin.from("paz_equipo")
         .select("id,telefono,nombre,area,ultimo_inbound_en").eq("activo", true);
-      const acciones = await procesarAlertas(equipo ?? []);
+      const miembros = equipo ?? [];
+      const acciones = await procesarAlertas(miembros);
+      if (params.get("a") === "rondas") acciones.push(...(await escalarSinAtender(miembros)));
       return Response.json({ ok: true, acciones });
     } catch (e) {
-      console.error("paz-equipo alertas error:", e);
+      console.error("paz-equipo alertas/rondas error:", e);
       return Response.json({ ok: false, error: String(e) }, { status: 500 });
     }
   }

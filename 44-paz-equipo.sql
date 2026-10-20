@@ -52,6 +52,12 @@ create policy escribir_paz_equipo on paz_equipo for all
 alter table casos add column if not exists notificado_equipo_en timestamptz;
 alter table casos add column if not exists notificado_motivo     text;
 
+-- Cadena de escalada (quién tiene el caso ahora y desde cuándo). Si no lo
+-- toma en su plazo, pasa al siguiente: módulo Diego(5m)->Osores(15m)->jefe;
+-- visita Osores(5m)->jefe; factura jefe(5m)->Osores. Ver paz-equipo.
+alter table casos add column if not exists escala_area text;
+alter table casos add column if not exists escala_en   timestamptz;
+
 -- Si el nombre de columna ya existía en una corrida previa, estos alter no
 -- hacen nada (if not exists). Lo mismo con ultimo_nudge_en de paz_equipo,
 -- cubierto por el create table de arriba salvo que la tabla ya existiera:
