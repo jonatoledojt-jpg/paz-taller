@@ -18,7 +18,11 @@
 // Jonatan — así el redactor sale del crédito y no se paga a OpenAI aparte
 // (migrado 18-10-2026; antes usaba OPENAI_API_KEY + nexa_config.modelo).
 //
-// Desplegar:  .\.tools\supabase.exe functions deploy informe --use-api
+// Desplegar:  .\.tools\supabase.exe functions deploy informe --use-api --no-verify-jwt
+//   (--no-verify-jwt desde 20-10-2026: la función valida sola — sesión de
+//   dueño/coordinador para la app, o x-paz-key cuando la llama paz-asistente
+//   para redactar un informe que el equipo pidió por WhatsApp. El gateway
+//   rechazaba el service_role legacy, por eso se abrió y se valida adentro.)
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -179,19 +183,30 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
-    const auth = req.headers.get("Authorization");
-    if (!auth) return json({ error: "Falta la sesión." }, 401);
-
-    const comoUsuario = createClient(URL_SUPABASE, ANON, {
-      global: { headers: { Authorization: auth } },
-    });
-    const { data: { user } } = await comoUsuario.auth.getUser();
-    if (!user) return json({ error: "Sesión no válida. Vuelve a entrar." }, 401);
-
-    const { data: perfil } = await comoUsuario
-      .from("perfiles").select("rol").eq("id", user.id).single();
-    if (!perfil || !["dueno", "coordinador"].includes(perfil.rol)) {
-      return json({ error: "No tienes permiso para usar el Redactor IA." }, 403);
+    // Dos formas de entrar: (1) una persona del equipo desde la app, con su
+    // sesión (dueño/coordinador); (2) PAZ (función paz-asistente) con la llave
+    // x-paz-key, cuando el equipo le pide el informe por WhatsApp. En el caso
+    // de PAZ se usa service_role y el usuario agente, y el borrador además se
+    // refleja en diagnosticos/ordenes para que aparezca en la app.
+    const esPaz = !!Deno.env.get("PAZ_EQUIPO_KEY") &&
+      req.headers.get("x-paz-key") === Deno.env.get("PAZ_EQUIPO_KEY");
+    let db: any, uid: string;
+    if (esPaz) {
+      db = createClient(URL_SUPABASE, SERVICE);
+      const { data: ag } = await db.from("perfiles").select("id").eq("rol", "agente").limit(1).maybeSingle();
+      if (!ag) return json({ error: "No existe el usuario agente para PAZ." }, 500);
+      uid = ag.id;
+    } else {
+      const auth = req.headers.get("Authorization");
+      if (!auth) return json({ error: "Falta la sesión." }, 401);
+      db = createClient(URL_SUPABASE, ANON, { global: { headers: { Authorization: auth } } });
+      const { data: { user } } = await db.auth.getUser();
+      if (!user) return json({ error: "Sesión no válida. Vuelve a entrar." }, 401);
+      const { data: perfil } = await db.from("perfiles").select("rol").eq("id", user.id).single();
+      if (!perfil || !["dueno", "coordinador"].includes(perfil.rol)) {
+        return json({ error: "No tienes permiso para usar el Redactor IA." }, 403);
+      }
+      uid = user.id;
     }
 
     const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -209,17 +224,34 @@ Deno.serve(async (req) => {
     // solo escribe "redactar", asi que analizar/mejorar esquivaban el tope
     // (auditoria 26-09). Se cuenta y se deja la marca antes de llamar a la IA.
     const hace1h = new Date(Date.now() - 3600_000).toISOString();
-    const { count } = await comoUsuario
+    const { count } = await db
       .from("ia_uso").select("id", { count: "exact", head: true })
-      .eq("usuario_id", user.id).gte("creado_en", hace1h);
+      .eq("usuario_id", uid).gte("creado_en", hace1h);
     if ((count ?? 0) >= TOPE_POR_HORA) {
       return json({ error: "Llegaste al tope de generaciones por hora. Espera un rato." }, 429);
     }
     if (["analizar", "redactar", "mejorar"].includes(accion)) {
-      await comoUsuario.from("ia_uso").insert({ usuario_id: user.id, accion });
+      await db.from("ia_uso").insert({ usuario_id: uid, accion });
     }
 
-    const entrada = armarEntrada(fuente, respuestas);
+    // Cuando entra PAZ, la "fuente" (identificación del vehículo) la arma el
+    // servidor desde la OT — igual que armarFuenteInforme() del front. El
+    // detalle del trabajo que dictó el técnico viene en `respuestas`.
+    let fuenteUsada = fuente;
+    if (esPaz && !fuenteUsada && orden_id) {
+      const { data: o } = await db.from("ordenes")
+        .select("tipo_modulo,sistema,tipo_trabajo,vehiculos(marca,modelo,anio,patente)")
+        .eq("id", orden_id).single();
+      if (o) {
+        const v = o.vehiculos || {};
+        fuenteUsada =
+          `Vehículo: ${[v.marca, v.modelo, v.anio].filter(Boolean).join(" ") || "no especificado"} · ` +
+          `Patente: ${v.patente || "no especificada"} · ` +
+          `${o.tipo_trabajo === "servicio" ? "Sistema" : "Módulo"}: ` +
+          `${(o.tipo_trabajo === "servicio" ? o.sistema : o.tipo_modulo) || "no especificado"}`;
+      }
+    }
+    const entrada = armarEntrada(fuenteUsada, respuestas);
 
     // ── Analizar: detecta datos faltantes ANTES de redactar ──
     if (accion === "analizar") {
@@ -310,14 +342,40 @@ Deno.serve(async (req) => {
 
       // Se guarda la FUENTE y las RESPUESTAS exactas: así nunca se pierde lo
       // que la persona escribió, y un auditor puede comparar entrada vs salida.
-      const { data: fila, error: eIns } = await comoUsuario
+      const { data: fila, error: eIns } = await db
         .from("informes_ia")
         .insert({
-          orden_id, fuente_hash, borrador_ia: borrador, generado_por: user.id,
-          fuente, respuestas: respuestas.trim() || null,
+          orden_id, fuente_hash, borrador_ia: borrador, generado_por: uid,
+          fuente: fuenteUsada, respuestas: respuestas.trim() || null,
         })
         .select("id").single();
       if (eIns) return json({ error: "No se pudo guardar el borrador: " + eIns.message }, 500);
+
+      // Cuando entra PAZ, el borrador se refleja en diagnosticos/ordenes para
+      // que aparezca en la app (igual que guardarInforme del front). Así el
+      // equipo lo abre, lo revisa y genera el PDF. Desde la app NO se hace acá
+      // (lo hace el front), para no cambiar ese flujo.
+      if (esPaz && orden_id) {
+        const { data: o } = await db.from("ordenes")
+          .select("tipo_modulo,sintoma_cliente").eq("id", orden_id).single();
+        const campos = {
+          orden_id,
+          tipo_modulo: o?.tipo_modulo ?? null,
+          sintoma: borrador.antecedentes || o?.sintoma_cliente || "Sin detalle",
+          pruebas_realizadas: borrador.detalle_diagnostico || null,
+          causa_raiz: borrador.causa_conclusion || null,
+          solucion: borrador.resultado_pruebas || null,
+          resuelto: true,
+          tecnico_id: uid,
+        };
+        const { data: ex } = await db.from("diagnosticos")
+          .select("id").eq("orden_id", orden_id).order("id").limit(1);
+        if (ex && ex.length) await db.from("diagnosticos").update(campos).eq("id", ex[0].id);
+        else await db.from("diagnosticos").insert(campos);
+        if (borrador.observaciones) {
+          await db.from("ordenes").update({ observaciones: borrador.observaciones }).eq("id", orden_id);
+        }
+      }
 
       return json({ borrador, informe_id: fila.id });
     }

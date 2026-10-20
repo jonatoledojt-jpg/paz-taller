@@ -19,10 +19,9 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const admin = createClient(
-  Deno.env.get("SUPABASE_URL")!,
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-);
+const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const admin = createClient(SUPA_URL, SERVICE);
 const GRAPH = "https://graph.facebook.com/v21.0";
 const MODELO = "claude-sonnet-5-5";
 
@@ -47,6 +46,7 @@ function herramientas(esJefe: boolean) {
     { name: "pendientes", description: "Lo que está esperando acción ahora: casos de WhatsApp que necesitan respuesta humana, y módulos por recepcionar.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "agenda", description: "Qué hay agendado (visitas a terreno o llegadas de módulo). Por defecto los próximos 7 días.", input_schema: { type: "object", properties: { dias: { type: "integer", description: "días hacia adelante, por defecto 7" } }, additionalProperties: false } },
     { name: "historial_patente", description: "Las últimas OT de una patente.", input_schema: { type: "object", properties: { patente: { type: "string" } }, required: ["patente"], additionalProperties: false } },
+    { name: "generar_informe", description: "Redacta el borrador del informe técnico de una OT a partir del DETALLE del trabajo que te cuenta el usuario (qué se revisó, cambió, solucionó) y lo deja guardado en la app para revisar. Si no te han dado el detalle del trabajo, NO lo llames: pídeselo primero. Nunca inventes lo que se hizo.", input_schema: { type: "object", properties: { ot: { type: "string", description: "número de OT, patente o cliente" }, detalle: { type: "string", description: "lo que se hizo en el trabajo, dictado por el técnico (real, no inventado)" } }, required: ["ot", "detalle"], additionalProperties: false } },
     { name: "avisar_a_area", description: "Le escribes TÚ (PAZ) un WhatsApp al responsable de un área del equipo (laboratorio=Diego, coordinacion=Osores, dueno=el jefe). Úsalo cuando haya que pedirle o avisarle algo a alguien del equipo (ej: 'avísale a Diego que revise la OT X'). Redacta el mensaje en PRIMERA PERSONA, como la coordinadora que les pide/instruye: directo, breve, cercano pero con autoridad. NUNCA digas 'de parte de' nadie — el mensaje es tuyo.", input_schema: { type: "object", properties: { area: { type: "string", enum: ["laboratorio", "coordinacion", "dueno"] }, mensaje: { type: "string", description: "el mensaje que TÚ le escribes, en primera persona, sin 'de parte de'" } }, required: ["area", "mensaje"], additionalProperties: false } },
   ];
   if (esJefe) base.push(
@@ -64,7 +64,7 @@ async function buscarOrdenes(q: string, esJefe: boolean) {
   ]);
   const cids = (cls ?? []).map((x: any) => x.id);
   const vids = (vhs ?? []).map((x: any) => x.id);
-  const campos = "numero_ot,estado,origen,tipo_trabajo,tipo_modulo,sistema,ubicacion,reparacion,comercial,pagado_en,entregado_en,fecha_ingreso,fecha_agendada,sintoma_cliente,clientes(nombre),vehiculos(patente,marca,modelo,anio)"
+  const campos = "id,numero_ot,estado,origen,tipo_trabajo,tipo_modulo,sistema,ubicacion,reparacion,comercial,pagado_en,entregado_en,fecha_ingreso,fecha_agendada,sintoma_cliente,clientes(nombre),vehiculos(patente,marca,modelo,anio)"
     + (esJefe ? ",monto_cotizado,monto_final,numero_factura" : "");
   const orParts = [`numero_ot.ilike.${like}`];
   if (cids.length) orParts.push(`cliente_id.in.(${cids.join(",")})`);
@@ -97,6 +97,37 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
         nota: `${solicitante} → ${dest.nombre} (${area})`, cuerpo: mensaje.slice(0, 1000),
       }).then(() => {}, () => {});
       return ok ? `Listo, le envié el mensaje a ${dest.nombre}.` : `No pude enviarle el mensaje a ${dest.nombre} (error de WhatsApp).`;
+    }
+    if (nombre === "generar_informe") {
+      const detalle = String(input?.detalle ?? "").trim();
+      if (detalle.length < 40) {
+        return "Necesito que me cuentes con un poco más de detalle qué se hizo en el trabajo (qué se revisó, qué se cambió, qué quedó) para poder redactar el informe. Cuéntame y lo redacto.";
+      }
+      const r = await buscarOrdenes(input?.ot ?? "", false);
+      if (!r.length) return "No encontré esa OT. Dime el número de OT, la patente o el cliente.";
+      const ot: any = r[0];
+      if (simular) return `(simulado, no se generó) habría redactado el informe de ${ot.numero_ot} con el detalle dado.`;
+      // El Redactor va con --no-verify-jwt; la autenticación real es x-paz-key
+      // (el propio Redactor comprueba la llave y usa el usuario agente).
+      const resp = await fetch(`${SUPA_URL}/functions/v1/informe`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-paz-key": Deno.env.get("PAZ_EQUIPO_KEY") ?? "",
+        },
+        body: JSON.stringify({ accion: "redactar", orden_id: ot.id, respuestas: detalle }),
+      });
+      if (!resp.ok) return `No se pudo generar el informe (error ${resp.status}). Inténtalo de nuevo en un rato.`;
+      const d = await resp.json();
+      if (d?.error) return `No se pudo generar el informe: ${d.error}`;
+      const b = d?.borrador ?? {};
+      return JSON.stringify({
+        ok: true, numero_ot: ot.numero_ot, guardado_en_la_app: true,
+        borrador: {
+          trabajos: b.detalle_diagnostico, resultado: b.resultado_pruebas,
+          conclusion: b.causa_conclusion, observaciones: b.observaciones,
+        },
+      });
     }
     if (nombre === "buscar_ot") {
       const r = await buscarOrdenes(input?.consulta ?? "", false);
@@ -218,6 +249,7 @@ Deno.serve(async (req) => {
       ? `${miembro.nombre} es el jefe: puedes darle montos y lo facturado del mes con las herramientas de plata.`
       : `IMPORTANTE: NO des montos, precios, cotizaciones ni nada de dinero. Si pregunta por plata, dile con amabilidad que esa información es solo para el jefe y que la revise en la app.`,
     `Puedes ESCRIBIRLE tú al equipo con la herramienta avisar_a_area: si hay que avisarle o pedirle algo a alguien (ej: "avísale a Diego que revise la OT X"), primero mira lo que haga falta (buscar_ot, etc.) y después usa avisar_a_area. El mensaje lo escribes TÚ en primera persona, como la coordinadora que les instruye — directo y con autoridad cercana. NUNCA "de parte de" nadie: es tu mensaje. (laboratorio=Diego, coordinacion=Osores, dueno=el jefe.)`,
+    `Puedes REDACTAR el informe técnico de una OT con generar_informe, pero NECESITAS que el técnico te cuente qué se hizo en el trabajo (qué revisó, cambió, solucionó). Si te piden el informe y no te han dado ese detalle, PÍDELO primero; no inventes el trabajo. El informe que redactes queda guardado en la app para que lo revisen y lo finalicen ahí (el PDF para el cliente se genera en la app, con revisión humana).`,
     `Tienes memoria de esta conversación: si te dicen "sí, revísalo" o "mándalo", mira los mensajes anteriores para saber a qué se refieren; no vuelvas a pedir el dato que ya está en el hilo.`,
     `No eres la PAZ que habla con clientes. No agendas, no cambias estados ni creas OT: para eso están la app y la otra PAZ. Tú consultas, informas y avisas al equipo.`,
   ].join("\n");
