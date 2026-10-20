@@ -236,6 +236,64 @@ async function guardarAdjunto(paz: any, conversacion_id: number, mediaId: string
   if (errRpc) throw errRpc;
 }
 
+// Lee el CONTENIDO de un archivo que manda el cliente (PDF o imagen) con
+// Claude, y devuelve una transcripción breve y literal. Sin esto, PAZ solo
+// veía el nombre del archivo: un cliente mandaba su factura (razón social,
+// RUT) o una foto del escáner, y PAZ no veía lo de adentro — llegó a pedir
+// datos que el cliente ya había enviado. NO interpreta ni diagnostica, solo
+// transcribe lo que se ve.
+function aBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const paso = 0x8000;
+  for (let i = 0; i < bytes.length; i += paso) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + paso));
+  }
+  return btoa(bin);
+}
+
+async function leerAdjunto(mediaId: string, mime: string): Promise<string> {
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  const token = Deno.env.get("WHATSAPP_TOKEN");
+  if (!apiKey || !mediaId) return "";
+  const cab = { Authorization: `Bearer ${token}` };
+
+  const meta = await fetch(`${GRAPH}/${mediaId}`, { headers: cab });
+  if (!meta.ok) return "";
+  const { url } = await meta.json();
+  const bin = await fetch(url, { headers: cab });
+  if (!bin.ok) return "";
+  const bytes = new Uint8Array(await bin.arrayBuffer());
+  if (bytes.length > 15_000_000) return "[archivo muy grande para leerlo automáticamente]";
+
+  const esPdf = mime.includes("pdf");
+  const esImagen = mime.startsWith("image/");
+  if (!esPdf && !esImagen) return "";   // otros tipos (ej. word) no se leen por ahora
+  const bloque = esPdf
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: aBase64(bytes) } }
+    : { type: "image", source: { type: "base64", media_type: mime.includes("png") ? "image/png" : "image/jpeg", data: aBase64(bytes) } };
+  const instruccion =
+    "Un cliente de un taller de camiones mandó este archivo por WhatsApp. Transcribe de forma BREVE y literal los datos útiles que se ven, SIN interpretar ni diagnosticar: " +
+    "si es una factura o documento, la razón social, el RUT, la dirección y los montos; si es una foto de un escáner o de una falla, los códigos y valores; si es otra cosa, descríbela en una línea. " +
+    "Lo que no se lea, dilo. No inventes.";
+
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-5-5", max_tokens: 700,
+        messages: [{ role: "user", content: [bloque, { type: "text", text: instruccion }] }],
+      }),
+    });
+    if (!r.ok) { console.error("Claude no pudo leer el adjunto:", r.status, (await r.text()).slice(0, 200)); return ""; }
+    const d = await r.json();
+    return (d?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join(" ").trim();
+  } catch (e) {
+    console.error("Error leyendo adjunto:", e);
+    return "";
+  }
+}
+
 // Audios de WhatsApp: sin esto, un cliente describiendo la falla por audio
 // —que en un taller es tan común como escribir, más todavía en terreno—
 // caía al "revísalo en WhatsApp" y PAZ seguía la conversación a ciegas.
@@ -537,12 +595,17 @@ async function procesarMensaje(paz: any, msj: any) {
     contenido = String(msj.text?.body ?? "").trim();
   } else if (msj.type === "image" || msj.type === "document") {
     const m = msj[msj.type];
-    adjunto = {
-      id: m?.id,
-      mime: m?.mime_type ?? "image/jpeg",
-      cat: msj.type === "image" ? "foto_cliente" : "otro",
-    };
-    contenido = m?.caption?.trim() || "[el cliente envió una imagen]";
+    const mime = m?.mime_type ?? (msj.type === "image" ? "image/jpeg" : "application/pdf");
+    adjunto = { id: m?.id, mime, cat: msj.type === "image" ? "foto_cliente" : "otro" };
+    const etiqueta = msj.type === "image"
+      ? "[el cliente envió una imagen]"
+      : `[el cliente envió un documento${m?.filename ? `: ${m.filename}` : ""}]`;
+    const base = m?.caption?.trim() ? `${etiqueta} ${m.caption.trim()}` : etiqueta;
+    // PAZ lee el contenido del archivo (factura con razón social/RUT, foto
+    // del escáner, etc.) para no pedir datos que el cliente ya mandó.
+    let leido = "";
+    try { leido = await leerAdjunto(m?.id, mime); } catch (e) { console.error("No se pudo leer el adjunto:", e); }
+    contenido = leido ? `${base}\n[lo que dice el archivo] ${leido}` : base;
   } else if (msj.type === "location") {
     const l = msj.location ?? {};
     const texto = [l.name, l.address].filter(Boolean).join(", ");
