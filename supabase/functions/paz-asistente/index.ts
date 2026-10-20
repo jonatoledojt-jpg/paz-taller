@@ -42,7 +42,7 @@ const limpiar = (s: string) => String(s ?? "").replace(/[(),]/g, " ").trim();
 
 function herramientas(esJefe: boolean) {
   const base = [
-    { name: "buscar_ot", description: "Busca órdenes de trabajo (OT) por número de OT, nombre de cliente o patente. Devuelve estado de reparación, ubicación física, si está cobrada, cliente, patente y vehículo.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, nombre de cliente o patente" } }, required: ["consulta"], additionalProperties: false } },
+    { name: "buscar_ot", description: "Busca órdenes de trabajo (OT) y clientes por número de OT, nombre de cliente, patente o TELÉFONO del cliente. Sirve para '¿ves a este cliente?' o '¿de quién es este número?': devuelve los clientes que calzan (aunque no tengan OT) y, si hay, sus OT con estado, ubicación física, si está cobrada, patente y vehículo.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, nombre de cliente, patente o teléfono" } }, required: ["consulta"], additionalProperties: false } },
     { name: "pendientes", description: "Lo que está esperando acción ahora: casos de WhatsApp que necesitan respuesta humana, y módulos por recepcionar.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "agenda", description: "Qué hay agendado (visitas a terreno o llegadas de módulo). Por defecto los próximos 7 días.", input_schema: { type: "object", properties: { dias: { type: "integer", description: "días hacia adelante, por defecto 7" } }, additionalProperties: false } },
     { name: "historial_patente", description: "Las últimas OT de una patente.", input_schema: { type: "object", properties: { patente: { type: "string" } }, required: ["patente"], additionalProperties: false } },
@@ -56,13 +56,53 @@ function herramientas(esJefe: boolean) {
   return base;
 }
 
+// Clientes que calzan con la consulta: por nombre, y si trae dígitos (un
+// teléfono o RUT), por teléfono (comparando solo los dígitos, porque en la
+// base pueden estar con +, espacios o guiones). Así PAZ sí puede contestar
+// "¿ves a ese cliente?" con un número.
+async function clientesQueCalzan(q: string) {
+  const raw = limpiar(q);
+  const digitos = raw.replace(/\D/g, "");
+  const out = new Map<any, any>();
+  if (raw && !/^\+?\d[\d\s-]*$/.test(raw)) {
+    const { data } = await admin.from("clientes").select("id,nombre,telefono").ilike("nombre", `%${raw}%`).limit(10);
+    for (const c of data ?? []) out.set(c.id, c);
+  }
+  if (digitos.length >= 7) {
+    const sig = digitos.slice(-8); // parte única del móvil chileno
+    const { data: todos } = await admin.from("clientes").select("id,nombre,telefono").limit(1000);
+    for (const c of todos ?? []) {
+      const td = String(c.telefono || "").replace(/\D/g, "");
+      if (td && (td.includes(sig) || sig.includes(td.slice(-8)))) out.set(c.id, c);
+    }
+  }
+  return [...out.values()];
+}
+
+// El teléfono del cliente casi nunca está en la ficha (clientes.telefono);
+// vive en las conversaciones de WhatsApp. Así que para "¿ves a este
+// cliente?" por número, se busca ahí y se traen sus casos.
+async function contactoWhatsApp(q: string) {
+  const digitos = limpiar(q).replace(/\D/g, "");
+  if (digitos.length < 7) return null;
+  const sig = digitos.slice(-8);
+  const { data: convs } = await admin.from("nexa_conversaciones").select("id,telefono").limit(2000);
+  const match = (convs ?? []).filter((c: any) => String(c.telefono || "").replace(/\D/g, "").includes(sig));
+  if (!match.length) return null;
+  const ids = match.map((c: any) => c.id);
+  const { data: casos } = await admin.from("casos")
+    .select("numero_caso,cliente_nombre,patente,vehiculo_modelo,falla_reportada,resumen_tecnico,estado_caso,modo,orden_id")
+    .in("conversacion_id", ids).order("actualizado_en", { ascending: false }).limit(10);
+  return { escribio_por_whatsapp: true, casos: casos ?? [] };
+}
+
 async function buscarOrdenes(q: string, esJefe: boolean) {
   const like = `%${limpiar(q)}%`;
-  const [{ data: cls }, { data: vhs }] = await Promise.all([
-    admin.from("clientes").select("id").ilike("nombre", like),
+  const [cls, { data: vhs }] = await Promise.all([
+    clientesQueCalzan(q),
     admin.from("vehiculos").select("id").ilike("patente", like.toUpperCase()),
   ]);
-  const cids = (cls ?? []).map((x: any) => x.id);
+  const cids = cls.map((x: any) => x.id);
   const vids = (vhs ?? []).map((x: any) => x.id);
   const campos = "id,numero_ot,estado,origen,tipo_trabajo,tipo_modulo,sistema,ubicacion,reparacion,comercial,pagado_en,entregado_en,fecha_ingreso,fecha_agendada,sintoma_cliente,clientes(nombre),vehiculos(patente,marca,modelo,anio)"
     + (esJefe ? ",monto_cotizado,monto_final,numero_factura" : "");
@@ -130,8 +170,16 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
       });
     }
     if (nombre === "buscar_ot") {
-      const r = await buscarOrdenes(input?.consulta ?? "", false);
-      return r.length ? JSON.stringify(r) : "No encontré ninguna OT con eso.";
+      const q = input?.consulta ?? "";
+      const [ots, cls, wa] = await Promise.all([
+        buscarOrdenes(q, false), clientesQueCalzan(q), contactoWhatsApp(q),
+      ]);
+      if (!ots.length && !cls.length && !wa) return "No encontré ninguna OT, cliente ni contacto de WhatsApp con eso.";
+      return JSON.stringify({
+        ordenes: ots,
+        clientes_encontrados: cls.map((c: any) => ({ nombre: c.nombre, telefono: c.telefono })),
+        contacto_whatsapp: wa, // si el número escribió por WhatsApp: sus casos
+      });
     }
     if (nombre === "montos_ot") {
       const r = await buscarOrdenes(input?.consulta ?? "", true);
