@@ -468,6 +468,29 @@ async function procesarMensaje(paz: any, msj: any) {
       metodo: "EQUIPO", firma_ok: true,
       nota: `mensaje del equipo (${telefono}) — ventana renovada`, cuerpo: "",
     }).then(() => {}, () => {});
+
+    // Si el miembro hace una CONSULTA (no solo un saludo para mantener la
+    // ventana), PAZ le responde como asistente del equipo mirando la base
+    // (función paz-asistente): estado de OT, pendientes, agenda, historial;
+    // la plata solo al jefe. Los saludos/acks no gatillan nada, para no
+    // hacer ruido cada mañana. Solo texto por ahora (audio del equipo no).
+    const texto = msj.type === "text" ? String(msj.text?.body ?? "").trim() : "";
+    const base = texto.toLowerCase().replace(/[!¡.,…]+/g, " ").trim();
+    const esAck = !base ||
+      (base.length <= 18 &&
+        /^(hola|buenas|buen[oa]s? d[ií]as?|buen[oa]s? tardes?|gracias|ok|oka|okay|dale|listo|ya|perfecto|bien|todo bien|👍|🙌|💪|🙏|👋|✅)\b/.test(base)) ||
+      /^[\s👍🙌💪🙏👋✅😀🙂👌]+$/u.test(texto);
+    if (texto && !esAck) {
+      try {
+        await fetch(`${URL_SUPABASE}/functions/v1/paz-asistente`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-paz-key": Deno.env.get("PAZ_EQUIPO_KEY") ?? "" },
+          body: JSON.stringify({ telefono, texto }),
+        });
+      } catch (e) {
+        console.error("No se pudo invocar paz-asistente:", e);
+      }
+    }
     return;
   }
 

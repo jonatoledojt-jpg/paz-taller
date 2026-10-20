@@ -1,0 +1,216 @@
+// PAZ asistente del equipo (20-10-2026).
+//
+// Cuando un miembro del equipo (paz_equipo) le pregunta algo a PAZ por
+// WhatsApp, esta función responde consultando la MISMA base que ve la app:
+// estado de OT, pendientes, agenda, historial de una patente. La plata
+// (montos, facturado del mes) SOLO se le dice al JEFE (area='dueno') —
+// Diego y Osores no tienen siquiera la herramienta.
+//
+// La llama la función `whatsapp` cuando reconoce un mensaje del equipo
+// (le pasa {telefono, texto} + la cabecera x-paz-key). No es cliente-facing.
+//
+// Razonamiento: Claude (claude-sonnet-5-5) con tool-calling. Las consultas
+// a la base las ejecuta esta función con service_role (así puede leer la
+// plata para el jefe), pero las herramientas de plata solo existen si quien
+// pregunta es el jefe, y el ejecutor lo revuelve a comprobar (doble llave).
+//
+// Desplegar:  supabase functions deploy paz-asistente --use-api
+// Secretos:   ANTHROPIC_API_KEY, WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, PAZ_EQUIPO_KEY
+
+import { createClient } from "jsr:@supabase/supabase-js@2";
+
+const admin = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+);
+const GRAPH = "https://graph.facebook.com/v21.0";
+const MODELO = "claude-sonnet-5-5";
+
+async function enviarWA(para: string, texto: string) {
+  const r = await fetch(`${GRAPH}/${Deno.env.get("WHATSAPP_PHONE_ID")}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${Deno.env.get("WHATSAPP_TOKEN")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ messaging_product: "whatsapp", to: para, type: "text", text: { body: texto } }),
+  });
+  if (!r.ok) console.error("paz-asistente: fallo envío", r.status, (await r.text()).slice(0, 300));
+  return r.ok;
+}
+
+const limpiar = (s: string) => String(s ?? "").replace(/[(),]/g, " ").trim();
+
+function herramientas(esJefe: boolean) {
+  const base = [
+    { name: "buscar_ot", description: "Busca órdenes de trabajo (OT) por número de OT, nombre de cliente o patente. Devuelve estado de reparación, ubicación física, si está cobrada, cliente, patente y vehículo.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, nombre de cliente o patente" } }, required: ["consulta"], additionalProperties: false } },
+    { name: "pendientes", description: "Lo que está esperando acción ahora: casos de WhatsApp que necesitan respuesta humana, y módulos por recepcionar.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
+    { name: "agenda", description: "Qué hay agendado (visitas a terreno o llegadas de módulo). Por defecto los próximos 7 días.", input_schema: { type: "object", properties: { dias: { type: "integer", description: "días hacia adelante, por defecto 7" } }, additionalProperties: false } },
+    { name: "historial_patente", description: "Las últimas OT de una patente.", input_schema: { type: "object", properties: { patente: { type: "string" } }, required: ["patente"], additionalProperties: false } },
+  ];
+  if (esJefe) base.push(
+    { name: "montos_ot", description: "SOLO JEFE. Los montos (plata) de una OT: cotizado, final cobrado y número de factura.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, cliente o patente" } }, required: ["consulta"], additionalProperties: false } },
+    { name: "facturado_mes", description: "SOLO JEFE. Cuánta plata entró en el mes (suma neta de lo cobrado, por fecha de pago).", input_schema: { type: "object", properties: { mes: { type: "string", description: "AAAA-MM-01; por defecto el mes actual" } }, additionalProperties: false } },
+  );
+  return base;
+}
+
+async function buscarOrdenes(q: string, esJefe: boolean) {
+  const like = `%${limpiar(q)}%`;
+  const [{ data: cls }, { data: vhs }] = await Promise.all([
+    admin.from("clientes").select("id").ilike("nombre", like),
+    admin.from("vehiculos").select("id").ilike("patente", like.toUpperCase()),
+  ]);
+  const cids = (cls ?? []).map((x: any) => x.id);
+  const vids = (vhs ?? []).map((x: any) => x.id);
+  const campos = "numero_ot,estado,origen,tipo_trabajo,tipo_modulo,sistema,ubicacion,reparacion,comercial,pagado_en,entregado_en,fecha_ingreso,fecha_agendada,sintoma_cliente,clientes(nombre),vehiculos(patente,marca,modelo,anio)"
+    + (esJefe ? ",monto_cotizado,monto_final,numero_factura" : "");
+  const orParts = [`numero_ot.ilike.${like}`];
+  if (cids.length) orParts.push(`cliente_id.in.(${cids.join(",")})`);
+  if (vids.length) orParts.push(`vehiculo_id.in.(${vids.join(",")})`);
+  const { data } = await admin.from("ordenes").select(campos)
+    .or(orParts.join(",")).order("creado_en", { ascending: false }).limit(8);
+  return data ?? [];
+}
+
+async function ejecutar(nombre: string, input: any, esJefe: boolean): Promise<string> {
+  // Doble llave: aunque la herramienta no debería existir para no-jefes,
+  // el ejecutor vuelve a cortar la plata.
+  if ((nombre === "montos_ot" || nombre === "facturado_mes") && !esJefe) {
+    return "No autorizado: la información de dinero es solo para el jefe.";
+  }
+  try {
+    if (nombre === "buscar_ot") {
+      const r = await buscarOrdenes(input?.consulta ?? "", false);
+      return r.length ? JSON.stringify(r) : "No encontré ninguna OT con eso.";
+    }
+    if (nombre === "montos_ot") {
+      const r = await buscarOrdenes(input?.consulta ?? "", true);
+      return r.length ? JSON.stringify(r.map((o: any) => ({
+        numero_ot: o.numero_ot, cliente: o.clientes?.nombre, patente: o.vehiculos?.patente,
+        monto_cotizado: o.monto_cotizado, monto_final: o.monto_final, numero_factura: o.numero_factura,
+      }))) : "No encontré ninguna OT con eso.";
+    }
+    if (nombre === "pendientes") {
+      const { data: casos } = await admin.from("casos")
+        .select("numero_caso,cliente_nombre,patente,vehiculo_modelo,motivo_alerta")
+        .eq("modo", "produccion").eq("archivado", false).eq("requiere_respuesta_humana", true);
+      const { data: recep } = await admin.from("ordenes")
+        .select("numero_ot,clientes(nombre),vehiculos(patente)").eq("estado", "retirado").limit(20);
+      return JSON.stringify({
+        casos_esperando_respuesta: casos ?? [],
+        modulos_por_recepcionar: (recep ?? []).map((o: any) => ({ numero_ot: o.numero_ot, cliente: o.clientes?.nombre, patente: o.vehiculos?.patente })),
+      });
+    }
+    if (nombre === "agenda") {
+      const dias = Number(input?.dias) > 0 ? Number(input.dias) : 7;
+      const hoy = new Date(); const fin = new Date(Date.now() + dias * 86400000);
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+      const { data } = await admin.from("ordenes")
+        .select("numero_ot,fecha_agendada,franja,origen,tipo_trabajo,clientes(nombre),vehiculos(patente)")
+        .gte("fecha_agendada", iso(hoy)).lte("fecha_agendada", iso(fin))
+        .order("fecha_agendada", { ascending: true }).limit(30);
+      const r = (data ?? []).map((o: any) => ({ numero_ot: o.numero_ot, fecha: o.fecha_agendada, franja: o.franja, origen: o.origen, cliente: o.clientes?.nombre, patente: o.vehiculos?.patente }));
+      return r.length ? JSON.stringify(r) : `No hay nada agendado en los próximos ${dias} días.`;
+    }
+    if (nombre === "historial_patente") {
+      const pat = limpiar(input?.patente ?? "").toUpperCase();
+      const { data: vh } = await admin.from("vehiculos").select("id,marca,modelo,anio").ilike("patente", `%${pat}%`).limit(1).maybeSingle();
+      if (!vh) return "No tengo ninguna patente parecida registrada.";
+      const { data } = await admin.from("ordenes")
+        .select("numero_ot,estado,reparacion,pagado_en,sintoma_cliente,fecha_ingreso")
+        .eq("vehiculo_id", vh.id).order("creado_en", { ascending: false }).limit(5);
+      return JSON.stringify({ vehiculo: vh, ultimas_ot: data ?? [] });
+    }
+    if (nombre === "facturado_mes") {
+      const mes = /^\d{4}-\d{2}/.test(input?.mes ?? "") ? input.mes.slice(0, 7) + "-01" : new Date().toISOString().slice(0, 7) + "-01";
+      const ini = new Date(mes); const fin = new Date(ini); fin.setMonth(fin.getMonth() + 1);
+      const { data } = await admin.from("ordenes").select("monto_final,pagado_en")
+        .not("pagado_en", "is", null).gte("pagado_en", ini.toISOString()).lt("pagado_en", fin.toISOString());
+      const total = (data ?? []).reduce((s: number, o: any) => s + (Number(o.monto_final) || 0), 0);
+      return JSON.stringify({ mes: mes.slice(0, 7), facturado_neto: total, ots_cobradas: (data ?? []).length, nota: "Es lo cobrado (neto). El margen completo (con gastos y mano de obra) está en la app." });
+    }
+    return "Herramienta desconocida.";
+  } catch (e) {
+    console.error("ejecutar", nombre, e);
+    return "Hubo un error consultando eso.";
+  }
+}
+
+async function turno(apiKey: string, system: string, messages: any[], tools: any[]) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model: MODELO, max_tokens: 1024, system, messages, tools }),
+  });
+  if (!r.ok) throw new Error(`IA ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  const d = await r.json();
+  return { content: d?.content ?? [], stop: d?.stop_reason };
+}
+
+async function responder(apiKey: string, system: string, texto: string, esJefe: boolean): Promise<string> {
+  const tools = herramientas(esJefe);
+  const messages: any[] = [{ role: "user", content: texto }];
+  let salida = "";
+  for (let ronda = 0; ronda < 6; ronda++) {
+    const { content, stop } = await turno(apiKey, system, messages, tools);
+    for (const b of content) if (b?.type === "text" && b.text) salida += b.text;
+    const usos = content.filter((b: any) => b?.type === "tool_use");
+    if (stop === "tool_use" && usos.length) {
+      messages.push({ role: "assistant", content });
+      const resultados: any[] = [];
+      for (const tu of usos) {
+        const res = await ejecutar(tu.name, tu.input ?? {}, esJefe);
+        resultados.push({ type: "tool_result", tool_use_id: tu.id, content: String(res).slice(0, 6000) });
+      }
+      messages.push({ role: "user", content: resultados });
+      salida = "";
+      continue;
+    }
+    break;
+  }
+  return salida.replaceAll("**", "").replaceAll("*", "").trim();
+}
+
+Deno.serve(async (req) => {
+  if (req.headers.get("x-paz-key") !== Deno.env.get("PAZ_EQUIPO_KEY")) {
+    return new Response("no autorizado", { status: 401 });
+  }
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) return Response.json({ error: "falta ANTHROPIC_API_KEY" }, { status: 503 });
+
+  let body: any = {};
+  try { body = await req.json(); } catch { /* vacío */ }
+  const telefono = String(body?.telefono ?? "").trim();
+  const texto = String(body?.texto ?? "").trim();
+  const probar = body?.probar === true || new URL(req.url).searchParams.get("probar") === "1";
+  if (!telefono || !texto) return Response.json({ error: "faltan telefono/texto" }, { status: 400 });
+
+  const { data: miembro } = await admin.from("paz_equipo")
+    .select("nombre,area,activo").eq("telefono", telefono).eq("activo", true).maybeSingle();
+  if (!miembro) return Response.json({ error: "no es del equipo" }, { status: 403 });
+  const esJefe = miembro.area === "dueno";
+
+  const system = [
+    `Eres PAZ, la asistente del taller Paz Services (camiones Mercedes-Benz, Talca, Chile).`,
+    `Estás hablando por WhatsApp con ${miembro.nombre}, del equipo (${esJefe ? "el JEFE" : "no es el jefe"}).`,
+    `Responde su consulta operativa usando las herramientas para mirar la base (la misma que ve la app): estado de OT, pendientes, agenda, historial de una patente.`,
+    `Habla español chileno, directo y BREVE (es WhatsApp): sin rodeos, sin markdown, frases cortas.`,
+    `Nunca inventes. Si una herramienta no encuentra nada, dilo claro. Si no entiendes la consulta, pide que la precise.`,
+    esJefe
+      ? `${miembro.nombre} es el jefe: puedes darle montos y lo facturado del mes con las herramientas de plata.`
+      : `IMPORTANTE: NO des montos, precios, cotizaciones ni nada de dinero. Si pregunta por plata, dile con amabilidad que esa información es solo para el jefe y que la revise en la app.`,
+    `No eres la PAZ que habla con clientes: acá ayudas al equipo. No agendas ni cambias nada, solo consultas e informas.`,
+  ].join("\n");
+
+  try {
+    const respuesta = await responder(apiKey, system, texto, esJefe);
+    const txt = respuesta || "No pude armar una respuesta. ¿Me lo preguntas de otra forma?";
+    if (!probar) await enviarWA(telefono, txt);
+    return Response.json({ ok: true, jefe: esJefe, respuesta: txt });
+  } catch (e) {
+    console.error("paz-asistente error:", e);
+    if (!probar) await enviarWA(telefono, "Uf, no pude revisar eso ahora. Inténtalo de nuevo en un rato.");
+    return Response.json({ ok: false, error: String(e) }, { status: 500 });
+  }
+});
