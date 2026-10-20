@@ -824,6 +824,12 @@ async function procesarMensaje(paz: any, msj: any) {
     const { casos } = JSON.parse(limpio);
     if (Array.isArray(casos) && casos.length) {
       await sincronizarCasos(paz, conversacion_id, telefono, casos);
+      // Si el equipo ya está atendiendo y falta un dato, PAZ se lo pide al
+      // técnico (no al cliente). Solo el último caso (el que se conversa).
+      if (equipoAtendiendo) {
+        await pedirDatoAlEquipo(conversacion_id, casos[casos.length - 1]).catch((e) =>
+          console.error("No se pudo pedir el dato al equipo:", e));
+      }
     }
   } catch (e) {
     console.error("No se pudieron armar los casos:", e);
@@ -910,6 +916,48 @@ async function procesarEcho(paz: any, echo: any) {
     p_wa_id: echo?.id ?? null, p_humano_asistido: true,
   });
   if (error) console.error("No se pudo guardar el echo:", error);
+}
+
+// Ping al técnico: si el equipo YA está atendiendo una conversación y al caso
+// le falta un dato, PAZ se lo pide a la PERSONA que corresponde (no al cliente,
+// para no acosarlo con algo que quizás ya dio en persona). Rutea por tipo:
+// módulo->laboratorio (Diego), terreno/agenda->coordinación (Osores), resto->
+// dueño. Dedup por caso/conversación (no repite en 1 hora) y respeta la ventana
+// del destinatario. El equipo responde/completa desde su lado.
+async function pedirDatoAlEquipo(conversacion_id: number, caso: any) {
+  const faltan = Array.isArray(caso?.faltantes) ? caso.faltantes.filter(Boolean) : [];
+  if (!faltan.length) return;
+
+  // Dedup: no repetir para la misma conversación en la última hora.
+  const hace1h = new Date(Date.now() - 3600_000).toISOString();
+  const { data: ya } = await admin.from("wa_log").select("id")
+    .eq("metodo", "PAZ-PIDE-DATO").ilike("nota", `conv ${conversacion_id}:%`)
+    .gte("creado_en", hace1h).limit(1).maybeSingle();
+  if (ya) return;
+
+  const area = caso?.modulo ? "laboratorio"
+    : (caso?.atencion === "terreno" ? "coordinacion" : "dueno");
+  let dest: any = null;
+  const r1 = await admin.from("paz_equipo")
+    .select("telefono,nombre,ultimo_inbound_en").eq("area", area).eq("activo", true).limit(1).maybeSingle();
+  dest = r1.data;
+  if (!dest) {
+    const r2 = await admin.from("paz_equipo")
+      .select("telefono,nombre,ultimo_inbound_en").eq("area", "dueno").eq("activo", true).limit(1).maybeSingle();
+    dest = r2.data;
+  }
+  if (!dest) return;
+  const abierta = dest.ultimo_inbound_en && (Date.now() - Date.parse(dest.ultimo_inbound_en)) < 24 * 3600 * 1000;
+  if (!abierta) return;   // sin ventana no se le puede escribir; se reintenta después
+
+  const quien = caso?.cliente || "un cliente";
+  const ref = caso?.patente || caso?.vehiculo || "";
+  const txt = `👋 Estás atendiendo a ${quien}${ref ? ` (${ref})` : ""} por WhatsApp. Para dejar el caso completo me falta: ${faltan.join(", ")}. ¿Me lo pasas tú o se lo preguntas al cliente? No le repregunto para no acosarlo.`;
+  const ok = await responderWhatsApp(dest.telefono, txt);
+  await admin.from("wa_log").insert({
+    metodo: "PAZ-PIDE-DATO", firma_ok: ok.ok,
+    nota: `conv ${conversacion_id}: ${dest.nombre} <- ${faltan.join(", ")}`.slice(0, 500), cuerpo: "",
+  }).then(() => {}, () => {});
 }
 
 Deno.serve(async (req) => {
