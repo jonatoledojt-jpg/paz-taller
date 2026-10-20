@@ -587,6 +587,10 @@ async function procesarMensaje(paz: any, msj: any) {
   const { data: apr } = await paz.from("paz_aprendizajes")
     .select("tipo,titulo,contenido").eq("activo", true).order("id");
   const aprendizajes = bloqueAprendizajes(apr);
+  // Para armar la ficha solo pesan los CRITERIOS (qué es un caso, qué no),
+  // no el estilo de conversación: así "no abras caso por un pago o un sticker"
+  // también aplica cuando decide si crear el caso, no solo al responder.
+  const aprCriterios = bloqueAprendizajes((apr ?? []).filter((a: any) => a.tipo !== "ejemplo"));
 
   const contexto = await contextoDelSistema(paz, telefono, historial, conversacion_id);
 
@@ -608,7 +612,7 @@ async function procesarMensaje(paz: any, msj: any) {
   // Los casos se arman igual, conteste PAZ o no: sirven para que el
   // equipo vea de qué se trata sin leer toda la conversación.
   try {
-    const crudo = await llamarIA("claude-sonnet-5-5", cfg.prompt_ficha, historial);
+    const crudo = await llamarIA("claude-sonnet-5-5", [cfg.prompt_ficha, aprCriterios].filter(Boolean).join("\n\n"), historial);
     const limpio = crudo.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
     const { casos } = JSON.parse(limpio);
     if (Array.isArray(casos) && casos.length) {
