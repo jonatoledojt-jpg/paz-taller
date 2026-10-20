@@ -947,8 +947,12 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 
       <!-- Inicio: bandeja de casos -->
       <div id="nexaInicio">
-        <button class="btn" id="btnNexaNuevo">Atender un caso nuevo</button>
-        <div style="height:10px"></div>
+        <!-- "Atender un caso nuevo" (chat interno de copiar/pegar) era de la
+             etapa 1, antes de WhatsApp. Ahora TODO entra por WhatsApp (es el
+             filtro del taller), así que se esconde. Se deja en el DOM, no se
+             borra, por si alguna vez se quiere reactivar. (20-10-2026) -->
+        <button class="btn oculto" id="btnNexaNuevo">Atender un caso nuevo</button>
+        <div style="height:10px" class="oculto"></div>
         <button class="btn claro oculto" id="btnEntrenar">Enseñarle a PAZ</button>
 
         <!-- Modo aprendizaje: mientras dura el mes de entrenamiento, los
@@ -970,8 +974,13 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         </div>
         <div id="nexaCasos" class="lista"></div>
 
-        <span class="rotulo sep">Conversaciones desde la app</span>
-        <div id="nexaConvApp" class="lista"></div>
+        <!-- Escondido (20-10-2026): las conversaciones nacidas dentro de la
+             app eran del chat interno viejo. Todo entra por WhatsApp ahora.
+             El div queda en el DOM para no romper cargarConversacionesApp(). -->
+        <div class="oculto">
+          <span class="rotulo sep">Conversaciones desde la app</span>
+          <div id="nexaConvApp" class="lista"></div>
+        </div>
       </div>
 
       <!-- Conversación abierta -->
