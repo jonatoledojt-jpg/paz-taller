@@ -98,6 +98,33 @@ async function contactoWhatsApp(q: string) {
   return { escribio_por_whatsapp: true, casos: casos ?? [] };
 }
 
+// Un cliente que escribió por WhatsApp SIEMPRE tiene un caso con su conversación,
+// aunque todavía no tenga OT. buscar_ot solo veía las ÓRDENES y los contactos por
+// NÚMERO, así que buscar por nombre o por número de caso no lo encontraba y PAZ
+// decía "no tengo el número". Esto busca el caso por numero_caso / nombre /
+// patente y trae el teléfono de su conversación de WhatsApp.
+async function buscarCasos(q: string) {
+  const raw = limpiar(q).replace(/[,()*]/g, " ").trim();
+  if (!raw) return [];
+  const { data: casos } = await admin.from("casos")
+    .select("numero_caso,cliente_nombre,patente,vehiculo_modelo,falla_reportada,estado_caso,modo,orden_id,conversacion_id")
+    .or(`numero_caso.ilike.%${raw}%,cliente_nombre.ilike.%${raw}%,patente.ilike.%${raw.toUpperCase()}%`)
+    .eq("archivado", false).order("actualizado_en", { ascending: false }).limit(8);
+  if (!casos || !casos.length) return [];
+  const convIds = [...new Set(casos.map((c: any) => c.conversacion_id).filter(Boolean))];
+  const fonos: Record<number, string> = {};
+  if (convIds.length) {
+    const { data: convs } = await admin.from("nexa_conversaciones").select("id,telefono").in("id", convIds);
+    for (const cv of (convs ?? [])) fonos[(cv as any).id] = (cv as any).telefono;
+  }
+  return casos.map((c: any) => ({
+    numero_caso: c.numero_caso, cliente: c.cliente_nombre, patente: c.patente,
+    vehiculo: c.vehiculo_modelo, falla: c.falla_reportada, estado: c.estado_caso,
+    tiene_ot: !!c.orden_id,
+    telefono: c.conversacion_id ? (fonos[c.conversacion_id] || null) : null,
+  }));
+}
+
 async function buscarOrdenes(q: string, esJefe: boolean) {
   const like = `%${limpiar(q)}%`;
   const [cls, { data: vhs }] = await Promise.all([
@@ -295,14 +322,15 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
     }
     if (nombre === "buscar_ot") {
       const q = input?.consulta ?? "";
-      const [ots, cls, wa] = await Promise.all([
-        buscarOrdenes(q, false), clientesQueCalzan(q), contactoWhatsApp(q),
+      const [ots, cls, wa, csos] = await Promise.all([
+        buscarOrdenes(q, false), clientesQueCalzan(q), contactoWhatsApp(q), buscarCasos(q),
       ]);
-      if (!ots.length && !cls.length && !wa) return "No encontré ninguna OT, cliente ni contacto de WhatsApp con eso.";
+      if (!ots.length && !cls.length && !wa && !csos.length) return "No encontré ninguna OT, cliente, caso ni contacto de WhatsApp con eso.";
       return JSON.stringify({
         ordenes: ots,
         clientes_encontrados: cls.map((c: any) => ({ nombre: c.nombre, telefono: c.telefono })),
         contacto_whatsapp: wa, // si el número escribió por WhatsApp: sus casos
+        casos: csos, // casos (aunque no tengan OT todavía) con su teléfono de WhatsApp
       });
     }
     if (nombre === "montos_ot") {
