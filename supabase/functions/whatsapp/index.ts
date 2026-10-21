@@ -642,6 +642,13 @@ async function procesarMensaje(paz: any, msj: any) {
 
   const conversacion_id = await conversacionDe(paz, telefono);
 
+  // Si este cliente tenía un caso viejo en modo 'aprendizaje' (de cuando PAZ
+  // estaba en escucha/entrenamiento) y el sistema ya está en vivo, lo
+  // promovemos a 'produccion' apenas vuelve a escribir. Así su aviso al equipo
+  // vuelve a funcionar sin tener que pasar a mano todos los casos viejos (eso
+  // llenaba la app de pendientes). La RPC respeta el modo entrenamiento.
+  try { await paz.rpc("paz_promover_conversacion", { p_conversacion_id: conversacion_id }); } catch (_) {}
+
   // Tope por hora. Se cuenta antes de guardar y antes de llamar a la IA.
   const desde = new Date(Date.now() - 3600_000).toISOString();
   const { count } = await paz.from("nexa_mensajes")

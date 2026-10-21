@@ -129,6 +129,36 @@ async function destinoCliente(destino: string) {
     const c = (convs ?? []).find((x: any) => String(x.telefono || "").replace(/\D/g, "").includes(sig));
     return { telefono: dig, conversacion_id: c?.id ?? null };
   }
+  // ¿Es una referencia de caso? (CASO-2026-0129). El aviso al equipo entrega el
+  // número de caso como "destino" cuando el cliente todavía no tiene nombre ni
+  // patente cargados — así que hay que saber resolverlo por el caso mismo, que
+  // SIEMPRE tiene su conversación (el cliente escribió por WhatsApp). Sin esto,
+  // PAZ decía "no tengo el número del cliente" aunque estuviera ahí.
+  if (/caso/i.test(raw)) {
+    let cidCaso: number | null = null;
+    // 1) match del texto completo del número de caso
+    const r1 = await admin.from("casos").select("conversacion_id")
+      .ilike("numero_caso", `%${raw.replace(/\s+/g, "-")}%`)
+      .not("conversacion_id", "is", null)
+      .order("actualizado_en", { ascending: false }).limit(1);
+    cidCaso = r1.data?.[0]?.conversacion_id ?? null;
+    // 2) por el número de secuencia suelto (0129 / 129)
+    if (!cidCaso) {
+      const mSeq = raw.match(/(\d+)\D*$/);
+      if (mSeq) {
+        const r2 = await admin.from("casos").select("conversacion_id")
+          .ilike("numero_caso", `%-${mSeq[1].padStart(4, "0")}`)
+          .not("conversacion_id", "is", null)
+          .order("actualizado_en", { ascending: false }).limit(1);
+        cidCaso = r2.data?.[0]?.conversacion_id ?? null;
+      }
+    }
+    if (cidCaso) {
+      const { data: cc } = await admin.from("nexa_conversaciones")
+        .select("telefono").eq("id", cidCaso).maybeSingle();
+      return { telefono: cc?.telefono ? String(cc.telefono).replace(/\D/g, "") : null, conversacion_id: cidCaso };
+    }
+  }
   let cid: number | null = null;
   const ots = await buscarOrdenes(destino, false);
   if (ots.length) {
