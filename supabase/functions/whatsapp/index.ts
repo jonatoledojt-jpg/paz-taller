@@ -839,6 +839,9 @@ async function procesarMensaje(paz: any, msj: any) {
     }).then(() => {}, () => {});
   }
 
+  // ¿PAZ se comprometió a consultar algo con el equipo? Si lo dice al cliente,
+  // el equipo tiene que recibir de verdad la pregunta (se actúa más abajo).
+  let deferAlEquipo = false;
   if (cfg.responde_whatsapp && !equipoAtendiendo && !esPago) {
     const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, contexto]
       .filter(Boolean).join("\n\n");
@@ -856,6 +859,10 @@ async function procesarMensaje(paz: any, msj: any) {
         p_wa_id: null, p_humano_asistido: false,
       });
       historial.push({ role: "assistant", content: limpio });
+      // Si le dijo al cliente que consulta/pregunta con el equipo, lo marcamos
+      // para que el equipo reciba de verdad la pregunta (no quede solo en texto).
+      deferAlEquipo = /\bequipo\b/i.test(limpio) &&
+        /(consult|pregunt|lo veo con|lo reviso con|averig|coordin|me confirm|me dig)/i.test(limpio);
     }
   }
 
@@ -884,6 +891,25 @@ async function procesarMensaje(paz: any, msj: any) {
     }
   } catch (e) {
     console.error("No se pudieron armar los casos:", e);
+  }
+
+  // Si PAZ le prometió al cliente que consulta con el equipo, que el equipo lo
+  // reciba DE VERDAD: re-arma el caso con la pregunta del cliente como motivo y
+  // dispara el aviso al instante. Sin esto, "lo consulto con el equipo" era solo
+  // una frase para el cliente y no le llegaba a nadie (bug real, 20-10).
+  if (deferAlEquipo) {
+    try {
+      await paz.rpc("paz_consulta_equipo", {
+        p_conversacion_id: conversacion_id,
+        p_motivo: `El cliente pregunta: ${String(contenido || "").replace(/\s+/g, " ").trim()}`.slice(0, 280),
+      });
+      await fetch(`${URL_SUPABASE}/functions/v1/paz-equipo?a=alertas`, {
+        method: "POST",
+        headers: { "x-paz-key": Deno.env.get("PAZ_EQUIPO_KEY") ?? "" },
+      }).catch(() => {});
+    } catch (e) {
+      console.error("No se pudo pasar la consulta al equipo:", e);
+    }
   }
 }
 
