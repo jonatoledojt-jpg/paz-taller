@@ -482,6 +482,11 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <datalist id="dlClientes"></datalist>
         </div>
         <div class="campo">
+          <label for="fTelefono">Teléfono / WhatsApp</label>
+          <input id="fTelefono" inputmode="tel" autocomplete="tel" placeholder="+56 9 1234 5678">
+          <div class="pista">Identifica al cliente de forma única, mejor que el nombre.</div>
+        </div>
+        <div class="campo">
           <label for="fRut">RUT para facturar</label>
           <input id="fRut" autocomplete="on" inputmode="text" placeholder="76.543.210-9">
           <div class="pista" id="pistaRut"></div>
@@ -731,6 +736,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       <div id="edError" class="aviso oculto"></div>
       <div class="seccion">
         <div class="campo"><label for="edCliente">Cliente</label><input id="edCliente" list="dlClientes"></div>
+        <div class="campo"><label for="edTelefono">Teléfono / WhatsApp</label><input id="edTelefono" inputmode="tel" autocomplete="tel" placeholder="+56 9 1234 5678"></div>
         <div class="campo"><label for="edRut">RUT</label><input id="edRut" inputmode="text" placeholder="76.543.210-9"><div class="pista" id="edPistaRut"></div></div>
         <div class="campo"><label for="edPatente">Patente</label><input id="edPatente"></div>
         <div class="campo">
@@ -1989,6 +1995,7 @@ $("fFoto").onchange = async e => {
 $("btnGuardar").onclick = async () => {
   msg("nuevaError", "");
   const nombreCliente = $("fCliente").value.trim();
+  const telefono = $("fTelefono").value.replace(/\D/g, "");
   const rut = $("fRut").value.trim();
   const patente = $("fPatente").value.trim().toUpperCase();
   const tipo_trabajo = elegido("selTipoTrabajo") || "modulo";
@@ -2010,7 +2017,7 @@ $("btnGuardar").onclick = async () => {
   $("btnGuardar").disabled = true;
   $("btnGuardar").textContent = "Guardando…";
   try {
-    const cliente_id = await clienteConRut(nombreCliente, rut);
+    const cliente_id = await clienteConRut(nombreCliente, rut, telefono);
     let vehiculo_id = null;
     if (patente) vehiculo_id = await buscarOCrearVehiculo(patente, cliente_id);
 
@@ -2095,15 +2102,34 @@ function limpiarForm() {
   $("pistaSinAgendar").classList.add("oculto");
 }
 
-async function clienteConRut(nombre, rut) {
-  const { data } = await db.from("clientes").select("id,rut").ilike("nombre", nombre).limit(1);
+async function clienteConRut(nombre, rut, telefono) {
+  const fono = (telefono || "").replace(/\D/g, "") || null;
+  // 1) El teléfono es el identificador de oro: si lo hay, se busca por él primero.
+  if (fono) {
+    const { data: porFono } = await db.from("clientes").select("id,rut,telefono").eq("telefono", fono).limit(1);
+    if (porFono && porFono.length) {
+      const c = porFono[0];
+      if (rut && !c.rut) await db.from("clientes").update({ rut }).eq("id", c.id);
+      return c.id;
+    }
+  }
+  // 2) Por nombre, pero SOLO se reutiliza si no tiene otro teléfono distinto
+  //    (si lo tiene, es otra persona con el mismo nombre -> cliente nuevo).
+  const { data } = await db.from("clientes").select("id,rut,telefono").ilike("nombre", nombre).limit(1);
   if (data && data.length) {
     const c = data[0];
-    if (rut && !c.rut) await db.from("clientes").update({ rut }).eq("id", c.id);
-    return c.id;
+    const mismoDueno = !fono || !c.telefono || c.telefono === fono;
+    if (mismoDueno) {
+      const upd = {};
+      if (rut && !c.rut) upd.rut = rut;
+      if (fono && !c.telefono) upd.telefono = fono;
+      if (Object.keys(upd).length) await db.from("clientes").update(upd).eq("id", c.id);
+      return c.id;
+    }
   }
+  // 3) Cliente nuevo (nombre no visto, o mismo nombre pero otro teléfono).
   const { data: nuevo, error } = await db.from("clientes")
-    .insert({ nombre, rut: rut || null }).select("id").single();
+    .insert({ nombre, rut: rut || null, telefono: fono }).select("id").single();
   if (error) throw error;
   return nuevo.id;
 }
@@ -4532,6 +4558,11 @@ function llenarFormularioDesdeFicha(f, conv) {
   }
 
   $("fCliente").value = f.cliente ?? "";
+  // El teléfono es el identificador de oro: casi nunca está en la ficha, vive en
+  // la conversación de WhatsApp. Lo traemos de ahí y lo dejamos cargado en la OT.
+  $("fTelefono").value = f.telefono ?? "";
+  if (conv) db.from("nexa_conversaciones").select("telefono").eq("id", conv).maybeSingle()
+    .then(({ data }) => { if (data?.telefono && !$("fTelefono").value) $("fTelefono").value = data.telefono; });
   $("fPatente").value = (f.patente ?? "").toUpperCase();
   $("fModulo").value  = f.modulo ?? "";
   $("fSistema").value = f.sistema ?? "";
@@ -5756,13 +5787,14 @@ let editOrden = null;
 async function abrirEditarOT(ordenId) {
   msg("edError", "");
   const { data: o } = await db.from("ordenes")
-    .select("id,numero_ot,cliente_id,vehiculo_id,origen,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,cliente_id,vehiculo_id,origen,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,clientes(nombre,rut,telefono),vehiculos(patente)")
     .eq("id", ordenId).single();
   if (!o) return;
   editOrden = o;
   const esServicio = o.tipo_trabajo === "servicio";
   $("edTitulo").textContent = "Editar " + (o.numero_ot ?? "OT");
   $("edCliente").value = o.clientes?.nombre ?? "";
+  $("edTelefono").value = o.clientes?.telefono ?? "";
   $("edRut").value = o.clientes?.rut ?? "";
   $("edPistaRut").textContent = ""; $("edPistaRut").className = "pista";
   $("edPatente").value = o.vehiculos?.patente ?? "";
@@ -5795,7 +5827,7 @@ $("btnEditGuardar").onclick = async () => {
   try {
     const esServicio = editOrden.tipo_trabajo === "servicio";
     if (editOrden.cliente_id)
-      await db.from("clientes").update({ nombre, rut: $("edRut").value.trim() || null })
+      await db.from("clientes").update({ nombre, rut: $("edRut").value.trim() || null, telefono: $("edTelefono").value.replace(/\D/g, "") || null })
         .eq("id", editOrden.cliente_id);
     if (editOrden.vehiculo_id && patente) {
       const { error: ev } = await db.from("vehiculos").update({ patente }).eq("id", editOrden.vehiculo_id);
