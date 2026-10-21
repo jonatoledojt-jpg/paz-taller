@@ -1742,7 +1742,7 @@ async function cargarOrdenes() {
   // columna (estaCerrada), así que acá solo se descarta en el servidor
   // el cierre sin ambigüedad (rechazado); el resto se filtra en el cliente.
   const { data, error } = await db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,clientes(nombre,rut,telefono),vehiculos(patente)")
     .neq("comercial", "rechazado")
     .order("fecha_ingreso", { ascending: false });
 
@@ -1820,7 +1820,7 @@ async function cargarCerradas() {
   $("cerBuscar").value = "";
   $("listaCerradas").innerHTML = '<div class="cargando">Cargando…</div>';
   const { data, error } = await db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,clientes(nombre,rut,telefono),vehiculos(patente)")
     .or("comercial.eq.rechazado,pagado_en.not.is.null,fecha_cierre.not.is.null")
     .order("fecha_cierre", { ascending: false }).limit(300);
   if (error) {
@@ -2512,6 +2512,7 @@ async function abrirDetalle(o) {
   $("lblFotoDet").textContent = esServicio ? "Subir foto o captura del escáner" : "Subir foto del diagnóstico";
   $("detDatos").innerHTML = `
     <div class="dato"><span>Cliente</span><span>${o.clientes?.nombre ?? "—"}</span></div>
+    ${o.clientes?.telefono ? `<div class="dato"><span>Teléfono</span><span style="font-family:var(--mono)">${o.clientes.telefono}</span></div>` : ""}
     <div class="dato"><span>Patente</span><span style="font-family:var(--mono)">${o.vehiculos?.patente ?? "—"}</span></div>
     <div class="dato"><span>${esServicio ? "Sistema" : "Módulo"}</span><span>${(esServicio ? o.sistema : o.tipo_modulo) ?? "—"}</span></div>
     <div class="dato"><span>RUT</span><span style="font-family:var(--mono)">${o.clientes?.rut ?? "—"}</span></div>
@@ -2566,7 +2567,7 @@ async function abrirDetalle(o) {
 // orden_padre_id ya existía en el esquema desde 01-schema.sql, sin usar.
 async function irAOrden(id) {
   const { data: destino } = await db.from("ordenes")
-    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
+    .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,orden_padre_id,clientes(nombre,rut,telefono),vehiculos(patente)")
     .eq("id", id).single();
   if (destino) abrirDetalle(destino);
 }
@@ -4015,7 +4016,7 @@ async function mostrarCotizacionFormal(id) {
   }
 
   const { data: o } = await db.from("ordenes")
-    .select("numero_ot,tipo_trabajo,tipo_modulo,sistema,clientes(nombre,rut),vehiculos(patente,modelo)")
+    .select("numero_ot,tipo_trabajo,tipo_modulo,sistema,clientes(nombre,rut,telefono),vehiculos(patente,modelo)")
     .eq("id", ordenActual.id).single();
   const { data: cot } = await db.from("cotizaciones")
     .select("id,validez_dias,creado_en").eq("id", id).single();
@@ -5400,7 +5401,7 @@ async function cargarModulosPorRecepcionar() {
     div.querySelector(".mod").textContent = o.tipo_modulo ?? "módulo";
     div.onclick = async () => {
       const { data: completa } = await db.from("ordenes")
-        .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,orden_padre_id,clientes(nombre,rut),vehiculos(patente)")
+        .select("id,numero_ot,origen,estado,tipo_trabajo,tipo_modulo,sistema,sintoma_cliente,fecha_ingreso,vehiculo_id,fecha_agendada,franja,ubicacion_gps,tecnico_agendado,orden_ruta,aprobado_cliente,numero_factura,entregado_en,ubicacion,reparacion,comercial,pagado_en,fecha_cierre,notas_internas,orden_padre_id,clientes(nombre,rut,telefono),vehiculos(patente)")
         .eq("id", o.id).single();
       if (completa) { ver("vTablero"); abrirDetalle(completa); }
     };
@@ -5697,7 +5698,7 @@ $("btnGenerar").onclick = async () => {
 
 async function mostrarInforme() {
   const { data: o } = await db.from("ordenes")
-    .select("numero_ot,sintoma_cliente,tipo_trabajo,tipo_modulo,sistema,observaciones,fecha_ingreso,fecha_cierre,clientes(nombre,rut),vehiculos(patente,modelo)")
+    .select("numero_ot,sintoma_cliente,tipo_trabajo,tipo_modulo,sistema,observaciones,fecha_ingreso,fecha_cierre,clientes(nombre,rut,telefono),vehiculos(patente,modelo)")
     .eq("id", ordenActual.id).single();
   const { data: m } = await db.rpc("ordenes_montos", { p_orden_id: ordenActual.id });
   const { data: d } = await db.from("diagnosticos")
