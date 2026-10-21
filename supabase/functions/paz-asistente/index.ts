@@ -42,12 +42,12 @@ const limpiar = (s: string) => String(s ?? "").replace(/[(),]/g, " ").trim();
 
 function herramientas(esJefe: boolean) {
   const base = [
-    { name: "buscar_ot", description: "Busca órdenes de trabajo (OT) y clientes por número de OT, nombre de cliente, patente o TELÉFONO del cliente. Sirve para '¿ves a este cliente?' o '¿de quién es este número?': devuelve los clientes que calzan (aunque no tengan OT) y, si hay, sus OT con estado, ubicación física, si está cobrada, patente y vehículo.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, nombre de cliente, patente o teléfono" } }, required: ["consulta"], additionalProperties: false } },
+    { name: "buscar_ot", description: "Busca órdenes de trabajo (OT), CASOS y clientes por número de OT, número de caso (CASO-XXXX), nombre de cliente, patente o TELÉFONO. Sirve para '¿ves a este cliente?' o '¿de quién es este número?': devuelve los clientes y CASOS que calzan —incluidos los que escribieron por WhatsApp y todavía NO tienen OT, con su teléfono— y, si hay, sus OT con estado, ubicación física, si está cobrada, patente y vehículo.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, número de caso, nombre de cliente, patente o teléfono" } }, required: ["consulta"], additionalProperties: false } },
     { name: "ver_conversacion_cliente", description: "Muestra los últimos mensajes de la conversación de WhatsApp con un cliente: lo que el cliente escribió y lo que YA se le respondió o envió (por PAZ o por el equipo). Úsalo ANTES de escribirle para no repetir, y cuando te pregunten qué se le dijo al cliente. Por OT, cliente, patente o teléfono.", input_schema: { type: "object", properties: { destino: { type: "string", description: "OT, cliente, patente o teléfono del cliente" } }, required: ["destino"], additionalProperties: false } },
     { name: "pendientes", description: "Lo que está esperando acción ahora: casos de WhatsApp que necesitan respuesta humana, y módulos por recepcionar.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "agenda", description: "Qué hay agendado (visitas a terreno o llegadas de módulo). Por defecto los próximos 7 días.", input_schema: { type: "object", properties: { dias: { type: "integer", description: "días hacia adelante, por defecto 7" } }, additionalProperties: false } },
     { name: "historial_patente", description: "Las últimas OT de una patente.", input_schema: { type: "object", properties: { patente: { type: "string" } }, required: ["patente"], additionalProperties: false } },
-    { name: "escribir_al_cliente", description: "Le envías TÚ (PAZ) un WhatsApp a un CLIENTE de parte del taller, cuando el equipo te lo pide (ej: 'mándale al cliente de la OT X los datos de pago con factura'). Sirve para que el equipo NO tenga que entrar al chat del cliente: la única voz hacia el cliente eres tú. Para los datos de pago usa los DATOS DE PAGO DEL TALLER del system, y recuerda: el equipo decide con/sin factura, tú no. Solo funciona si el cliente escribió al taller en las últimas 24h.", input_schema: { type: "object", properties: { destino: { type: "string", description: "OT, cliente, patente o número de teléfono del cliente" }, mensaje: { type: "string", description: "el mensaje que le envías al cliente, redactado por ti, claro y cordial" }, forzar: { type: "boolean", description: "SOLO true si el equipo confirmó explícitamente que quiere mandarle OTRO mensaje al cliente aunque ya le hayas escrito hace poco" } }, required: ["destino", "mensaje"], additionalProperties: false } },
+    { name: "escribir_al_cliente", description: "Le envías TÚ (PAZ) un WhatsApp a un CLIENTE de parte del taller, cuando el equipo te lo pide (ej: 'mándale al cliente de la OT X los datos de pago con factura'). Sirve para que el equipo NO tenga que entrar al chat del cliente: la única voz hacia el cliente eres tú. Para los datos de pago usa los DATOS DE PAGO DEL TALLER del system, y recuerda: el equipo decide con/sin factura, tú no. Un cliente que escribió por WhatsApp SIEMPRE se puede ubicar por su nombre, patente o número de caso: NO digas que 'no tienes su número' sin intentar aquí primero. (Si de verdad nunca escribió, o no escribió en las últimas 24h, el sistema te lo dirá.)", input_schema: { type: "object", properties: { destino: { type: "string", description: "número de caso (CASO-XXXX), OT, cliente, patente o número de teléfono del cliente" }, mensaje: { type: "string", description: "el mensaje que le envías al cliente, redactado por ti, claro y cordial" }, forzar: { type: "boolean", description: "SOLO true si el equipo confirmó explícitamente que quiere mandarle OTRO mensaje al cliente aunque ya le hayas escrito hace poco" } }, required: ["destino", "mensaje"], additionalProperties: false } },
     { name: "generar_informe", description: "Redacta el borrador del informe técnico de una OT a partir del DETALLE del trabajo que te cuenta el usuario (qué se revisó, cambió, solucionó) y lo deja guardado en la app para revisar. Si no te han dado el detalle del trabajo, NO lo llames: pídeselo primero. Nunca inventes lo que se hizo.", input_schema: { type: "object", properties: { ot: { type: "string", description: "número de OT, patente o cliente" }, detalle: { type: "string", description: "lo que se hizo en el trabajo, dictado por el técnico (real, no inventado)" } }, required: ["ot", "detalle"], additionalProperties: false } },
     { name: "avisar_a_area", description: "Le escribes TÚ (PAZ) un WhatsApp al responsable de un área del equipo (laboratorio=Diego, coordinacion=Osores, dueno=el jefe). Úsalo cuando haya que pedirle o avisarle algo a alguien del equipo (ej: 'avísale a Diego que revise la OT X'). Redacta el mensaje en PRIMERA PERSONA, como la coordinadora que les pide/instruye: directo, breve, cercano pero con autoridad. NUNCA digas 'de parte de' nadie — el mensaje es tuyo.", input_schema: { type: "object", properties: { area: { type: "string", enum: ["laboratorio", "coordinacion", "dueno"] }, mensaje: { type: "string", description: "el mensaje que TÚ le escribes, en primera persona, sin 'de parte de'" } }, required: ["area", "mensaje"], additionalProperties: false } },
   ];
@@ -194,10 +194,33 @@ async function destinoCliente(destino: string) {
     cid = data?.[0]?.conversacion_id ?? null;
   }
   if (!cid) {
-    const { data } = await admin.from("casos").select("conversacion_id")
-      .or(`cliente_nombre.ilike.%${raw}%,patente.ilike.%${raw.toUpperCase()}%`)
-      .not("conversacion_id", "is", null).order("actualizado_en", { ascending: false }).limit(1);
-    cid = data?.[0]?.conversacion_id ?? null;
+    const safe = raw.replace(/[,()*]/g, " ").trim();
+    if (safe) {
+      const { data } = await admin.from("casos").select("conversacion_id")
+        .or(`cliente_nombre.ilike.%${safe}%,patente.ilike.%${safe.toUpperCase()}%`)
+        .not("conversacion_id", "is", null).order("actualizado_en", { ascending: false }).limit(1);
+      cid = data?.[0]?.conversacion_id ?? null;
+    }
+  }
+  // RED DE SEGURIDAD: un cliente que escribió por WhatsApp SIEMPRE tiene su
+  // conversación con teléfono. Si nada de lo anterior calzó, buscamos directo en
+  // las conversaciones por nombre/patente (en el título o en la ficha). Así PAZ
+  // nunca se queda sin el número de alguien que de verdad escribió.
+  if (!cid) {
+    const needle = raw.replace(/[,()*]/g, " ").trim().toLowerCase();
+    if (needle) {
+      const { data: convs } = await admin.from("nexa_conversaciones")
+        .select("id,telefono,titulo,ficha").eq("canal", "whatsapp")
+        .order("actualizado_en", { ascending: false }).limit(3000);
+      const hit = (convs ?? []).find((cv: any) => {
+        const tit = String(cv.titulo || "").toLowerCase();
+        const fc = cv.ficha || {};
+        const cli = String(fc.cliente || "").toLowerCase();
+        const pat = String(fc.patente || "").toLowerCase();
+        return (tit && tit.includes(needle)) || (cli && cli.includes(needle)) || (pat && pat.includes(needle));
+      });
+      if (hit) return { telefono: hit.telefono ? String(hit.telefono).replace(/\D/g, "") : null, conversacion_id: hit.id };
+    }
   }
   if (!cid) return { telefono: null, conversacion_id: null };
   const { data: c } = await admin.from("nexa_conversaciones").select("telefono").eq("id", cid).maybeSingle();
