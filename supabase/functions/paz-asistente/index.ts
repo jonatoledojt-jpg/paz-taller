@@ -54,6 +54,7 @@ function herramientas(esJefe: boolean) {
   if (esJefe) base.push(
     { name: "montos_ot", description: "SOLO JEFE. Los montos (plata) de una OT: cotizado, final cobrado y número de factura.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, cliente o patente" } }, required: ["consulta"], additionalProperties: false } },
     { name: "facturado_mes", description: "SOLO JEFE. Cuánta plata entró en el mes (suma neta de lo cobrado, por fecha de pago).", input_schema: { type: "object", properties: { mes: { type: "string", description: "AAAA-MM-01; por defecto el mes actual" } }, additionalProperties: false } },
+    { name: "revisar_ots", description: "SOLO JEFE. Revisa/lista las OT con su estado, si está cobrada y los montos (cotizado y final). Úsalo cuando te pidan 'revisa las OT', 'cómo van los cobros', 'cuáles faltan cobrar', 'cómo vamos'. Trae hasta 80, ordenadas por número.", input_schema: { type: "object", properties: { solo_por_cobrar: { type: "boolean", description: "true = solo las terminadas/entregadas que todavía NO están pagadas" } }, additionalProperties: false } },
   );
   return base;
 }
@@ -233,7 +234,7 @@ async function destinoCliente(destino: string) {
 async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante: string, simular: boolean): Promise<string> {
   // Doble llave: aunque la herramienta no debería existir para no-jefes,
   // el ejecutor vuelve a cortar la plata.
-  if ((nombre === "montos_ot" || nombre === "facturado_mes") && !esJefe) {
+  if ((nombre === "montos_ot" || nombre === "facturado_mes" || nombre === "revisar_ots") && !esJefe) {
     return "No autorizado: la información de dinero es solo para el jefe.";
   }
   try {
@@ -405,6 +406,21 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
       const total = (data ?? []).reduce((s: number, o: any) => s + (Number(o.monto_final) || 0), 0);
       return JSON.stringify({ mes: mes.slice(0, 7), facturado_neto: total, ots_cobradas: (data ?? []).length, nota: "Es lo cobrado (neto). El margen completo (con gastos y mano de obra) está en la app." });
     }
+    if (nombre === "revisar_ots") {
+      const soloPorCobrar = input?.solo_por_cobrar === true;
+      const { data } = await admin.from("ordenes")
+        .select("numero_ot,reparacion,comercial,entregado_en,pagado_en,fecha_cierre,monto_cotizado,monto_final,clientes(nombre),vehiculos(patente)")
+        .order("numero_ot", { ascending: true }).limit(80);
+      let r = (data ?? []).map((o: any) => ({
+        ot: o.numero_ot, cliente: o.clientes?.nombre, patente: o.vehiculos?.patente,
+        reparacion: o.reparacion, comercial: o.comercial,
+        cobrada: !!o.pagado_en, entregada: !!o.entregado_en, cerrada: !!o.fecha_cierre,
+        monto_cotizado: o.monto_cotizado, monto_final: o.monto_final,
+      }));
+      if (soloPorCobrar) r = r.filter((o: any) => !o.cobrada && (o.entregada || o.reparacion === "listo" || o.comercial === "aprobado"));
+      const sumaPorCobrar = r.filter((o: any) => !o.cobrada).reduce((s: number, o: any) => s + (Number(o.monto_final || o.monto_cotizado) || 0), 0);
+      return JSON.stringify({ cuantas: r.length, suma_por_cobrar_neta_estimada: sumaPorCobrar, ots: r });
+    }
     return "Herramienta desconocida.";
   } catch (e) {
     console.error("ejecutar", nombre, e);
@@ -487,7 +503,8 @@ Deno.serve(async (req) => {
     datosPago
       ? `${datosPago}\n(Cuando el equipo te pida enviarle "los datos de pago" al cliente, usa estos y mándalos con escribir_al_cliente. Con o sin factura lo decide el EQUIPO, no tú y NUNCA el cliente: si no te lo dijeron, pregúntaselo A QUIEN TE ESTÁ ESCRIBIENDO (el equipo) en ESTE chat, jamás al cliente. Al cliente mándale solo los datos ya elegidos, cordial, SIN preguntarle nada de factura ni mencionarle que había opciones.)`
       : "",
-    `Tienes memoria de esta conversación: si te dicen "sí, revísalo" o "mándalo", mira los mensajes anteriores para saber a qué se refieren; no vuelvas a pedir el dato que ya está en el hilo.`,
+    `Tienes memoria de esta conversación: si te dicen "sí, revísalo" o "mándalo", mira los mensajes anteriores para saber a qué se refieren; no vuelvas a pedir el dato que ya está en el hilo. Los avisos que TÚ mandaste (💸 Pagaron, 👋 te paso este cliente) también están en el hilo: son TUYOS, recuérdalos — si el jefe responde sobre uno, ya sabes de qué habla.`,
+    `NUNCA PROMETAS SIN HACER. Cuando te pidan algo, en ESTE MISMO turno usas la herramienta y das el resultado — jamás digas "estoy revisando", "voy a revisar", "déjame ver" ni "ahora lo hago" sin haber llamado la herramienta en este turno: eso es mentir y es lo que más molesta. Si no tienes herramienta para lo que piden, dilo honesto y ofrece lo que SÍ puedes. Para "revisa las OT / cómo van los cobros / cuáles faltan cobrar / cómo vamos" usa revisar_ots.`,
     `No eres la PAZ que habla con clientes. No agendas, no cambias estados ni creas OT: para eso están la app y la otra PAZ. Tú consultas, informas y avisas al equipo.`,
     `CASO vs OT (no los confundas): el CASO lo arma SOLA la PAZ que atiende al cliente por WhatsApp, de la conversación — es automático, NO hay que "crearlo en la app". Si el equipo te dice "genera/arma el caso" o pregunta por él, NO digas que no puedes: el caso ya existe o se está armando solo. Búscalo (buscar_ot trae los casos del cliente en "contacto_whatsapp", o usa el teléfono/patente) y confírmaselo con su número (CASO-XXXX) y datos. Lo que SÍ necesita una persona es la OT (el trabajo formal), que se crea desde la app con el botón "Crear la OT desde este caso" — eso tú no lo haces.`,
   ].join("\n");
@@ -496,7 +513,7 @@ Deno.serve(async (req) => {
   // tengan contexto. Se guarda aparte de las conversaciones de clientes.
   const { data: hist } = await admin.from("paz_equipo_chat")
     .select("rol,contenido").eq("telefono", telefono)
-    .order("creado_en", { ascending: false }).limit(12);
+    .order("creado_en", { ascending: false }).limit(40);
   const previos = (hist ?? []).reverse().map((h: any) => ({ role: h.rol, content: h.contenido }));
   // Alternancia que exige Claude: fusiona roles repetidos y arranca en user.
   const crudo = [...previos, { role: "user", content: texto }];

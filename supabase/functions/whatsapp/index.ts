@@ -1057,6 +1057,14 @@ async function avisarPagoAlJefe(conversacion_id: number, telefono: string, conte
   const monto = (contenido.match(/\$\s?[\d][\d.\s]{2,}/) || [])[0]?.trim() || "";
   const txt = `💸 Pagaron: el cliente ${telefono} mandó un comprobante de pago${monto ? ` (${monto})` : ""}. Revísalo y me dices qué le respondo al cliente, o si lo despides tú. No le contesté para no adelantarme con la plata.`;
   const ok = await responderWhatsApp(jefe.telefono, txt);
+  // CLAVE: guardar el aviso en la memoria de PAZ (paz_equipo_chat). Si no, PAZ
+  // manda el aviso pero cuando el jefe le responde ("ya revisé el pago"), no
+  // recuerda que ella misma lo mandó y se enreda. Queda como un mensaje suyo,
+  // con la referencia del cliente que pagó para poder responderle si se lo piden.
+  await admin.from("paz_equipo_chat").insert({
+    telefono: jefe.telefono, rol: "assistant",
+    contenido: `${txt}\n[este aviso lo mandé yo (PAZ). Es sobre el cliente ${telefono}; si el jefe me dice qué responderle, uso ese número como destino.]`,
+  }).then(() => {}, () => {});
   await admin.from("wa_log").insert({
     metodo: "PAZ-AVISA-PAGO", firma_ok: ok.ok,
     nota: `conv ${conversacion_id}: aviso a ${jefe.nombre}`.slice(0, 500), cuerpo: "",
