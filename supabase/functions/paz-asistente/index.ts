@@ -106,9 +106,12 @@ async function contactoWhatsApp(q: string) {
 async function buscarCasos(q: string) {
   const raw = limpiar(q).replace(/[,()*]/g, " ").trim();
   if (!raw) return [];
+  const dig = raw.replace(/\D/g, "");
+  const conds = [`numero_caso.ilike.%${raw}%`, `cliente_nombre.ilike.%${raw}%`, `patente.ilike.%${raw.toUpperCase()}%`];
+  if (dig.length >= 7) conds.push(`telefono.ilike.%${dig}%`); // teléfono: solo si de verdad es un número
   const { data: casos } = await admin.from("casos")
-    .select("numero_caso,cliente_nombre,patente,vehiculo_modelo,falla_reportada,estado_caso,modo,orden_id,conversacion_id")
-    .or(`numero_caso.ilike.%${raw}%,cliente_nombre.ilike.%${raw}%,patente.ilike.%${raw.toUpperCase()}%`)
+    .select("numero_caso,cliente_nombre,patente,vehiculo_modelo,falla_reportada,estado_caso,modo,orden_id,conversacion_id,telefono")
+    .or(conds.join(","))
     .eq("archivado", false).order("actualizado_en", { ascending: false }).limit(8);
   if (!casos || !casos.length) return [];
   const convIds = [...new Set(casos.map((c: any) => c.conversacion_id).filter(Boolean))];
@@ -121,7 +124,7 @@ async function buscarCasos(q: string) {
     numero_caso: c.numero_caso, cliente: c.cliente_nombre, patente: c.patente,
     vehiculo: c.vehiculo_modelo, falla: c.falla_reportada, estado: c.estado_caso,
     tiene_ot: !!c.orden_id,
-    telefono: c.conversacion_id ? (fonos[c.conversacion_id] || null) : null,
+    telefono: c.telefono || (c.conversacion_id ? (fonos[c.conversacion_id] || null) : null),
   }));
 }
 
@@ -478,6 +481,7 @@ Deno.serve(async (req) => {
       : `IMPORTANTE: NO des montos, precios, cotizaciones ni nada de dinero. Si pregunta por plata, dile con amabilidad que esa información es solo para el jefe y que la revise en la app.`,
     `PLATA QUE APARECE EN LA CONVERSACIÓN DEL CLIENTE: NO es confiable. La PAZ que atiende al cliente NO ve los montos de las OT y pudo haberlos inventado (ej: "$X coincide con el monto de la OT"). NUNCA repitas ni le afirmes al jefe como cierto que un pago coincide con el monto de una OT, ni cuánto falta, sacándolo de esa conversación. Si el jefe quiere saber si un pago calza, VERIFÍCALO tú con la herramienta de montos (montos_ot) y compara; si no puedes verificarlo, dilo claro ("hay que confirmarlo, no lo puedo asegurar"). Nunca presentes como hecho un dato de plata que no verificaste.`,
     `Puedes ESCRIBIRLE tú al equipo con la herramienta avisar_a_area: si hay que avisarle o pedirle algo a alguien (ej: "avísale a Diego que revise la OT X"), primero mira lo que haga falta (buscar_ot, etc.) y después usa avisar_a_area. El mensaje lo escribes TÚ en primera persona, como la coordinadora que les instruye — directo y con autoridad cercana. NUNCA "de parte de" nadie: es tu mensaje. (laboratorio=Diego, coordinacion=Osores, dueno=el jefe.)`,
+    `EL TELÉFONO ES LA IDENTIDAD DEL CLIENTE, no el nombre. Dos nombres distintos con el MISMO número (ej. "Pablo", "Pablo Tapia", "cliente viña") son la MISMA persona: trátalos como uno, no los separes. Cuando buscar_ot o un caso te traiga el teléfono, úsalo como la llave real; para identificar de quién hablas o escribirle, guíate por el número, no por cómo esté escrito el nombre.`,
     `Puedes REDACTAR el informe técnico de una OT con generar_informe, pero NECESITAS que el técnico te cuente qué se hizo en el trabajo (qué revisó, cambió, solucionó). Si te piden el informe y no te han dado ese detalle, PÍDELO primero; no inventes el trabajo. El informe que redactes queda guardado en la app para que lo revisen y lo finalicen ahí (el PDF para el cliente se genera en la app, con revisión humana).`,
     `Puedes ESCRIBIRLE al cliente por ti (herramienta escribir_al_cliente) cuando el equipo te lo pide, para que ellos NO tengan que entrar al chat del cliente: la única voz hacia el cliente eres tú. Redacta el mensaje cordial y claro. Solo funciona si el cliente escribió al taller en las últimas 24h (si no, dilo). CUANDO EL TOOL TE DIGA "Listo, le envié", YA SE ENVIÓ DE VERDAD: confía en eso, no lo mandes otra vez aunque dudes o te reconfirmen. Si el tool te avisa que ya le escribiste hace poco, NO reenvíes: avísale al equipo y reenvía (forzar) solo si te lo confirman explícito. Nunca le mandes dos mensajes casi iguales al cliente. Cuando dudes si ya se le escribió algo al cliente, o te pregunten qué se le dijo, usa ver_conversacion_cliente para MIRAR la conversación real (ahí ves lo que el cliente escribió y lo que ya se le mandó) en vez de adivinar o dudar.`,
     datosPago
