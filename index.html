@@ -484,7 +484,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div class="campo">
           <label for="fTelefono">Teléfono / WhatsApp</label>
           <input id="fTelefono" inputmode="tel" autocomplete="tel" placeholder="+56 9 1234 5678">
-          <div class="pista">Identifica al cliente de forma única, mejor que el nombre.</div>
+          <div class="pista">La identidad del cliente: con esto PAZ lo reconoce y junta todos sus trabajos. Mejor que el nombre.</div>
         </div>
         <div class="campo">
           <label for="fRut">RUT para facturar</label>
@@ -2013,6 +2013,17 @@ $("btnGuardar").onclick = async () => {
   const agendando = !$("camposAgenda").classList.contains("oculto");
   const fecha_agendada = agendando ? ($("fFechaAgendada").value || null) : null;
   if (agendando && !fecha_agendada) return msg("nuevaError", "Falta la fecha agendada.");
+
+  // El teléfono es el ancla: es lo que deja el vínculo completo (cliente <-> caso
+  // <-> memoria de PAZ <-> OT). No es obligatorio duro -- a veces de verdad no
+  // hay (un módulo que llega sin contacto) -- pero si falta, que el costo se vea:
+  // sin número, PAZ no reconoce al cliente ni junta sus trabajos después.
+  if (!telefono && !confirm(
+    "Sin teléfono, PAZ no va a poder reconocer a este cliente ni juntar sus " +
+    "trabajos después. El número es la identidad del cliente.\n\n¿Guardar igual sin teléfono?")) {
+    $("fTelefono").focus();
+    return;
+  }
 
   $("btnGuardar").disabled = true;
   $("btnGuardar").textContent = "Guardando…";

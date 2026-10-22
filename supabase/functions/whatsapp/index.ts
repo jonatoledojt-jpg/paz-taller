@@ -370,7 +370,7 @@ async function contextoDelSistema(paz: any, telefono: string, historial: { conte
   // a separar lo que el sistema ya tenía unido: pasó de verdad, preguntó
   // "¿es el camión PP1865 o el módulo GS enviado?" cuando son la misma cosa.
   const { data: casos } = await paz.from("casos")
-    .select("orden_en_conversacion,patente,vehiculo_modelo,atencion,modulo,sistema,falla_reportada,resumen_tecnico")
+    .select("orden_en_conversacion,patente,vehiculo_modelo,atencion,modulo,sistema,falla_reportada,resumen_tecnico,orden_id")
     .eq("conversacion_id", conversacion_id).order("orden_en_conversacion");
   if (casos?.length) {
     lineas.push(
@@ -388,6 +388,67 @@ async function contextoDelSistema(paz: any, telefono: string, historial: { conte
       "\nSi el cliente pregunta algo sin decir a cuál se refiere, usa el hilo de " +
       "los últimos mensajes para deducir cuál de ESTOS es. No le des una lista " +
       "de opciones que mezcle un vehículo con su propio módulo.",
+    );
+  }
+
+  // --- ESTADO REAL del cliente, calculado por el CÓDIGO (no por PAZ) ---
+  // La raíz de casi todos los errores: PAZ reconstruía el estado desde el texto
+  // viejo del chat y pedía patentes a quien ya pagó, anunciaba visitas ya hechas,
+  // o contestaba encima del equipo. Acá el código lee la realidad y se lo ORDENA.
+  const textoHist = historial.map((m) => m.content).join("\n");
+  const yaPago = /comprob|pagu[eé]|pagad[oa]|transferenci|dep[oó]sit|\babono\b|ya te (transfer|deposit|pagu)/i.test(textoHist);
+  const equipoEnVivo = /\[enviado por el equipo desde el tel[eé]fono\]/i.test(textoHist);
+  let trabajoAvanzado = false, visitaYaPaso = false;
+  // El puente al estado real NO puede ser casos.orden_id: nadie aprieta "crear
+  // OT desde el caso" (0 de 137 casos quedan enlazados), las OT se crean a mano.
+  // Las llaves que el equipo SÍ escribe en cada OT son el TELÉFONO del cliente
+  // y la PATENTE. Cruzamos por esas dos, en el momento de leer, sin depender de
+  // un enlace guardado que no existe. (Antes esto leía orden_id y era código
+  // muerto: nunca disparaba, por eso PAZ le pedía la patente a quien ya pagó.)
+  const patentesCaso = [...new Set([
+    ...((casos ?? []).map((c: any) => (c.patente ?? "").toString().toUpperCase().trim()).filter(Boolean)),
+    ...patentesEn(historial.map((m) => m.content).join(" ")),
+  ])];
+  const otIds = new Set<number>();
+  const { data: cliTel } = await paz.from("clientes").select("id").eq("telefono", telefono);
+  const cliIds = (cliTel ?? []).map((c: any) => c.id);
+  if (cliIds.length) {
+    const { data: porCli } = await paz.from("ordenes").select("id").in("cliente_id", cliIds);
+    for (const o of (porCli ?? [])) otIds.add(o.id);
+  }
+  if (patentesCaso.length) {
+    const { data: vehs } = await paz.from("vehiculos").select("id").in("patente", patentesCaso);
+    const vehIds = (vehs ?? []).map((v: any) => v.id);
+    if (vehIds.length) {
+      const { data: porVeh } = await paz.from("ordenes").select("id").in("vehiculo_id", vehIds);
+      for (const o of (porVeh ?? [])) otIds.add(o.id);
+    }
+  }
+  // Una patente dicha por un tercero podría sumar una OT que no es suya: acá
+  // eso solo hace que PAZ SUPRIMA acciones (no pedir datos, no anunciar visita),
+  // que es la dirección segura. La revelación de datos sigue protegida por el
+  // guardia de propiedad de más abajo (clienteActualId), que no se toca.
+  if (otIds.size) {
+    const { data: ots } = await paz.from("ordenes")
+      .select("pagado_en,fecha_agendada,entregado_en,reparacion,ubicacion").in("id", [...otIds]);
+    const hoy = new Date().toISOString().slice(0, 10);
+    for (const o of (ots ?? [])) {
+      if (o.pagado_en || o.entregado_en || ["listo", "en_pruebas", "en_reparacion", "diagnosticado"].includes(o.reparacion) || o.ubicacion === "en_taller") trabajoAvanzado = true;
+      if (o.fecha_agendada && String(o.fecha_agendada).slice(0, 10) < hoy) visitaYaPaso = true;
+    }
+  }
+  if (yaPago || equipoEnVivo || trabajoAvanzado || visitaYaPaso) {
+    const motivos: string[] = [];
+    if (yaPago) motivos.push("YA pagó o mandó un comprobante");
+    if (trabajoAvanzado) motivos.push("su trabajo ya está avanzado / el módulo ya está en el taller");
+    if (visitaYaPaso) motivos.push("la visita que tenía agendada YA pasó");
+    if (equipoEnVivo) motivos.push("el equipo ya le está respondiendo desde el teléfono");
+    lineas.push(
+      "⚠️ ESTADO REAL DE ESTE CLIENTE (es un hecho del sistema, respétalo): " + motivos.join("; ") + ".\n" +
+      "Por lo tanto, en este punto NO le pidas la patente ni datos nuevos 'para completar la ficha'. " +
+      "NO le anuncies ni le confirmes ninguna visita (ya no corresponde). " +
+      "Responde SOLO lo que te pregunta y ayúdalo con lo de AHORA (retiro del módulo, pago, ubicación, horario). " +
+      "Si no sabes un dato puntual (hora exacta, si está el técnico), dile que lo consultas con el equipo y se lo confirmas — no lo inventes ni pidas datos a cambio.",
     );
   }
 
@@ -812,6 +873,19 @@ async function procesarMensaje(paz: any, msj: any) {
 
   const contexto = await contextoDelSistema(paz, telefono, historial, conversacion_id);
 
+  // MEMORIA VIVA del cliente (ver 50-paz-memoria-cliente.sql): el relato que le
+  // da a PAZ la comprensión del contexto SIN releer toda la conversación. Se le
+  // entrega TANTO a la respuesta como al corte de casos -- antes la ficha
+  // cortaba a ciegas, sin ver lo que PAZ ya había entendido, y por eso partía o
+  // mezclaba al mismo cliente. La memoria vive anclada al teléfono y sobrevive
+  // al borrado del chat y a los meses parado.
+  const { data: memRow } = await paz.from("paz_memoria")
+    .select("memoria").eq("telefono", telefono).maybeSingle();
+  const memoriaBloque = memRow?.memoria?.trim()
+    ? "MEMORIA DE ESTE CLIENTE (lo que ya sabes de él y de sus trabajos — es tu " +
+      "memoria para entender el contexto, NO se lo recites ni lo repitas):\n" + memRow.memoria.trim()
+    : "";
+
   // Si el equipo está atendiendo en vivo DESDE EL TELÉFONO (mandó algo por
   // Coexistencia hace poco), PAZ se hace a un lado y NO contesta por encima:
   // una persona ya está en la conversación. Pasó de verdad — PAZ preguntaba
@@ -843,7 +917,7 @@ async function procesarMensaje(paz: any, msj: any) {
   // el equipo tiene que recibir de verdad la pregunta (se actúa más abajo).
   let deferAlEquipo = false;
   if (cfg.responde_whatsapp && !equipoAtendiendo && !esPago) {
-    const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, contexto]
+    const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, memoriaBloque, contexto]
       .filter(Boolean).join("\n\n");
     const texto = await llamarIA("claude-sonnet-5-5", instrucciones, historial);
     const limpio = texto.replaceAll("**", "").replaceAll("*", "").trim();
@@ -869,7 +943,7 @@ async function procesarMensaje(paz: any, msj: any) {
   // Los casos se arman igual, conteste PAZ o no: sirven para que el
   // equipo vea de qué se trata sin leer toda la conversación.
   try {
-    const crudo = await llamarIA("claude-sonnet-5-5", [cfg.prompt_ficha, aprCriterios].filter(Boolean).join("\n\n"), historial);
+    const crudo = await llamarIA("claude-sonnet-5-5", [cfg.prompt_ficha, aprCriterios, memoriaBloque].filter(Boolean).join("\n\n"), historial);
     const limpio = crudo.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
     const { casos } = JSON.parse(limpio);
     if (Array.isArray(casos) && casos.length) {
@@ -911,6 +985,58 @@ async function procesarMensaje(paz: any, msj: any) {
       console.error("No se pudo pasar la consulta al equipo:", e);
     }
   }
+
+  // Consolidar la MEMORIA viva del cliente con lo que pasó en este mensaje.
+  // Va al final y pase lo que pase (conteste PAZ o no, modo escucha incluido):
+  // la memoria se acumula igual. Nunca rompe el procesamiento si falla.
+  await consolidarMemoria(paz, telefono, conversacion_id)
+    .catch((e) => console.error("No se pudo consolidar la memoria:", e));
+}
+
+// Mantiene la MEMORIA viva del cliente (ver 50-paz-memoria-cliente.sql). NO
+// re-lee toda la conversación: toma la memoria que ya había + SOLO los mensajes
+// nuevos desde el último consolidado (marcador ultimo_mensaje_id) y le pide a la
+// IA que ACTUALICE el relato, no que lo rehaga. Así es barato y la memoria crece
+// como la de una persona: la historia, no la transcripción palabra por palabra.
+async function consolidarMemoria(paz: any, telefono: string, conversacion_id: number) {
+  const { data: mem } = await paz.from("paz_memoria")
+    .select("memoria,ultimo_mensaje_id,cliente_nombre").eq("telefono", telefono).maybeSingle();
+  const memoriaActual = (mem?.memoria ?? "").trim();
+  const desde = mem?.ultimo_mensaje_id ?? 0;
+
+  const { data: nuevos } = await paz.from("nexa_mensajes")
+    .select("id,rol,contenido").eq("conversacion_id", conversacion_id)
+    .gt("id", desde).order("id");
+  if (!nuevos?.length) return;
+  const maxId = nuevos[nuevos.length - 1].id as number;
+  const delta = nuevos.map((m: any) =>
+    `${m.rol === "user" ? "Cliente" : "PAZ/Equipo"}: ${String(m.contenido ?? "").trim()}`).join("\n");
+  if (!delta.trim()) return;
+
+  const instr =
+    "Eres la MEMORIA de PAZ sobre UN cliente del taller (identificado por su teléfono). " +
+    "Mantienes un relato breve y fiel de quién es y en qué van sus trabajos, como lo " +
+    "recordaría una persona del taller. NO es un resumen de cada mensaje: es la historia " +
+    "que da contexto.\n\n" +
+    "MEMORIA ACTUAL (lo que ya recordabas):\n" + (memoriaActual || "(todavía no hay nada)") + "\n\n" +
+    "MENSAJES NUEVOS desde la última vez:\n" + delta + "\n\n" +
+    "Devuelve SOLO el relato actualizado, en texto plano, máximo 1200 caracteres. Reglas:\n" +
+    "- Integra lo nuevo a lo que ya había; no repitas ni rehagas de cero.\n" +
+    "- Guarda lo que importa para entender el contexto: quién es, qué camiones o módulos, " +
+    "qué fallas, en qué quedó cada trabajo, promesas, molestias, lo que el equipo ya le confirmó.\n" +
+    "- Si hay varios camiones o módulos, deja clarísimo cuál es cuál (son trabajos distintos).\n" +
+    "- No inventes nada que no esté. No pongas precios ni plazos que no se hayan dicho.\n" +
+    "- Escríbelo como notas de memoria naturales, no como ficha de campos.";
+
+  const nuevaMemoria = (await llamarIA("claude-sonnet-5-5", instr, "Actualiza la memoria.")).trim();
+  if (!nuevaMemoria) return;
+
+  await paz.rpc("paz_actualizar_memoria", {
+    p_telefono: telefono,
+    p_memoria: nuevaMemoria.slice(0, 4000),
+    p_ultimo_mensaje_id: maxId,
+    p_cliente_nombre: mem?.cliente_nombre ?? null,
+  });
 }
 
 // Un caso por vehículo. La IA relee el hilo completo y devuelve los casos
@@ -982,6 +1108,16 @@ async function sincronizarCasos(paz: any, conversacion_id: number, telefono: str
 async function procesarEcho(paz: any, echo: any) {
   const to = String(echo?.to ?? echo?.recipient_id ?? "").trim();
   if (!to) return;
+  // Si el destinatario del echo es del propio equipo (el jefe le escribe a
+  // Diego, Osores a Diego, etc.), esto es conversación INTERNA, no un cliente:
+  // no la guardamos como conversación ni la dejamos llegar a conversacionDe(to),
+  // que crearía una "conversación de cliente" con un número interno. El guardia
+  // de procesarMensaje ya cubre lo ENTRANTE del equipo; esto cubre el ECHO (lo
+  // que un interno manda desde su teléfono a otro interno). Sin esto, los 3
+  // números internos quedaban como clientes falsos (bug encontrado 22-10-2026).
+  const { data: interno } = await admin.from("paz_equipo")
+    .select("id").eq("telefono", to).eq("activo", true).maybeSingle();
+  if (interno) return;
   let contenido = "";
   if (echo?.type === "text") contenido = String(echo?.text?.body ?? "").trim();
   else if (echo?.type) contenido = `[el equipo envió ${echo.type} desde el teléfono]`;
