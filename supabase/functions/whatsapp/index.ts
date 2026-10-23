@@ -902,6 +902,15 @@ async function procesarMensaje(paz: any, msj: any) {
     .ilike("contenido", "%el equipo desde%").gte("creado_en", haceRato)
     .limit(1).maybeSingle();
 
+  // PUENTE DE HEMISFERIOS (ver 51-paz-control-conversacion.sql): el otro lado de
+  // PAZ —el que te asiste a ti y al equipo— puede dejar la señal "yo llevo a
+  // este cliente, no le hables". Es la MISMA PAZ compartiendo tu voluntad entre
+  // sus dos lados. Si está silenciada, este lado NO responde solo, pero sigue
+  // observando (guarda el mensaje y arma el caso más abajo): no queda ciega.
+  const { data: convCtrl } = await paz.from("nexa_conversaciones")
+    .select("paz_silenciada").eq("id", conversacion_id).maybeSingle();
+  const silenciada = !!convCtrl?.paz_silenciada;
+
   // Pago recibido: el cliente mandó un comprobante o dice que ya pagó. PAZ no
   // le contesta (no verifica pagos ni ve montos): le avisa al jefe y él decide
   // qué responderle o cómo despedirlo.
@@ -918,10 +927,17 @@ async function procesarMensaje(paz: any, msj: any) {
     }).then(() => {}, () => {});
   }
 
+  if (cfg.responde_whatsapp && !equipoAtendiendo && silenciada) {
+    await admin.from("wa_log").insert({
+      metodo: "PAZ-SILENCIADA", firma_ok: true,
+      nota: `conversación silenciada por el equipo (${telefono}); PAZ observa pero no responde`, cuerpo: "",
+    }).then(() => {}, () => {});
+  }
+
   // ¿PAZ se comprometió a consultar algo con el equipo? Si lo dice al cliente,
   // el equipo tiene que recibir de verdad la pregunta (se actúa más abajo).
   let deferAlEquipo = false;
-  if (cfg.responde_whatsapp && !equipoAtendiendo && !esPago) {
+  if (cfg.responde_whatsapp && !equipoAtendiendo && !esPago && !silenciada) {
     const instrucciones = [cfg.prompt, REGLAS_WHATSAPP, aprendizajes, memoriaBloque, contexto]
       .filter(Boolean).join("\n\n");
     const texto = await llamarIA("claude-sonnet-5-5", instrucciones, historial);

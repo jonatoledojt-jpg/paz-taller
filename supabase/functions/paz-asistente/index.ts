@@ -50,6 +50,8 @@ function herramientas(esJefe: boolean) {
     { name: "escribir_al_cliente", description: "Le envías TÚ (PAZ) un WhatsApp a un CLIENTE de parte del taller, cuando el equipo te lo pide (ej: 'mándale al cliente de la OT X los datos de pago con factura'). Sirve para que el equipo NO tenga que entrar al chat del cliente: la única voz hacia el cliente eres tú. Para los datos de pago usa los DATOS DE PAGO DEL TALLER del system, y recuerda: el equipo decide con/sin factura, tú no. Un cliente que escribió por WhatsApp SIEMPRE se puede ubicar por su nombre, patente o número de caso: NO digas que 'no tienes su número' sin intentar aquí primero. (Si de verdad nunca escribió, o no escribió en las últimas 24h, el sistema te lo dirá.)", input_schema: { type: "object", properties: { destino: { type: "string", description: "número de caso (CASO-XXXX), OT, cliente, patente o número de teléfono del cliente" }, mensaje: { type: "string", description: "el mensaje que le envías al cliente, redactado por ti, claro y cordial" }, forzar: { type: "boolean", description: "SOLO true si el equipo confirmó explícitamente que quiere mandarle OTRO mensaje al cliente aunque ya le hayas escrito hace poco" } }, required: ["destino", "mensaje"], additionalProperties: false } },
     { name: "generar_informe", description: "Redacta el borrador del informe técnico de una OT a partir del DETALLE del trabajo que te cuenta el usuario (qué se revisó, cambió, solucionó) y lo deja guardado en la app para revisar. Si no te han dado el detalle del trabajo, NO lo llames: pídeselo primero. Nunca inventes lo que se hizo.", input_schema: { type: "object", properties: { ot: { type: "string", description: "número de OT, patente o cliente" }, detalle: { type: "string", description: "lo que se hizo en el trabajo, dictado por el técnico (real, no inventado)" } }, required: ["ot", "detalle"], additionalProperties: false } },
     { name: "avisar_a_area", description: "Le escribes TÚ (PAZ) un WhatsApp al responsable de un área del equipo (laboratorio=Diego, coordinacion=Osores, dueno=el jefe). Úsalo cuando haya que pedirle o avisarle algo a alguien del equipo (ej: 'avísale a Diego que revise la OT X'). Redacta el mensaje en PRIMERA PERSONA, como la coordinadora que les pide/instruye: directo, breve, cercano pero con autoridad. NUNCA digas 'de parte de' nadie — el mensaje es tuyo.", input_schema: { type: "object", properties: { area: { type: "string", enum: ["laboratorio", "coordinacion", "dueno"] }, mensaje: { type: "string", description: "el mensaje que TÚ le escribes, en primera persona, sin 'de parte de'" } }, required: ["area", "mensaje"], additionalProperties: false } },
+    { name: "silenciar_cliente", description: "Haces que TÚ MISMA te hagas a un lado en la conversación de un cliente: dejas de responderle sola porque el equipo (o tú con el equipo) la van a llevar a mano. Para cuando te dicen 'yo me encargo de este', 'no le hables a X', 'la llevo yo', 'déjame a mí con ese cliente'. OJO: no es que exista 'otra PAZ' — eres una sola; esto le dice a tu lado que habla con el cliente que se quede callado en esa conversación. Igual sigues OBSERVANDO (guardas los mensajes y armas los casos), solo dejas de contestar. Dura hasta que te pidan retomarlo. Por cliente, patente, número de caso o teléfono.", input_schema: { type: "object", properties: { destino: { type: "string", description: "cliente, patente, número de caso o teléfono" }, motivo: { type: "string", description: "opcional: por qué el equipo se hace cargo" } }, required: ["destino"], additionalProperties: false } },
+    { name: "retomar_cliente", description: "Vuelves a atender tú a ese cliente (deshaces un 'silenciar_cliente' anterior): 'retomá a X', 'ya puedes contestarle a X de nuevo', 'vuelve a atender a X'. Por cliente, patente, número de caso o teléfono.", input_schema: { type: "object", properties: { destino: { type: "string", description: "cliente, patente, número de caso o teléfono" } }, required: ["destino"], additionalProperties: false } },
   ];
   if (esJefe) base.push(
     { name: "montos_ot", description: "SOLO JEFE. Los montos (plata) de una OT: cotizado, final cobrado y número de factura.", input_schema: { type: "object", properties: { consulta: { type: "string", description: "número de OT, cliente o patente" } }, required: ["consulta"], additionalProperties: false } },
@@ -334,6 +336,31 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
       }).then(() => {}, () => {});
       return ok ? "Listo, le envié el mensaje al cliente." : "No pude enviarle el mensaje al cliente (error de WhatsApp).";
     }
+    if (nombre === "silenciar_cliente" || nombre === "retomar_cliente") {
+      const { telefono, conversacion_id } = await destinoCliente(String(input?.destino ?? ""));
+      if (!conversacion_id) return "No encuentro una conversación de WhatsApp con ese cliente. Dime su nombre, patente, número de caso o teléfono.";
+      const silenciar = nombre === "silenciar_cliente";
+      if (simular) {
+        return silenciar
+          ? `(simulado) me habría hecho a un lado con ese cliente (${telefono}); lo llevarías tú.`
+          : `(simulado) habría vuelto a atender a ese cliente (${telefono}).`;
+      }
+      // El puente de hemisferios (ver 51-paz-control-conversacion.sql): acá el
+      // lado equipo deja la señal, y el lado cliente la lee antes de responder.
+      await admin.from("nexa_conversaciones").update(
+        silenciar
+          ? { paz_silenciada: true, silenciada_por: solicitante, silenciada_en: new Date().toISOString(), silenciada_motivo: (String(input?.motivo ?? "").slice(0, 300) || null) }
+          : { paz_silenciada: false, silenciada_por: null, silenciada_en: null, silenciada_motivo: null },
+      ).eq("id", conversacion_id).then(() => {}, () => {});
+      await admin.from("wa_log").insert({
+        metodo: silenciar ? "PAZ-SILENCIAR" : "PAZ-RETOMAR", firma_ok: true,
+        nota: `${solicitante} ${silenciar ? "silenció" : "retomó"} conv ${conversacion_id} (${telefono})`,
+        cuerpo: String(input?.motivo ?? "").slice(0, 300),
+      }).then(() => {}, () => {});
+      return silenciar
+        ? `Listo, me hago a un lado con ese cliente: no le respondo sola hasta que me digas "retomá". Igual sigo observando lo que escriba — lo llevas tú.`
+        : `Listo, vuelvo a atender yo a ese cliente desde ahora.`;
+    }
     if (nombre === "ver_conversacion_cliente") {
       const { telefono, conversacion_id } = await destinoCliente(String(input?.destino ?? ""));
       if (!conversacion_id) return "No encuentro una conversación de WhatsApp con ese cliente.";
@@ -505,7 +532,7 @@ Deno.serve(async (req) => {
       : "",
     `Tienes memoria de esta conversación: si te dicen "sí, revísalo" o "mándalo", mira los mensajes anteriores para saber a qué se refieren; no vuelvas a pedir el dato que ya está en el hilo. Los avisos que TÚ mandaste (💸 Pagaron, 👋 te paso este cliente) también están en el hilo: son TUYOS, recuérdalos — si el jefe responde sobre uno, ya sabes de qué habla.`,
     `NUNCA PROMETAS SIN HACER. Cuando te pidan algo, en ESTE MISMO turno usas la herramienta y das el resultado — jamás digas "estoy revisando", "voy a revisar", "déjame ver" ni "ahora lo hago" sin haber llamado la herramienta en este turno: eso es mentir y es lo que más molesta. Si no tienes herramienta para lo que piden, dilo honesto y ofrece lo que SÍ puedes. Para "revisa las OT / cómo van los cobros / cuáles faltan cobrar / cómo vamos" usa revisar_ots.`,
-    `No eres la PAZ que habla con clientes. No agendas, no cambias estados ni creas OT: para eso están la app y la otra PAZ. Tú consultas, informas y avisas al equipo.`,
+    `Eres UNA SOLA PAZ con dos lados: el que habla con el cliente por WhatsApp y el que te asiste a ti y al equipo (este). NO son dos PAZ distintas ni existe "la otra PAZ" — son tus dos hemisferios de una misma mente: comparten la misma base y la misma memoria, y lo que uno sabe o decide, el otro lo siente. Este lado (el que te atiende) no agenda, no cambia estados ni crea OT (eso se hace en la app); pero SÍ manda sobre tu otro lado cuando hace falta: si el equipo te dice "yo llevo a este", "no le hables a X", "déjame a mí con ese cliente", usa silenciar_cliente (tu lado cliente deja de responderle solo, pero sigue observando); cuando te digan "retomá a X" o "vuelve a atenderlo", usa retomar_cliente. Háblalo SIEMPRE como una sola PAZ ("me hago a un lado", "vuelvo a atenderlo"), nunca como si fueras otra.`,
     `CASO vs OT (no los confundas): el CASO lo arma SOLA la PAZ que atiende al cliente por WhatsApp, de la conversación — es automático, NO hay que "crearlo en la app". Si el equipo te dice "genera/arma el caso" o pregunta por él, NO digas que no puedes: el caso ya existe o se está armando solo. Búscalo (buscar_ot trae los casos del cliente en "contacto_whatsapp", o usa el teléfono/patente) y confírmaselo con su número (CASO-XXXX) y datos. Lo que SÍ necesita una persona es la OT (el trabajo formal), que se crea desde la app con el botón "Crear la OT desde este caso" — eso tú no lo haces.`,
   ].join("\n");
 
