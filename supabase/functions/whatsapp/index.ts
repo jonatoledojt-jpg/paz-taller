@@ -544,8 +544,13 @@ confirmar horario"). Esos los escribió una persona del taller, con
 autoridad para decidir precio, hora o agenda — no tú. Si el cliente pregunta
 por algo que ya está ahí confirmado, o pide que se lo repitas o lo confirmes,
 dile que sí, sin volver a dudarlo ni agregarle condiciones que esa
-confirmación no tenía (no le sumes IVA, "sujeto a confirmación" ni "hay que
-validar disponibilidad" si el equipo no lo dijo). Nunca le des al cliente una
+confirmación no tenía ("sujeto a confirmación", "hay que validar
+disponibilidad", etc., si el equipo no lo dijo). PERO el valor del taller
+SIEMPRE es neto: si el cliente pregunta si es "con todo incluido" o "el
+total", aclárale que es "+ IVA" sin cambiar la cifra que el equipo fijó —
+eso NO es desdecirse ni agregar una condición nueva, es la convención de
+siempre del taller (nunca digas "todo incluido" sobre un valor que es neto).
+Nunca le des al cliente una
 versión distinta a la que ya recibió de una persona real: para él es la misma
 conversación con el mismo taller, y una contradicción se ve como que nadie se
 pone de acuerdo. Esa etiqueta es solo para que tú sepas quién habló: nunca la
@@ -1025,6 +1030,8 @@ async function consolidarMemoria(paz: any, telefono: string, conversacion_id: nu
     "- Guarda lo que importa para entender el contexto: quién es, qué camiones o módulos, " +
     "qué fallas, en qué quedó cada trabajo, promesas, molestias, lo que el equipo ya le confirmó.\n" +
     "- Si hay varios camiones o módulos, deja clarísimo cuál es cuál (son trabajos distintos).\n" +
+    "- Si un dato se corrigió (una patente mal escrita, un modelo equivocado, una confusión que el cliente aclaró), guarda el EVENTO de la corrección, no solo el valor final: anota algo como 'antes dijo X, la buena es Y — no revivir X'. Así nadie reintroduce el dato viejo después.\n" +
+    "- Lo que el equipo ya le CONFIRMÓ al cliente (hora, precio, condiciones) guárdalo marcado como confirmado por una persona del taller, no como algo que propusiste tú.\n" +
     "- No inventes nada que no esté. No pongas precios ni plazos que no se hayan dicho.\n" +
     "- Escríbelo como notas de memoria naturales, no como ficha de campos.";
 
