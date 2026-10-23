@@ -482,9 +482,9 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           <datalist id="dlClientes"></datalist>
         </div>
         <div class="campo">
-          <label for="fTelefono">Teléfono / WhatsApp</label>
+          <label for="fTelefono">Teléfono / WhatsApp (obligatorio)</label>
           <input id="fTelefono" inputmode="tel" autocomplete="tel" placeholder="+56 9 1234 5678">
-          <div class="pista">La identidad del cliente: con esto PAZ lo reconoce y junta todos sus trabajos. Mejor que el nombre.</div>
+          <div class="pista">Obligatorio: sin teléfono no se crea la OT. Es la identidad del cliente — une todos sus trabajos y deja que PAZ lo reconozca.</div>
         </div>
         <div class="campo">
           <label for="fRut">RUT para facturar</label>
@@ -2014,15 +2014,13 @@ $("btnGuardar").onclick = async () => {
   const fecha_agendada = agendando ? ($("fFechaAgendada").value || null) : null;
   if (agendando && !fecha_agendada) return msg("nuevaError", "Falta la fecha agendada.");
 
-  // El teléfono es el ancla: es lo que deja el vínculo completo (cliente <-> caso
-  // <-> memoria de PAZ <-> OT). No es obligatorio duro -- a veces de verdad no
-  // hay (un módulo que llega sin contacto) -- pero si falta, que el costo se vea:
-  // sin número, PAZ no reconoce al cliente ni junta sus trabajos después.
-  if (!telefono && !confirm(
-    "Sin teléfono, PAZ no va a poder reconocer a este cliente ni juntar sus " +
-    "trabajos después. El número es la identidad del cliente.\n\n¿Guardar igual sin teléfono?")) {
+  // El teléfono es OBLIGATORIO al crear una OT: es el identificador de oro del
+  // cliente, lo que une todos sus trabajos y lo que deja que PAZ lo reconozca
+  // cuando escribe por WhatsApp (cliente <-> caso <-> memoria <-> OT). Sin
+  // número no se crea la OT (decisión de Jonatan, 23-10-2026).
+  if (!telefono || telefono.length < 8) {
     $("fTelefono").focus();
-    return;
+    return msg("nuevaError", "Falta el teléfono del cliente. Es obligatorio: sin número no se puede crear la OT — es la identidad del cliente y lo que une todos sus trabajos.");
   }
 
   $("btnGuardar").disabled = true;
