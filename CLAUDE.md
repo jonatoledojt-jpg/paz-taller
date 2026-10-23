@@ -1710,9 +1710,19 @@ la app de WhatsApp Business, no desde el panel de desarrolladores.
 **Decisión pendiente antes de conectar:** si PAZ contesta sola al cliente o
 solo propone y una persona manda. Criterio acordado: que conteste sola para
 recolectar datos, y que precio, plazo o cualquier compromiso espere a una
-persona. Hoy en la app da precios referenciales porque el prompt los tiene y
-siempre hay alguien leyendo; en WhatsApp automático ese mismo texto le llega
-al cliente sin filtro.
+persona.
+
+**Actualización (22-10-2026): PAZ ya NO da ningún precio al cliente, ni
+referencial.** El `nexa_config.prompt` del canal WhatsApp fue limpiado: no
+tiene lista de precios (verificado — el único número concreto es el RUT en los
+datos de envío de módulos), y dice explícito *"NUNCA le das un valor al
+cliente. Ni uno 'referencial', ni un rango, ni 'desde', ni el de la visita... El
+valor lo decide y lo comunica SIEMPRE una persona del equipo, nunca tú."* O sea
+la contención ya es estructural (las cifras no están), no solo una instrucción.
+La nota vieja que decía "da precios referenciales porque el prompt los tiene"
+quedó desactualizada y por eso se corrigió: en una auditoría multi-agente
+(22-10-2026) confundió a un revisor, que recomendó "sacar los precios del
+prompt" cuando ya no estaban.
 
 **Reglas de diseño acordadas:**
 
