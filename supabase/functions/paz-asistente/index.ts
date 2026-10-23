@@ -25,7 +25,7 @@ const admin = createClient(SUPA_URL, SERVICE);
 const GRAPH = "https://graph.facebook.com/v21.0";
 const MODELO = "claude-sonnet-5-5";
 
-async function enviarWA(para: string, texto: string) {
+async function enviarWA(para: string, texto: string): Promise<{ ok: boolean; waId: string | null }> {
   const r = await fetch(`${GRAPH}/${Deno.env.get("WHATSAPP_PHONE_ID")}/messages`, {
     method: "POST",
     headers: {
@@ -34,8 +34,12 @@ async function enviarWA(para: string, texto: string) {
     },
     body: JSON.stringify({ messaging_product: "whatsapp", to: para, type: "text", text: { body: texto } }),
   });
-  if (!r.ok) console.error("paz-asistente: fallo envío", r.status, (await r.text()).slice(0, 300));
-  return r.ok;
+  const cuerpo = await r.text();
+  if (!r.ok) { console.error("paz-asistente: fallo envío", r.status, cuerpo.slice(0, 300)); return { ok: false, waId: null }; }
+  // El id del mensaje enviado, para reconocerlo si el equipo lo etiqueta (ver 52).
+  let waId: string | null = null;
+  try { waId = JSON.parse(cuerpo)?.messages?.[0]?.id ?? null; } catch { /* sin id */ }
+  return { ok: true, waId };
 }
 
 const limpiar = (s: string) => String(s ?? "").replace(/[(),]/g, " ").trim();
@@ -252,10 +256,10 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
       if (simular) return `(simulado, no se envió) habría escrito a ${dest.nombre}: ${mensaje}`;
       const ok = await enviarWA(dest.telefono, mensaje);
       await admin.from("wa_log").insert({
-        metodo: "ASISTENTE-AVISO", firma_ok: ok,
+        metodo: "ASISTENTE-AVISO", firma_ok: ok.ok,
         nota: `${solicitante} → ${dest.nombre} (${area})`, cuerpo: mensaje.slice(0, 1000),
       }).then(() => {}, () => {});
-      return ok ? `Listo, le envié el mensaje a ${dest.nombre}.` : `No pude enviarle el mensaje a ${dest.nombre} (error de WhatsApp).`;
+      return ok.ok ? `Listo, le envié el mensaje a ${dest.nombre}.` : `No pude enviarle el mensaje a ${dest.nombre} (error de WhatsApp).`;
     }
     if (nombre === "generar_informe") {
       const detalle = String(input?.detalle ?? "").trim();
@@ -323,7 +327,7 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
       }
       if (simular) return `(simulado, no se envió) habría escrito al cliente (${telefono}): ${mensaje}`;
       const ok = await enviarWA(telefono, mensaje);
-      if (ok && conversacion_id) {
+      if (ok.ok && conversacion_id) {
         // Se registra como mensaje de PAZ (humano_asistido) para que la PAZ
         // cara al cliente lo vea y no se contradiga en el siguiente turno.
         await admin.from("nexa_mensajes")
@@ -331,10 +335,10 @@ async function ejecutar(nombre: string, input: any, esJefe: boolean, solicitante
           .then(() => {}, () => {});
       }
       await admin.from("wa_log").insert({
-        metodo: "ASISTENTE-CLIENTE", firma_ok: ok,
+        metodo: "ASISTENTE-CLIENTE", firma_ok: ok.ok,
         nota: `${solicitante} → cliente ${telefono}`, cuerpo: mensaje.slice(0, 1000),
       }).then(() => {}, () => {});
-      return ok ? "Listo, le envié el mensaje al cliente." : "No pude enviarle el mensaje al cliente (error de WhatsApp).";
+      return ok.ok ? "Listo, le envié el mensaje al cliente." : "No pude enviarle el mensaje al cliente (error de WhatsApp).";
     }
     if (nombre === "silenciar_cliente" || nombre === "retomar_cliente") {
       const { telefono, conversacion_id } = await destinoCliente(String(input?.destino ?? ""));
@@ -556,10 +560,12 @@ Deno.serve(async (req) => {
     const respuesta = await responder(apiKey, system, messages, esJefe, miembro.nombre, probar);
     const txt = respuesta || "No pude armar una respuesta. ¿Me lo preguntas de otra forma?";
     if (!probar) {
-      await enviarWA(telefono, txt);
+      const env = await enviarWA(telefono, txt);
+      // La respuesta de PAZ queda con su id de WhatsApp: así, si el equipo la
+      // etiqueta después, PAZ reconoce cuál de sus mensajes citó (ver 52).
       await admin.from("paz_equipo_chat").insert([
         { telefono, rol: "user", contenido: texto },
-        { telefono, rol: "assistant", contenido: txt },
+        { telefono, rol: "assistant", contenido: txt, wa_id: env.waId },
       ]).then(() => {}, () => {});
       await admin.from("wa_log").insert({
         metodo: "ASISTENTE", firma_ok: true,

@@ -214,6 +214,13 @@ async function responderWhatsApp(para: string, texto: string) {
   return { ok: r.ok, status: r.status, respuesta };
 }
 
+// El id que Meta le asigna al mensaje que PAZ acaba de enviar. Lo guardamos en
+// paz_equipo_chat para reconocer después cuándo el equipo ETIQUETA (responde
+// citando) ese mensaje, y así saber a qué cliente/tema apunta su orden (ver 52).
+function waIdEnviado(r: any): string | null {
+  try { return JSON.parse(r?.respuesta ?? "{}")?.messages?.[0]?.id ?? null; } catch { return null; }
+}
+
 // Baja la foto de Meta y la guarda. Las capturas del escáner son
 // justamente lo que el taller revisa: perderlas sería perder el caso.
 // La subida del archivo sigue con la llave maestra (Storage no tiene
@@ -686,11 +693,25 @@ async function procesarMensaje(paz: any, msj: any) {
         metodo: "EQUIPO-CONSULTA", firma_ok: true,
         nota: `consulta del equipo (${telefono})`, cuerpo: texto.slice(0, 2000),
       }).then(() => {}, () => {});
+      // ¿El equipo ETIQUETÓ (respondió citando) un mensaje anterior de PAZ?
+      // WhatsApp manda la referencia del mensaje citado (msj.context.id). PAZ no
+      // la veía, así que no sabía a cuál cliente/tema apuntaba el jefe. Acá
+      // buscamos ESE mensaje suyo por su id y le pasamos el texto citado, para
+      // que el otro hemisferio sepa de qué habla (ver 52-paz-etiqueta-mensaje.sql).
+      let textoParaPaz = texto;
+      const citadoId = msj?.context?.id;
+      if (citadoId) {
+        const { data: citado } = await admin.from("paz_equipo_chat")
+          .select("contenido").eq("wa_id", citadoId).limit(1).maybeSingle();
+        if (citado?.contenido) {
+          textoParaPaz = `[EL EQUIPO ETIQUETÓ/CITÓ este mensaje tuyo anterior: "${String(citado.contenido).slice(0, 700)}". Lo que te pide AHORA, sobre ESO, es:]\n${texto}`;
+        }
+      }
       try {
         const rr = await fetch(`${URL_SUPABASE}/functions/v1/paz-asistente`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-paz-key": Deno.env.get("PAZ_EQUIPO_KEY") ?? "" },
-          body: JSON.stringify({ telefono, texto }),
+          body: JSON.stringify({ telefono, texto: textoParaPaz }),
         });
         if (!rr.ok) {
           await admin.from("wa_log").insert({
@@ -1197,6 +1218,15 @@ async function pedirDatoAlEquipo(conversacion_id: number, caso: any) {
   const ref = caso?.patente || caso?.vehiculo || "";
   const txt = `👋 Estás atendiendo a ${quien}${ref ? ` (${ref})` : ""} por WhatsApp. Para dejar el caso completo me falta: ${faltan.join(", ")}. ¿Me lo pasas tú o se lo preguntas al cliente? No le repregunto para no acosarlo.`;
   const ok = await responderWhatsApp(dest.telefono, txt);
+  // Queda en la memoria del equipo CON su id de WhatsApp y a qué cliente apunta:
+  // así, si el equipo lo ETIQUETA ("¿qué quiere ese cliente?"), PAZ reconoce
+  // cuál aviso citó y sabe de quién habla (ver 52-paz-etiqueta-mensaje.sql).
+  const { data: ccli } = await admin.from("nexa_conversaciones")
+    .select("telefono").eq("id", conversacion_id).maybeSingle();
+  await admin.from("paz_equipo_chat").insert({
+    telefono: dest.telefono, rol: "assistant", wa_id: waIdEnviado(ok),
+    contenido: `${txt}\n[aviso mío (PAZ). Es sobre el cliente ${ccli?.telefono ?? ""}${ref ? ` (${ref})` : ""}; si el equipo lo etiqueta/cita o me pide actuar sobre ESE cliente, ese es el destino.]`,
+  }).then(() => {}, () => {});
   await admin.from("wa_log").insert({
     metodo: "PAZ-PIDE-DATO", firma_ok: ok.ok,
     nota: `conv ${conversacion_id}: ${dest.nombre} <- ${faltan.join(", ")}`.slice(0, 500), cuerpo: "",
@@ -1228,8 +1258,8 @@ async function avisarPagoAlJefe(conversacion_id: number, telefono: string, conte
   // recuerda que ella misma lo mandó y se enreda. Queda como un mensaje suyo,
   // con la referencia del cliente que pagó para poder responderle si se lo piden.
   await admin.from("paz_equipo_chat").insert({
-    telefono: jefe.telefono, rol: "assistant",
-    contenido: `${txt}\n[este aviso lo mandé yo (PAZ). Es sobre el cliente ${telefono}; si el jefe me dice qué responderle, uso ese número como destino.]`,
+    telefono: jefe.telefono, rol: "assistant", wa_id: waIdEnviado(ok),
+    contenido: `${txt}\n[este aviso lo mandé yo (PAZ). Es sobre el cliente ${telefono}; si el jefe me dice qué responderle, o lo etiqueta/cita, uso ese número como destino.]`,
   }).then(() => {}, () => {});
   await admin.from("wa_log").insert({
     metodo: "PAZ-AVISA-PAGO", firma_ok: ok.ok,
