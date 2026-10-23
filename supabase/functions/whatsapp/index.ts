@@ -667,8 +667,15 @@ async function procesarMensaje(paz: any, msj: any) {
     // ventana), PAZ le responde como asistente del equipo mirando la base
     // (función paz-asistente): estado de OT, pendientes, agenda, historial;
     // la plata solo al jefe. Los saludos/acks no gatillan nada, para no
-    // hacer ruido cada mañana. Solo texto por ahora (audio del equipo no).
-    const texto = msj.type === "text" ? String(msj.text?.body ?? "").trim() : "";
+    // hacer ruido cada mañana.
+    let texto = msj.type === "text" ? String(msj.text?.body ?? "").trim() : "";
+    // El equipo también le puede hablar por NOTA DE VOZ: se transcribe con el
+    // mismo Whisper que ya usa el lado cliente y se trata como su consulta
+    // (23-10-2026, pedido de Jonatan — hablarle a PAZ por audio como un cliente).
+    if (!texto && msj.type === "audio") {
+      try { texto = await transcribirAudio(msj.audio?.id); }
+      catch (e) { console.error("No se pudo transcribir el audio del equipo:", e); }
+    }
     const base = texto.toLowerCase().replace(/[!¡.,…]+/g, " ").trim();
     const esAck = !base ||
       (base.length <= 18 &&
