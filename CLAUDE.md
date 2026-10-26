@@ -90,6 +90,7 @@ sw.js                   service worker
 38-lab-rls.sql               RLS de las ecu_* + ve_laboratorio() (dueño / coordinador laboratorio)
 39-lab-config.sql            ecu_config: prompt del diagnosticador (el prompt se carga aparte, no en el repo)
 40-lab-conversaciones.sql    ecu_conversaciones: guarda las conversaciones del agente de laboratorio
+44-cotizacion-suelta.sql     cotización sin OT: orden_id nullable + razón social/rut/dirección/sistema en la fila (+ grants por columna)
 25-cuatro-ejes-estado.sql    ubicacion/reparacion/comercial/pagado_en: reemplazan estado (aditivo)
 26-backfill-cuatro-ejes.sql  llena los cuatro ejes en las OT reales que ya existían
 27-defaults-cuatro-ejes.sql  defaults de reparacion/comercial, red de seguridad contra null
@@ -562,6 +563,28 @@ categoría parecida ignorando tildes y mayúsculas **se reusa esa** — así
 ## Cotizaciones
 
 Ver `10-cotizaciones-vigente.sql`.
+
+**Cotización suelta (sin OT) — Herramientas (26-10-2026).** Pedido de
+Jonatan: cotizar para clientes que solo quieren precio, sin visita ni
+diagnóstico, **sin crear OT**. Botón "Cotización rápida (sin OT)" en
+Herramientas (dueño/coordinador, el técnico no ve precios) → `vCotRapida`:
+razón social, RUT, dirección, "sistema a cotizar" (camión/módulo) + el
+mismo editor de ítems (valores **netos**, el IVA se suma solo al total) +
+validez. Guarda en `cotizaciones` con `orden_id = null` y esos datos del
+cliente **en la propia fila** (`cliente_nombre`/`cliente_rut`/
+`cliente_direccion`/`sistema_cotizado`, `44-cotizacion-suelta.sql`). La
+cotización formal imprimible se bifurca: si `orden_id` es null lee esos
+campos de la fila (no de una orden); si no, el camino de siempre. Cada
+suelta tiene **"Generar OT"**: abre Nueva OT prefijada con el cliente y,
+al guardar, el front engancha la cotización a la OT (`orden_id = orden.id`)
+y deja la OT en `comercial = 'cotizado'` (sin tocar la reparación: no hubo
+diagnóstico). Ahí recién el trigger recalcula `monto_cotizado` y el monto
+entra al tablero/rentabilidad. **El cotizado que cuelga de una OT no se
+tocó** -- es aditivo y aislado (`cotSueltaParaOT` como global paralela a
+`moduloDesdeOrden`/`garantiaDesdeOrden`). `orden_id` pasó a **nullable**
+(el trigger `recalcular_monto_cotizado` ya toleraba null). Ojo: las 4
+columnas nuevas necesitaron **grant por columna** para `authenticated`
+(mismo gotcha de `ordenes`/`08-terreno.sql`).
 
 **La vigente es la última guardada que no esté anulada.** No hay campo
 `es_vigente` a propósito: se calcula, así no hay dos fuentes de verdad que

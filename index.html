@@ -390,6 +390,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <button type="button" class="herramienta oculto" id="btnHerAsistencia">Registro de asistencia</button>
         <button type="button" class="herramienta oculto" id="btnHerDiagTerreno">Diagnóstico de terreno</button>
         <button type="button" class="herramienta oculto" id="btnHerDiagLab">Diagnóstico de laboratorio</button>
+        <button type="button" class="herramienta oculto" id="btnHerCotRapida">Cotización rápida (sin OT)</button>
         <button type="button" class="herramienta" id="btnHerGastos">Gastos</button>
       </div>
 
@@ -659,6 +660,54 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
         <div style="height:10px"></div>
         <button class="btn claro" id="btnCotImpVolver">Volver</button>
       </div>
+    </section>
+
+    <!-- Cotización rápida (sin OT) -->
+    <section id="vCotRapida" class="oculto">
+      <h2>Cotización rápida (sin OT)</h2>
+      <p class="pista">Para clientes que solo quieren precio, sin visita ni diagnóstico. No crea OT. Cuando el cliente confirme, puedes generar la OT desde la cotización.</p>
+      <div id="crError" class="aviso oculto"></div>
+      <div id="crAviso" class="aviso bien oculto"></div>
+
+      <div class="seccion">
+        <span class="rotulo">Cotizaciones sin OT</span>
+        <div id="crLista"></div>
+      </div>
+
+      <div class="seccion">
+        <span class="rotulo">Nueva cotización</span>
+        <div class="campo">
+          <label for="crRazon">Razón social</label>
+          <input id="crRazon" list="dlClientes" placeholder="Nombre o razón social del cliente">
+        </div>
+        <div class="campo">
+          <label for="crRut">RUT</label>
+          <input id="crRut" inputmode="text" placeholder="76.543.210-K">
+          <div class="pista" id="crPistaRut"></div>
+        </div>
+        <div class="campo">
+          <label for="crDireccion">Dirección</label>
+          <input id="crDireccion" placeholder="Dirección del cliente">
+        </div>
+        <div class="campo">
+          <label for="crSistema">Sistema a cotizar (camión, módulo)</label>
+          <input id="crSistema" placeholder="Ej: Actros MP4 — módulo MCM">
+        </div>
+
+        <div id="crItems"></div>
+        <button type="button" class="btn claro" id="btnCrAddItem">+ Agregar ítem</button>
+        <div class="campo" style="margin-top:14px">
+          <label for="crValidez">Válida por (días)</label>
+          <input id="crValidez" inputmode="numeric" value="15">
+        </div>
+        <div class="dato"><span>Neto</span><span id="crNeto">$0</span></div>
+        <div class="dato"><span>IVA 19%</span><span id="crIva">$0</span></div>
+        <div class="dato total"><span>Total</span><span id="crTotal">$0</span></div>
+      </div>
+
+      <button class="btn" id="btnCrGuardar">Guardar cotización</button>
+      <div style="height:10px"></div>
+      <button class="btn claro" id="btnCrVolver">Volver</button>
     </section>
 
     <!-- Cierre de OT -->
@@ -1362,7 +1411,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 const $ = id => document.getElementById(id);
 const ver = (...ids) => {
-  ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp",
+  ["vTablero","vNueva","vDetalle","vCierre","vInforme","vCotizacion","vCotImp","vCotRapida",
    "vGasto","vFacturar","vNexa","vEntrenar","vCaso","vCerradas","vPendientes",
    "vAsistencia","vPago","vComprobante","vEditarOT","vDiagTerreno","vLab","vDiagramas","vDiagVer"].forEach(v => $(v).classList.add("oculto"));
   ids.forEach(v => $(v).classList.remove("oculto"));
@@ -1538,6 +1587,7 @@ let nexaOrigenConv = null;  // conversación que originó la OT que se está cre
 let casoParaOT = null;      // caso que originó esa OT
 let moduloDesdeOrden = null;    // OT de terreno desde la que se está retirando un módulo (orden_padre_id)
 let garantiaDesdeOrden = null;  // OT cerrada que reingresa por garantía (orden_padre_id)
+let cotSueltaParaOT = null;     // id de cotización suelta (sin OT) que se engancha a la OT nueva al guardarla
 
 // ---------- Sesión ----------
 $("btnEntrar").onclick = async () => {
@@ -1642,6 +1692,9 @@ function cambiarSeccion(seccion) {
   $("btnHerDiagTerreno").classList.toggle("oculto", perfil?.rol !== "dueno");
   // Diagnóstico de laboratorio: dueño o encargado de laboratorio (Diego).
   $("btnHerDiagLab").classList.toggle("oculto", !veLaboratorio());
+  // Cotización rápida (sin OT): lo comercial es de dueño/coordinador, igual
+  // que las cotizaciones de una OT (el técnico ni ve precios).
+  $("btnHerCotRapida").classList.toggle("oculto", perfil?.rol !== "dueno" && perfil?.rol !== "coordinador");
   $("gastosControles").classList.toggle("oculto", seccion !== "gastos");
   $("porCobrarAviso").classList.add("oculto");
   $("selGastoVista").classList.toggle("oculto", !(seccion === "gastos" && esDueno));
@@ -1975,6 +2028,7 @@ $("btnNueva").onclick = () => {
   casoParaOT = null;
   moduloDesdeOrden = null;
   garantiaDesdeOrden = null;
+  cotSueltaParaOT = null;  // "Nueva OT" normal no engancha ninguna cotización suelta
   limpiarForm();
   ver("vNueva");
 };
@@ -2077,6 +2131,17 @@ $("btnGuardar").onclick = async () => {
       actualizarBadgeCasos();
     }
 
+    // Si esta OT se generó desde una cotización suelta (Herramientas →
+    // Cotización rápida), engancharla ahora a la OT: el trigger del monto
+    // recalcula monto_cotizado y la OT nace "cotizada" (ya hay precio). No
+    // se toca la reparación: estos clientes no pidieron diagnóstico, solo precio.
+    if (cotSueltaParaOT) {
+      await db.from("cotizaciones").update({ orden_id: orden.id }).eq("id", cotSueltaParaOT);
+      const estado = estadoLegado({ comercial: "cotizado", reparacion: "por_diagnosticar", ubicacion: ubicacionInicial, tipo_trabajo, origen, pagado_en: null });
+      await db.from("ordenes").update({ comercial: "cotizado", estado }).eq("id", orden.id);
+      cotSueltaParaOT = null;
+    }
+
     limpiarForm();
     cargarClientes();
     cargarModulos();
@@ -2092,6 +2157,7 @@ $("btnGuardar").onclick = async () => {
 };
 
 function limpiarForm() {
+  cotSueltaParaOT = null;  // abrir el form limpio no engancha ninguna cotización suelta
   ["fCliente","fRut","fPatente","fSintoma","fModulo","fSistema","fFechaAgendada","fUbicacionGps"].forEach(i => $(i).value = "");
   $("pistaRut").textContent = "";
   $("pistaRut").className = "pista";
@@ -4014,6 +4080,7 @@ $("btnNuevaCot").onclick = () => {
 };
 
 async function mostrarCotizacionFormal(id) {
+  cotImpDesde = "vCotizacion";   // esta es la formal que cuelga de una OT
   const vig = cotVigente();
   const avisoImp = $("cotImpAviso");
   if (vig && vig.id === id) {
@@ -4080,7 +4147,248 @@ async function mostrarCotizacionFormal(id) {
 }
 
 $("btnImprimirCot").onclick = () => window.print();
-$("btnCotImpVolver").onclick = () => ver("vCotizacion");
+$("btnCotImpVolver").onclick = () => ver(cotImpDesde || "vCotizacion");
+
+
+// ══════════════════════════════════════════════════════════
+//  COTIZACIÓN RÁPIDA (sin OT) — Herramientas
+//
+//  Para clientes que solo quieren precio, sin visita ni diagnóstico.
+//  Guarda en `cotizaciones` con orden_id = null + los datos del cliente
+//  en la propia fila (razón social, RUT, dirección, sistema a cotizar).
+//  NO toca ninguna OT ni el cotizado que cuelga de una OT. Después,
+//  "Generar OT" crea la OT y le engancha esta cotización.
+// ══════════════════════════════════════════════════════════
+let crItems = [], cotImpDesde = "vCotizacion";
+
+$("btnHerCotRapida").onclick = () => abrirCotRapida();
+$("btnCrVolver").onclick = () => { ver("vTablero"); cambiarSeccion("agenda"); };
+
+async function abrirCotRapida() {
+  msg("crError", ""); msg("crAviso", "");
+  limpiarCrForm();
+  await cargarCotRapidas();
+  ver("vCotRapida");
+}
+
+function limpiarCrForm() {
+  ["crRazon","crRut","crDireccion","crSistema"].forEach(i => $(i).value = "");
+  $("crPistaRut").textContent = ""; $("crPistaRut").className = "pista";
+  $("crValidez").value = 15;
+  crItems = [{ descripcion: "", cantidad: 1, valor_unitario: 0 }];
+  pintarCrItems();
+}
+
+// RUT: mismo formateo y validación de dígito verificador que en Nueva OT.
+$("crRut").oninput = e => {
+  const fin = e.target.selectionStart === e.target.value.length;
+  e.target.value = formatearRut(e.target.value);
+  if (fin) e.target.setSelectionRange(e.target.value.length, e.target.value.length);
+  const ok = dvCorrecto(e.target.value);
+  const p = $("crPistaRut");
+  if (ok === null) { p.textContent = ""; p.className = "pista"; }
+  else if (ok)     { p.textContent = "RUT válido"; p.className = "pista bien"; }
+  else             { p.textContent = "El dígito verificador no calza. Revísalo."; p.className = "pista mal"; }
+};
+
+function pintarCrItems() {
+  const cont = $("crItems");
+  cont.innerHTML = "";
+  crItems.forEach((item, i) => {
+    const fila = document.createElement("div");
+    fila.className = "item-cot";
+    fila.innerHTML = `
+      <div class="campo">
+        <label>Descripción</label>
+        <textarea class="desc" rows="2" placeholder="Ej: Reparación módulo GS"></textarea>
+      </div>
+      <div class="fila-cv">
+        <div class="campo"><label>Cantidad</label><input class="cant" inputmode="decimal" placeholder="1"></div>
+        <div class="campo"><label>Valor unitario (neto)</label><input class="val" inputmode="numeric" placeholder="350000"></div>
+      </div>
+      <div class="item-pie">
+        <span class="sub"></span>
+        <button type="button" class="quitar-item">Quitar ítem</button>
+      </div>`;
+    const iDesc = fila.querySelector(".desc"), iCant = fila.querySelector(".cant"),
+          iVal = fila.querySelector(".val"), elSub = fila.querySelector(".sub");
+    iDesc.value = item.descripcion;
+    iCant.value = item.cantidad;
+    iVal.value = item.valor_unitario || "";
+    const refrescarSub = () => { elSub.textContent = "Subtotal $" + miles((item.cantidad || 0) * (item.valor_unitario || 0)); };
+    refrescarSub();
+    iDesc.oninput = e => { item.descripcion = e.target.value; };
+    iCant.oninput = e => { item.cantidad = parseFloat(e.target.value.replace(",", ".")) || 0; refrescarSub(); crTotales(); };
+    iVal.oninput = e => { e.target.value = e.target.value.replace(/\D/g, ""); item.valor_unitario = parseInt(e.target.value || "0", 10); refrescarSub(); crTotales(); };
+    fila.querySelector(".quitar-item").onclick = () => {
+      crItems.splice(i, 1);
+      if (!crItems.length) crItems.push({ descripcion: "", cantidad: 1, valor_unitario: 0 });
+      pintarCrItems();
+    };
+    cont.appendChild(fila);
+  });
+  crTotales();
+}
+
+// El operador ingresa valores NETOS; el IVA se suma solo al total.
+function crTotales() {
+  const neto = crItems.reduce((s, i) => s + (i.cantidad || 0) * (i.valor_unitario || 0), 0);
+  const iva = Math.round(neto * 0.19);
+  $("crNeto").textContent = "$" + miles(neto);
+  $("crIva").textContent = "$" + miles(iva);
+  $("crTotal").textContent = "$" + miles(neto + iva);
+}
+
+$("btnCrAddItem").onclick = () => { crItems.push({ descripcion: "", cantidad: 1, valor_unitario: 0 }); pintarCrItems(); };
+
+async function cargarCotRapidas() {
+  const cont = $("crLista");
+  const { data, error } = await db.from("cotizaciones")
+    .select("id,validez_dias,creado_en,anulada,orden_id,cliente_nombre,cliente_rut,cliente_direccion,sistema_cotizado,cotizacion_items(cantidad,valor_unitario)")
+    .is("orden_id", null)
+    .order("creado_en", { ascending: false }).order("id", { ascending: false });
+  if (error) { cont.innerHTML = `<p class="pista">No se pudieron cargar: ${escapar(error.message)}</p>`; return; }
+  const lista = data || [];
+  if (!lista.length) { cont.innerHTML = '<p style="font-size:14px;color:var(--humo);margin:0">Aún no hay cotizaciones sin OT.</p>'; return; }
+  cont.innerHTML = "";
+  lista.forEach(c => {
+    const neto = (c.cotizacion_items || []).reduce((s, i) => s + i.cantidad * i.valor_unitario, 0);
+    const total = neto + Math.round(neto * 0.19);
+    const caja = document.createElement("div");
+    caja.className = "cot-guardada" + (c.anulada ? " anulada" : "");
+    caja.innerHTML = `
+      <div class="fila">
+        <button type="button" class="tocar">
+          <span class="num">${cotNum(c.id)}</span>
+          ${c.anulada ? '<span class="chip" style="margin-top:0;margin-left:8px">Anulada</span>' : ''}
+          <span class="meta">${escapar(c.cliente_nombre || "—")} · ${fechaCL(c.creado_en)} · $${miles(total)}</span>
+        </button>
+        ${c.anulada ? "" : '<button type="button" class="anular" aria-label="Anular cotización">×</button>'}
+      </div>
+      <div class="acciones oculto">
+        <button type="button" class="ver">Ver formal</button>
+        ${c.anulada ? "" : '<button type="button" class="genot">Generar OT</button>'}
+      </div>`;
+    const acciones = caja.querySelector(".acciones");
+    caja.querySelector(".tocar").onclick = () => acciones.classList.toggle("oculto");
+    caja.querySelector(".ver").onclick = () => mostrarCotRapidaFormal(c.id);
+    const bA = caja.querySelector(".anular"); if (bA) bA.onclick = () => anularCotRapida(c.id);
+    const bG = caja.querySelector(".genot"); if (bG) bG.onclick = () => generarOtDesde(c);
+    cont.appendChild(caja);
+  });
+}
+
+async function guardarCotRapida() {
+  msg("crError", ""); msg("crAviso", "");
+  const razon = $("crRazon").value.trim();
+  if (!razon) { msg("crError", "Falta la razón social del cliente."); return null; }
+  const items = crItems
+    .map(i => ({ ...i, descripcion: i.descripcion.trim() }))
+    .filter(i => i.descripcion && i.valor_unitario > 0);
+  if (!items.length) { msg("crError", "Agrega al menos un ítem con descripción y valor."); return null; }
+  const validez = parseInt($("crValidez").value, 10) || 15;
+  try {
+    const { data:{ user } } = await db.auth.getUser();
+    const { data: nueva, error } = await db.from("cotizaciones").insert({
+      orden_id: null, creado_por: user.id, validez_dias: validez,
+      cliente_nombre: razon,
+      cliente_rut: $("crRut").value.trim() || null,
+      cliente_direccion: $("crDireccion").value.trim() || null,
+      sistema_cotizado: $("crSistema").value.trim() || null
+    }).select("id").single();
+    if (error) throw error;
+    const { error: eIns } = await db.from("cotizacion_items").insert(
+      items.map((it, idx) => ({ cotizacion_id: nueva.id, descripcion: it.descripcion, cantidad: it.cantidad, valor_unitario: it.valor_unitario, orden_item: idx }))
+    );
+    if (eIns) { await db.from("cotizaciones").delete().eq("id", nueva.id); throw eIns; }
+    return nueva.id;
+  } catch (e) {
+    msg("crError", "No se pudo guardar: " + (e.message || "error desconocido") + " — no se perdió lo que escribiste, puedes reintentar.");
+    return null;
+  }
+}
+
+$("btnCrGuardar").onclick = async () => {
+  $("btnCrGuardar").disabled = true; $("btnCrGuardar").textContent = "Guardando…";
+  const id = await guardarCotRapida();
+  $("btnCrGuardar").textContent = "Guardar cotización"; $("btnCrGuardar").disabled = false;
+  if (!id) return;
+  limpiarCrForm();
+  await cargarCotRapidas();
+  msg("crAviso", `Cotización guardada: ${cotNum(id)}. Puedes verla formal o generar la OT cuando el cliente confirme.`, true);
+};
+
+async function anularCotRapida(id) {
+  if (!confirm(`¿Anular la ${cotNum(id)}?`)) return;
+  const { error } = await db.from("cotizaciones").update({ anulada: true, fecha_anulacion: new Date().toISOString() }).eq("id", id);
+  if (error) return msg("crError", "No se pudo anular: " + error.message);
+  await cargarCotRapidas();
+  msg("crAviso", `${cotNum(id)} anulada.`, true);
+}
+
+// Generar OT desde una cotización suelta: abre Nueva OT prefijada con el
+// cliente; al guardar la OT (btnGuardar) se engancha esta cotización.
+function generarOtDesde(c) {
+  nexaOrigenConv = null; casoParaOT = null; moduloDesdeOrden = null; garantiaDesdeOrden = null;
+  limpiarForm();            // limpiarForm pone cotSueltaParaOT = null...
+  cotSueltaParaOT = c.id;   // ...así que se setea DESPUÉS
+  $("fCliente").value = c.cliente_nombre || "";
+  $("fRut").value = c.cliente_rut || "";
+  msg("nuevaError", "Vas a generar la OT para la cotización " + cotNum(c.id) + ". Completa teléfono, patente y la falla.");
+  ver("vNueva");
+}
+
+// Cotización formal de una cotización SUELTA (sin OT): lee los datos del
+// cliente guardados en la propia fila, no de una orden.
+async function mostrarCotRapidaFormal(id) {
+  cotImpDesde = "vCotRapida";
+  $("cotImpAviso").classList.add("oculto");
+  const { data: cot } = await db.from("cotizaciones")
+    .select("id,validez_dias,creado_en,cliente_nombre,cliente_rut,cliente_direccion,sistema_cotizado").eq("id", id).single();
+  const { data: items } = await db.from("cotizacion_items")
+    .select("descripcion,cantidad,valor_unitario").eq("cotizacion_id", id).order("orden_item");
+  const filas = items || [];
+  const neto = filas.reduce((s, i) => s + i.cantidad * i.valor_unitario, 0);
+  const iva = Math.round(neto * 0.19);
+  const vence = new Date(cot.creado_en); vence.setDate(vence.getDate() + (cot.validez_dias || 15));
+  const filasHtml = filas.map(i => `
+    <tr>
+      <td>${escapar(i.descripcion)}</td>
+      <td>${i.cantidad}</td>
+      <td>$${miles(i.valor_unitario)}</td>
+      <td>$${miles(i.cantidad * i.valor_unitario)}</td>
+    </tr>`).join("");
+  $("hojaCotizacion").innerHTML = `
+  <div class="hoja">
+    <div class="cab">
+      <h1>PAZ SERVICES &nbsp;|&nbsp; COTIZACIÓN</h1>
+      <div class="sub">Reparación de módulos electrónicos Mercedes Benz &middot; Talca &middot; COT-${String(cot.id).padStart(4, "0")}</div>
+    </div>
+
+    <table class="datos">
+      <tr><td class="et">Cliente</td><td>${escapar(cot.cliente_nombre ?? "—")}</td></tr>
+      <tr><td class="et">RUT</td><td>${escapar(cot.cliente_rut ?? "—")}</td></tr>
+      <tr><td class="et">Dirección</td><td>${escapar(cot.cliente_direccion ?? "—")}</td></tr>
+      <tr><td class="et">Sistema</td><td>${escapar(cot.sistema_cotizado ?? "—")}</td></tr>
+      <tr><td class="et">Fecha</td><td>${fechaCL(cot.creado_en)}</td></tr>
+      <tr><td class="et">Válida hasta</td><td>${fechaCL(vence)}</td></tr>
+    </table>
+
+    <h3>Detalle</h3>
+    <table class="valor">
+      <tr><td>Descripción</td><td>Cant.</td><td>Valor unit.</td><td>Subtotal</td></tr>
+      ${filasHtml}
+      <tr><td colspan="3">Neto</td><td>$${miles(neto)}</td></tr>
+      <tr><td colspan="3">IVA 19%</td><td>$${miles(iva)}</td></tr>
+      <tr class="total"><td colspan="3">Total</td><td>$${miles(neto + iva)}</td></tr>
+    </table>
+
+    <div class="firmas">
+      <div>Jonatan Daniel Toledo Orellana<br>Paz Services LTDA.</div>
+    </div>
+  </div>`;
+  ver("vCotImp");
+}
 
 
 // ══════════════════════════════════════════════════════════
