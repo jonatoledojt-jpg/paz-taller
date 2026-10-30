@@ -2121,6 +2121,19 @@ $("btnGuardar").onclick = async () => {
     // Deja el caso de PAZ apuntando a la OT que salió de él.
     if (nexaOrigenConv) {
       await db.from("nexa_conversaciones").update({ orden_id: orden.id }).eq("id", nexaOrigenConv);
+      // El botón "Crear la OT" de la pantalla de conversación (btnNexaCrearOT)
+      // engancha la conversación pero NO fija un caso puntual -- por eso los
+      // casos quedaban "pendientes" para siempre aunque la OT ya existiera.
+      // Acá se cierra el caso de producción de esa conversación que siga sin
+      // OT. Solo si hay UNO: si hay varios (flota), no se adivina cuál y se
+      // deja para cerrarlo a mano desde la ficha del caso.
+      if (!casoParaOT) {
+        const { data: pend } = await db.from("casos")
+          .select("id,descartado").eq("conversacion_id", nexaOrigenConv)
+          .eq("modo", "produccion").is("orden_id", null).eq("archivado", false);
+        const vivos = (pend || []).filter(c => !c.descartado);
+        if (vivos.length === 1) casoParaOT = vivos[0].id;
+      }
       nexaOrigenConv = null;
     }
     if (casoParaOT) {
